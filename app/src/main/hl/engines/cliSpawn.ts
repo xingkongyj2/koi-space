@@ -46,7 +46,12 @@ export function spawnCli(bin: string, args: readonly string[], opts: SpawnCliOpt
   }) as ChildProcessWithoutNullStreams;
 }
 
-export function runCliCapture(bin: string, args: readonly string[], timeoutMs = 5000, opts: Omit<SpawnCliOptions, 'stdio'> = {}): Promise<CliCaptureResult> {
+export function runCliCapture(
+  bin: string,
+  args: readonly string[],
+  timeoutMs = 5000,
+  opts: Omit<SpawnCliOptions, 'stdio'> & { maxOutputBytes?: number } = {},
+): Promise<CliCaptureResult> {
   return new Promise((resolve) => {
     let child: ChildProcessWithoutNullStreams;
     try {
@@ -62,7 +67,11 @@ export function runCliCapture(bin: string, args: readonly string[], timeoutMs = 
     let timedOut = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
-    const trimTail = (value: string): string => value.length > 8192 ? value.slice(-8192) : value;
+    // Callers that parse stdout as structured data must raise this: the default
+    // keeps only a tail, which silently truncates the head off a large JSON
+    // document and makes it unparseable.
+    const maxOutput = opts.maxOutputBytes ?? 8192;
+    const trimTail = (value: string): string => value.length > maxOutput ? value.slice(-maxOutput) : value;
     const timer = setTimeout(() => {
       timedOut = true;
       try { child.kill('SIGTERM'); } catch { /* already dead */ }

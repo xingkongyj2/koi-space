@@ -61,17 +61,23 @@ interface TabEntry {
   type?: string;
 }
 
-function parseTabList(stdout: string): TabEntry[] | null {
-  // agent-browser may prefix progress glyphs; anchor on the first brace.
-  const start = stdout.indexOf('{');
-  if (start < 0) return null;
-  try {
-    const parsed = JSON.parse(stdout.slice(start)) as { data?: { tabs?: TabEntry[] } };
-    const tabs = parsed?.data?.tabs;
-    return Array.isArray(tabs) ? tabs : null;
-  } catch {
-    return null;
+export type { TabEntry };
+
+export function parseTabList(stdout: string): TabEntry[] | null {
+  // agent-browser may prefix progress glyphs, so anchor on the JSON envelope
+  // rather than the first `{` anywhere in the output: a tab's `url` can be a
+  // multi-kilobyte `data:text/html,…` document (the takeover overlay is one),
+  // and its percent-encoded CSS is full of braces.
+  for (const marker of ['{"success"', '{']) {
+    const start = stdout.indexOf(marker);
+    if (start < 0) continue;
+    try {
+      const parsed = JSON.parse(stdout.slice(start)) as { data?: { tabs?: TabEntry[] } };
+      const tabs = parsed?.data?.tabs;
+      if (Array.isArray(tabs)) return tabs;
+    } catch { /* try the next marker */ }
   }
+  return null;
 }
 
 /**
@@ -101,7 +107,7 @@ function childEnv(ctx: BindParams, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEn
   fs.mkdirSync(sockDir, { recursive: true });
   return {
     ...baseEnv,
-    AGENT_BROWSER_SESSION: agentBrowserSessionName(ctx.sessionId),
+    AGENT_BROWSER_SESSION: agentBrowserSessionName(ctx.sessionId, ctx.cdpPort),
     AGENT_BROWSER_CDP: String(ctx.cdpPort),
     AGENT_BROWSER_SOCKET_DIR: sockDir,
   };
@@ -152,12 +158,13 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
 
   const marker = markerTitleFor(ctx.sessionId);
   const env = childEnv(ctx, process.env);
-  const pidFile = path.join(env.AGENT_BROWSER_SOCKET_DIR as string, `${env.AGENT_BROWSER_SESSION}.pid`);
+  const session = env.AGENT_BROWSER_SESSION as string;
+  const pidFile = path.join(env.AGENT_BROWSER_SOCKET_DIR as string, `${session}.pid`);
 
   // agent-browser validates this itself and exits 1, but the message would land
   // in a log rather than in front of the user — and it cost a debugging session
   // to find it once already. Check it here where we can say what to do.
-  const sockPath = socketPath(ctx.sessionId);
+  const sockPath = socketPath(session);
   if (!IS_WIN && Buffer.byteLength(sockPath) > SOCKET_PATH_LIMIT) {
     return {
       ok: false,
@@ -179,7 +186,13 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
     });
   }
 
-  const listing = await runCliCapture(binaryPath, ['tab', 'list', '--json'], 30_000, { env, cwd: ctx.harnessDir });
+  // A tab's `url` can be a multi-kilobyte data: URL, so the JSON envelope needs
+  // far more headroom than runCliCapture's 8 KB tail default.
+  const listing = await runCliCapture(binaryPath, ['tab', 'list', '--json'], 30_000, {
+    env,
+    cwd: ctx.harnessDir,
+    maxOutputBytes: 8 * 1024 * 1024,
+  });
   if (!listing.ok) {
     return {
       ok: false,
@@ -189,7 +202,11 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
   }
   const tabs = parseTabList(listing.stdout);
   if (!tabs) {
-    return { ok: false, binaryPath, error: `Unparseable output from \`agent-browser tab list --json\`: ${listing.stdout.slice(0, 200)}` };
+    return {
+      ok: false,
+      binaryPath,
+      error: `Could not parse \`agent-browser tab list --json\` (${listing.stdout.length} bytes of output).`,
+    };
   }
 
   const targetUrl = safeUrl(webContents);
@@ -215,15 +232,15 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
     realBinary: binaryPath,
     electronPath: process.execPath,
     rebindScript: path.join(shimDir(ctx.harnessDir), 'rebind.mjs'),
-    session: env.AGENT_BROWSER_SESSION as string,
+    session,
     cdpPort: ctx.cdpPort,
     targetId: ctx.targetId,
     pidFile,
-    pidCache: daemonPidCachePath(ctx.sessionId),
+    pidCache: daemonPidCachePath(session),
     markerTitle: marker,
     target: { url: targetUrl, title: safeTitle(webContents) },
   };
-  writeShimFiles(ctx.sessionId, config);
+  writeShimFiles(session, config);
   // Seed the pid cache so the agent's first command takes the shim's fast path.
   try { fs.writeFileSync(config.pidCache, readPidFile(pidFile), 'utf-8'); } catch { /* shim will rebind */ }
 
@@ -252,7 +269,7 @@ function safeTitle(wc: WebContents): string {
  * Returns a disposer; runEngine calls it when the child exits.
  */
 export function watchTargetFingerprint(ctx: BindParams, webContents: WebContents): () => void {
-  const file = configPath(ctx.sessionId);
+  const file = configPath(agentBrowserSessionName(ctx.sessionId, ctx.cdpPort));
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const refresh = (): void => {

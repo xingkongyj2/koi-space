@@ -35,20 +35,25 @@ try {
 }
 
 function run(args) {
-  const r = spawnSync(config.realBinary, args, { encoding: 'utf-8', timeout: 30_000 });
+  // maxBuffer must be generous: a tab's `url` can be a multi-kilobyte data:
+  // document, and exceeding the 1 MB default makes spawnSync fail outright.
+  const r = spawnSync(config.realBinary, args, { encoding: 'utf-8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
   if (r.error) return { ok: false, stdout: '', stderr: r.error.message };
   return { ok: r.status === 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
 function parseTabList(stdout) {
-  const start = stdout.indexOf('{');
-  if (start < 0) return null;
-  try {
-    const tabs = JSON.parse(stdout.slice(start))?.data?.tabs;
-    return Array.isArray(tabs) ? tabs : null;
-  } catch {
-    return null;
+  // Anchor on the JSON envelope, not the first `{` anywhere: percent-encoded CSS
+  // inside a data: URL is full of braces and would send us to the wrong offset.
+  for (const marker of ['{"success"', '{']) {
+    const start = stdout.indexOf(marker);
+    if (start < 0) continue;
+    try {
+      const tabs = JSON.parse(stdout.slice(start))?.data?.tabs;
+      if (Array.isArray(tabs)) return tabs;
+    } catch { /* try the next marker */ }
   }
+  return null;
 }
 
 const listing = run(['tab', 'list', '--json']);
@@ -56,7 +61,7 @@ if (!listing.ok) {
   fail(`\`tab list\` failed: ${(listing.stderr || listing.stdout).trim().slice(0, 400)}`);
 }
 const tabs = parseTabList(listing.stdout);
-if (!tabs) fail(`unparseable \`tab list --json\` output: ${listing.stdout.slice(0, 200)}`);
+if (!tabs) fail(`unparseable \`tab list --json\` output (${listing.stdout.length} bytes)`);
 
 const pages = tabs.filter((t) => (t.type ?? 'page') === 'page');
 const target = config.target ?? {};
@@ -70,9 +75,10 @@ if (match.length !== 1 && target.url) {
 }
 
 if (match.length !== 1) {
-  const seen = pages.map((t) => `${t.tabId}=${t.url}`).join(', ') || 'none';
+  // Truncate each url: a data: URL tab can be kilobytes on its own.
+  const seen = pages.map((t) => `${t.tabId}=${t.url.slice(0, 60)}`).join(', ') || 'none';
   fail(
-    `expected exactly 1 tab matching url=${target.url || '?'} title=${JSON.stringify(target.title ?? '')} ` +
+    `expected exactly 1 tab matching url=${(target.url || '?').slice(0, 80)} title=${JSON.stringify(target.title ?? '')} ` +
     `but found ${match.length} (visible: ${seen}).`,
   );
 }

@@ -31,9 +31,19 @@ import type { SpawnContext } from '../engines/types';
  */
 export const SOCKET_PATH_LIMIT = 103;
 
-/** Short, stable, collision-resistant name for one app session. */
-export function agentBrowserSessionName(sessionId: string): string {
-  return `bu${createHash('sha256').update(sessionId).digest('hex').slice(0, 10)}`;
+/**
+ * Short, stable, collision-resistant name for one app session.
+ *
+ * The CDP port is part of the identity on purpose. It is chosen at random on
+ * every app launch, but agent-browser's daemon caches the endpoint it first
+ * connected to and ignores `AGENT_BROWSER_CDP` afterwards — so after a restart
+ * a surviving daemon would keep aiming at the dead port and every command would
+ * fail with "All CDP discovery methods failed". Deriving the name from the port
+ * makes a restart produce a new session, and therefore a new daemon; the old one
+ * simply ages out on its idle timeout.
+ */
+export function agentBrowserSessionName(sessionId: string, cdpPort: number | string): string {
+  return `bu${createHash('sha256').update(`${sessionId}:${cdpPort}`).digest('hex').slice(0, 10)}`;
 }
 
 /** Directory materialized from `stock/agent-browser-shim/`; goes on child PATH. */
@@ -44,32 +54,32 @@ export function shimDir(harnessDir: string): string {
 /**
  * Shared by every session — isolation comes from the session name, not from
  * per-session directories, because directory depth is exactly what we cannot
- * afford here.
+ * afford here. Every path helper below takes the already-derived session name.
  */
 export function socketDir(): string {
   return path.join(os.tmpdir(), 'buab');
 }
 
 /** Absolute path agent-browser will bind its Unix socket to. */
-export function socketPath(sessionId: string): string {
-  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.sock`);
+export function socketPath(sessionName: string): string {
+  return path.join(socketDir(), `${sessionName}.sock`);
 }
 
-export function configPath(sessionId: string): string {
-  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.config.json`);
+export function configPath(sessionName: string): string {
+  return path.join(socketDir(), `${sessionName}.config.json`);
 }
 
-export function shimEnvPath(sessionId: string): string {
-  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.shim.env`);
+export function shimEnvPath(sessionName: string): string {
+  return path.join(socketDir(), `${sessionName}.shim.env`);
 }
 
 /** Same content as `shim.env`, in `set "K=V"` form for the `.cmd` shim. */
-export function shimCmdPath(sessionId: string): string {
-  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.shim.cmd`);
+export function shimCmdPath(sessionName: string): string {
+  return path.join(socketDir(), `${sessionName}.shim.cmd`);
 }
 
-export function daemonPidCachePath(sessionId: string): string {
-  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.daemon.pid`);
+export function daemonPidCachePath(sessionName: string): string {
+  return path.join(socketDir(), `${sessionName}.daemon.pid`);
 }
 
 /** Where the agent's user-facing files go; watched by runEngine -> `file_output`. */
@@ -156,6 +166,7 @@ const IDLE_TIMEOUT_MS = '86400000';
 
 export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const shim = shimDir(ctx.harnessDir);
+  const session = agentBrowserSessionName(ctx.sessionId, ctx.cdpPort);
 
   // Shim dir goes FIRST so the agent's `agent-browser` resolves to our wrapper.
   const agentSkill = path.join(ctx.harnessDir, 'agent-skill');
@@ -164,7 +175,7 @@ export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv):
   env[pathKey] = env[pathKey] ? `${prefix}${path.delimiter}${env[pathKey]}` : prefix;
 
   // Read by the real binary itself.
-  env.AGENT_BROWSER_SESSION = agentBrowserSessionName(ctx.sessionId);
+  env.AGENT_BROWSER_SESSION = session;
   env.AGENT_BROWSER_CDP = String(ctx.cdpPort);
   env.AGENT_BROWSER_SOCKET_DIR = socketDir();
   env.AGENT_BROWSER_IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MS;
@@ -180,9 +191,9 @@ export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv):
   env.BU_OUTPUTS_DIR = outputsDir(ctx.harnessDir, ctx.sessionId);
 
   // Read by the shim.
-  env.BU_AGENT_BROWSER_SHIMENV = shimEnvPath(ctx.sessionId);
-  env.BU_AGENT_BROWSER_SHIMCMD = shimCmdPath(ctx.sessionId);
-  env.BU_AGENT_BROWSER_CONFIG = configPath(ctx.sessionId);
+  env.BU_AGENT_BROWSER_SHIMENV = shimEnvPath(session);
+  env.BU_AGENT_BROWSER_SHIMCMD = shimCmdPath(session);
+  env.BU_AGENT_BROWSER_CONFIG = configPath(session);
   if (!ctx.agentBrowserBinary) {
     // bindAgentBrowser surfaces a proper user-visible error before we ever get
     // here; this just keeps the shim from exec'ing a half-configured command.
@@ -196,9 +207,9 @@ export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv):
  * POSIX shim can `.` it without a JSON parser; `*.shim.cmd` is the `set "K=V"`
  * equivalent for Windows; `*.config.json` carries everything rebind.mjs needs.
  */
-export function writeShimFiles(sessionId: string, config: AgentBrowserConfig): void {
+export function writeShimFiles(sessionName: string, config: AgentBrowserConfig): void {
   fs.mkdirSync(socketDir(), { recursive: true });
-  fs.writeFileSync(configPath(sessionId), JSON.stringify(config, null, 2), 'utf-8');
+  fs.writeFileSync(configPath(sessionName), JSON.stringify(config, null, 2), 'utf-8');
 
   const pairs: Array<[string, string]> = [
     ['AB_BIN', config.realBinary],
@@ -210,8 +221,8 @@ export function writeShimFiles(sessionId: string, config: AgentBrowserConfig): v
 
   const shQuote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
   const shBody = pairs.map(([k, v]) => `${k}=${shQuote(v)}`).join('\n') + '\n';
-  fs.writeFileSync(shimEnvPath(sessionId), shBody, { encoding: 'utf-8', mode: 0o600 });
+  fs.writeFileSync(shimEnvPath(sessionName), shBody, { encoding: 'utf-8', mode: 0o600 });
 
   const cmdBody = pairs.map(([k, v]) => `set "${k}=${v.replace(/"/g, '')}"`).join('\r\n') + '\r\n';
-  fs.writeFileSync(shimCmdPath(sessionId), cmdBody, { encoding: 'utf-8', mode: 0o600 });
+  fs.writeFileSync(shimCmdPath(sessionName), cmdBody, { encoding: 'utf-8', mode: 0o600 });
 }

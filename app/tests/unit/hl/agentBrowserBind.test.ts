@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, test } from 'vitest';
-import { selectTab } from '../../../src/main/hl/agent-browser/bind';
+import { parseTabList, selectTab } from '../../../src/main/hl/agent-browser/bind';
 import {
   SOCKET_PATH_LIMIT,
   agentBrowserSessionName,
@@ -95,12 +95,50 @@ describe('selectTab', () => {
   });
 });
 
+describe('parseTabList', () => {
+  /**
+   * Regression: the takeover overlay loads a `data:text/html,…` URL into its own
+   * WebContentsView, so it shows up as a page target whose url is kilobytes of
+   * percent-encoded CSS — full of `{`. Anchoring on the first brace in stdout
+   * landed inside that CSS and made the whole listing unparseable, which failed
+   * every bind while the overlay existed.
+   */
+  test('parses a listing that contains a huge percent-encoded data: URL tab', () => {
+    const encodedCss = encodeURIComponent(
+      'body[data-mode="idle"] { background: #131318; }'.repeat(200),
+    );
+    const payload = JSON.stringify({
+      success: true,
+      data: {
+        tabs: [
+          { active: true, label: null, tabId: 't1', title: 'Takeover', type: 'page', url: `data:text/html;charset=utf-8,${encodedCss}` },
+          { active: false, label: null, tabId: 't2', title: 'Example Domain', type: 'page', url: 'https://example.org/' },
+        ],
+      },
+      error: null,
+    });
+
+    const tabs = parseTabList(payload);
+    expect(tabs).toHaveLength(2);
+    expect(selectTab(tabs!, { url: 'https://example.org/', title: 'Example Domain' })).toBe('t2');
+  });
+
+  test('tolerates a progress glyph before the JSON envelope', () => {
+    const tabs = parseTabList('✓ Done\n{"success":true,"data":{"tabs":[{"tabId":"t1","title":"a","url":"https://a.test","type":"page"}]},"error":null}');
+    expect(tabs).toHaveLength(1);
+  });
+
+  test('returns null for output that holds no JSON at all', () => {
+    expect(parseTabList('agent-browser: command not found')).toBeNull();
+  });
+});
+
 describe('applyAgentBrowserEnv', () => {
   test('points agent-browser at this session and puts the shim first on PATH', () => {
     const ctx = spawnContext();
     const env = applyAgentBrowserEnv(ctx, { PATH: '/usr/bin:/bin' });
 
-    expect(env.AGENT_BROWSER_SESSION).toBe(agentBrowserSessionName('sess-1234'));
+    expect(env.AGENT_BROWSER_SESSION).toBe(agentBrowserSessionName('sess-1234', 51234));
     expect(env.AGENT_BROWSER_CDP).toBe('51234');
     expect(env.AGENT_BROWSER_SOCKET_DIR).toBe(socketDir());
     // A long idle timeout keeps the daemon — and therefore the tab binding —
@@ -128,9 +166,19 @@ describe('applyAgentBrowserEnv', () => {
 
 describe('session naming and socket path budget', () => {
   test('derives a stable, filesystem-safe name from any session id', () => {
-    expect(agentBrowserSessionName('a/b c:d')).toBe(agentBrowserSessionName('a/b c:d'));
-    expect(agentBrowserSessionName('a')).not.toBe(agentBrowserSessionName('b'));
-    expect(agentBrowserSessionName('a/b c:d')).toMatch(/^bu[0-9a-f]+$/);
+    expect(agentBrowserSessionName('a/b c:d', 1)).toBe(agentBrowserSessionName('a/b c:d', 1));
+    expect(agentBrowserSessionName('a', 1)).not.toBe(agentBrowserSessionName('b', 1));
+    expect(agentBrowserSessionName('a/b c:d', 1)).toMatch(/^bu[0-9a-f]+$/);
+  });
+
+  /**
+   * The CDP port is chosen at random on every app launch, but agent-browser's
+   * daemon caches the endpoint it first connected to and ignores
+   * AGENT_BROWSER_CDP afterwards. Folding the port into the session name makes a
+   * restart produce a fresh daemon instead of one aimed at a dead port.
+   */
+  test('changes the session name when the CDP port changes', () => {
+    expect(agentBrowserSessionName('sess-1', 51234)).not.toBe(agentBrowserSessionName('sess-1', 60271));
   });
 
   /**
@@ -142,7 +190,7 @@ describe('session naming and socket path budget', () => {
    */
   test('keeps the socket path under the platform limit for a real UUID session', () => {
     const sessionId = '62257e30-c753-4153-a8d9-b242cbad2987';
-    const bytes = Buffer.byteLength(socketPath(sessionId));
+    const bytes = Buffer.byteLength(socketPath(agentBrowserSessionName(sessionId, 60271)));
     expect(bytes).toBeLessThanOrEqual(SOCKET_PATH_LIMIT);
   });
 
@@ -153,23 +201,23 @@ describe('session naming and socket path budget', () => {
 
 describe('writeShimFiles', () => {
   test('writes a sourceable POSIX env file and a JSON config', () => {
-    const sessionId = 'shim-test-1';
+    const session = agentBrowserSessionName('shim-test-1', 51234);
     const config: AgentBrowserConfig = {
       realBinary: '/usr/local/bin/agent-browser',
       electronPath: '/Applications/App.app/Contents/MacOS/App',
       rebindScript: '/tmp/agent-browser-shim/rebind.mjs',
-      session: agentBrowserSessionName(sessionId),
+      session,
       cdpPort: 51234,
       targetId: 'TARGET-A',
-      pidFile: path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.pid`),
-      pidCache: daemonPidCachePath(sessionId),
-      markerTitle: markerTitleFor(sessionId),
+      pidFile: path.join(socketDir(), `${session}.pid`),
+      pidCache: daemonPidCachePath(session),
+      markerTitle: markerTitleFor('shim-test-1'),
       target: { url: 'about:blank', title: '' },
     };
 
-    writeShimFiles(sessionId, config);
+    writeShimFiles(session, config);
 
-    const sh = fs.readFileSync(shimEnvPath(sessionId), 'utf-8');
+    const sh = fs.readFileSync(shimEnvPath(session), 'utf-8');
     expect(sh).toContain(`AB_BIN='/usr/local/bin/agent-browser'`);
     expect(sh).toContain('AB_PIDFILE=');
     // The shim sources this file, so every line must be a valid assignment.
@@ -177,18 +225,18 @@ describe('writeShimFiles', () => {
       expect(line).toMatch(/^AB_[A-Z]+='.+'$/);
     }
 
-    const onDisk = JSON.parse(fs.readFileSync(configPath(sessionId), 'utf-8')) as AgentBrowserConfig;
+    const onDisk = JSON.parse(fs.readFileSync(configPath(session), 'utf-8')) as AgentBrowserConfig;
     expect(onDisk.targetId).toBe('TARGET-A');
     expect(onDisk.markerTitle).toBe(config.markerTitle);
   });
 
   test('single-quotes a path containing an apostrophe', () => {
-    const sessionId = 'shim-test-apos';
+    const session = agentBrowserSessionName('shim-test-apos', 1);
     const config: AgentBrowserConfig = {
       realBinary: "/Users/o'brien/bin/agent-browser",
       electronPath: '/bin/true',
       rebindScript: '/tmp/rebind.mjs',
-      session: agentBrowserSessionName(sessionId),
+      session,
       cdpPort: 1,
       targetId: 'T',
       pidFile: '/tmp/p.pid',
@@ -197,8 +245,8 @@ describe('writeShimFiles', () => {
       target: { url: '', title: '' },
     };
 
-    writeShimFiles(sessionId, config);
-    const sh = fs.readFileSync(shimEnvPath(sessionId), 'utf-8');
+    writeShimFiles(session, config);
+    const sh = fs.readFileSync(shimEnvPath(session), 'utf-8');
     expect(sh).toContain(`AB_BIN='/Users/o'\\''brien/bin/agent-browser'`);
   });
 });

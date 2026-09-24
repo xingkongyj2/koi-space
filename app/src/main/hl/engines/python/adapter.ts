@@ -136,7 +136,7 @@ const pythonAdapter: EngineAdapter = {
       sessionId: ctx.sessionId,
       targetId: ctx.targetId,
       cdpPort: ctx.cdpPort,
-      agentBrowserSession: agentBrowserSessionName(ctx.sessionId),
+      agentBrowserSession: agentBrowserSessionName(ctx.sessionId, ctx.cdpPort),
       outputsDir: path.join(ctx.harnessDir, 'outputs', ctx.sessionId),
       harnessDir: ctx.harnessDir,
       resumeSessionId: ctx.resumeSessionId ?? null,
