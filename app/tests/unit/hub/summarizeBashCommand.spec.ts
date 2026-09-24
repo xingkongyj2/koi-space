@@ -80,94 +80,66 @@ describe('summarizeBashCommand', () => {
     expect(summarizeBashCommand('cat /a/b/c.md')?.value).toBe('c.md');
   });
 
-  it('maps browser-harness connectToAssignedTarget to "Connected to browser"', () => {
-    const cmd = `/bin/zsh -lc "browser-harness-js 'await connectToAssignedTarget()'"`;
-    expect(summarizeBashCommand(cmd)).toEqual({
-      active: 'Connecting to browser', completed: 'Connected to browser', value: '',
-    });
-  });
-
-  it('maps browser-harness session.connect to "Connected to browser"', () => {
-    expect(summarizeBashCommand(`browser-harness-js 'await session.connect()'`)?.completed)
-      .toBe('Connected to browser');
-  });
-
-  it('extracts the URL from browser-harness Page.navigate (URL is a specific identifier, stays in value)', () => {
-    const cmd = `browser-harness-js 'await session.Page.navigate({url:"https://linkedin.com/mynetwork"})'`;
-    expect(summarizeBashCommand(cmd)).toEqual({
+  it('labels agent-browser open with the URL as the specific value', () => {
+    expect(summarizeBashCommand('agent-browser open https://linkedin.com/mynetwork')).toEqual({
       active: 'Visiting', completed: 'Visited', value: 'https://linkedin.com/mynetwork',
     });
   });
 
-  it('maps browser-harness Page.captureScreenshot to "Took screenshot"', () => {
-    expect(summarizeBashCommand(`browser-harness-js 'await session.Page.captureScreenshot()'`)?.completed)
-      .toBe('Took screenshot');
+  it('labels the goto alias like open', () => {
+    expect(summarizeBashCommand('agent-browser goto https://x.com/home')?.completed).toBe('Visited');
   });
 
-  it('maps browser-harness listPageTargets to "Listed open tabs"', () => {
-    expect(summarizeBashCommand(`browser-harness-js 'await listPageTargets()'`)?.completed)
-      .toBe('Listed open tabs');
-  });
-
-  it('maps browser-harness DOM.querySelector to "Inspected page"', () => {
-    const cmd = `browser-harness-js 'await session.DOM.querySelector({nodeId:1,selector:"h1"})'`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Inspected page');
-  });
-
-  it('maps browser-harness Input.dispatchMouseEvent to "Clicked on page"', () => {
-    expect(summarizeBashCommand(`browser-harness-js 'await session.Input.dispatchMouseEvent({type:"mousePressed",x:1,y:1})'`)?.completed)
-      .toBe('Clicked on page');
-  });
-
-  it('returns null for arbitrary Runtime.evaluate (intent unknowable)', () => {
-    const cmd = `browser-harness-js 'await session.Runtime.evaluate({expression:"window.myCustom()"})'`;
-    expect(summarizeBashCommand(cmd)).toBeNull();
-  });
-
-  it('maps Runtime.evaluate reading document.title to "Looked at page"', () => {
-    const cmd = `browser-harness-js 'await session.Runtime.evaluate({expression:"document.title", returnByValue:true})'`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Looked at page');
-  });
-
-  it('maps Runtime.evaluate reading location.href to "Looked at page"', () => {
-    const cmd = `browser-harness-js 'await session.Runtime.evaluate({expression:"({ url: location.href })", returnByValue:true})'`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Looked at page');
-  });
-
-  it('handles browser-harness inside a heredoc', () => {
-    const cmd = `/bin/zsh -lc "browser-harness-js <<'EOF'\nawait session.Page.navigate({url:'https://linkedin.com'});\nEOF"`;
-    expect(summarizeBashCommand(cmd)?.value).toBe('https://linkedin.com');
-  });
-
-  it('multi-step script with connect+navigate labels the navigation (most informative wins)', () => {
-    const cmd = `/bin/zsh -lc "browser-harness-js <<'EOF'\nawait connectToAssignedTarget()\nawait session.Page.navigate({ url: 'https://x.com' })\nEOF"`;
-    expect(summarizeBashCommand(cmd)).toEqual({
-      active: 'Visiting', completed: 'Visited', value: 'https://x.com',
+  it('labels click with the element ref as value', () => {
+    expect(summarizeBashCommand('agent-browser click @e5')).toEqual({
+      active: 'Clicking', completed: 'Clicked', value: '@e5',
     });
   });
 
-  it('multi-step script with connect+screenshot labels the screenshot', () => {
-    const cmd = `/bin/zsh -lc "browser-harness-js <<'EOF'\nawait connectToAssignedTarget()\nawait session.Page.captureScreenshot({ format: 'png' })\nEOF"`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Took screenshot');
+  it('labels snapshot as reading the page, ignoring its flags', () => {
+    expect(summarizeBashCommand('agent-browser snapshot -i')?.completed).toBe('Read page');
   });
 
-  it('maps page.goto(URL) as "Visited URL" even though the API is Puppeteer-style', () => {
-    const cmd = `browser-harness-js 'await page.goto("https://x.com/home", {waitUntil: "domcontentloaded"})'`;
-    expect(summarizeBashCommand(cmd)).toEqual({
-      active: 'Visiting', completed: 'Visited', value: 'https://x.com/home',
+  it('labels screenshot', () => {
+    expect(summarizeBashCommand('agent-browser screenshot /tmp/shot.png')?.completed).toBe('Took screenshot');
+  });
+
+  it('labels get text with the field as value', () => {
+    expect(summarizeBashCommand('agent-browser get text @e3')).toEqual({
+      active: 'Reading page', completed: 'Read page', value: 'text',
     });
   });
 
-  it('falls back to scanning raw inner when inline quoting is broken (multi-statement scripts)', () => {
-    // No matching outer quotes — extractBrowserHarnessJs returns null, but the
-    // raw inner still contains identifiable CDP calls.
-    const cmd = `browser-harness-js 'await connectToAssignedTarget(); await page.goto("https://x.com/home", {waitUntil: "load"})'`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Visited');
+  it('labels find with the locator kind and value', () => {
+    expect(summarizeBashCommand('agent-browser find role button click --name Submit')).toEqual({
+      active: 'Looking for', completed: 'Looked for', value: 'role button',
+    });
   });
 
-  it('connect-only script still labels as "Connected to browser"', () => {
-    const cmd = `/bin/zsh -lc "browser-harness-js 'await connectToAssignedTarget()'"`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Connected to browser');
+  it('skips global flags when locating the verb', () => {
+    expect(summarizeBashCommand('agent-browser --json open https://example.com')?.value).toBe('https://example.com');
+  });
+
+  it('labels the first browser command in an && chain', () => {
+    const cmd = 'agent-browser open https://example.com && agent-browser snapshot -i';
+    expect(summarizeBashCommand(cmd)).toEqual({
+      active: 'Visiting', completed: 'Visited', value: 'https://example.com',
+    });
+  });
+
+  it('labels agent-browser inside a shell wrapper', () => {
+    expect(summarizeBashCommand(`/bin/zsh -lc "agent-browser open https://x.com"`)?.value).toBe('https://x.com');
+  });
+
+  it('labels an absolute path to the shim like a bare invocation', () => {
+    expect(summarizeBashCommand('/Users/me/harness/agent-browser-shim/agent-browser reload')?.completed)
+      .toBe('Reloaded page');
+  });
+
+  it('falls back to a generic browser label for an unrecognised verb', () => {
+    expect(summarizeBashCommand('agent-browser vitals https://x.com')).toEqual({
+      active: 'Using browser', completed: 'Used browser', value: 'vitals',
+    });
   });
 
   it('maps python -c to Ran Python code', () => {
@@ -219,9 +191,9 @@ describe('summarizeBashCommand', () => {
       .toBe('Reviewed recent changes');
   });
 
-  it('strips leading "cd X &&" before a browser-harness call', () => {
-    const cmd = `/bin/zsh -lc "cd /work && browser-harness-js 'await connectToAssignedTarget()'"`;
-    expect(summarizeBashCommand(cmd)?.completed).toBe('Connected to browser');
+  it('strips leading "cd X &&" before an agent-browser call', () => {
+    const cmd = `/bin/zsh -lc "cd /work && agent-browser press Enter"`;
+    expect(summarizeBashCommand(cmd)?.completed).toBe('Pressed key');
   });
 });
 

@@ -3,11 +3,12 @@
  *
  * BrowserCode inherits opencode's provider/model registry. This adapter uses
  * BrowserCode only as the headless model runtime; native `browser_execute` is
- * disabled so agents use this app's Electron-scoped browser-harness-js runtime.
+ * disabled so agents use this app's Electron-scoped agent-browser binding.
  */
 
 import { register } from '../registry';
-import { applyBrowserHarnessEnv } from '../browserHarnessEnv';
+import { applyAgentBrowserEnv } from '../../agent-browser/env';
+import { browserToolPromptLines } from '../../agent-browser/prompt';
 import { buildSkillIndexPrompt, SKILL_DISCOVERY_AND_LIFECYCLE_LINES, htmlBlockGuidanceLines, optionsBlockGuidanceLines, askBlockGuidanceLines } from '../skillIndexPrompt';
 import { resolveThemeMode } from '../../../themeMode';
 import { enrichedEnv } from '../pathEnrich';
@@ -127,8 +128,6 @@ const browserCodeAdapter: EngineAdapter = {
 
   buildEnv(ctx: SpawnContext, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     const env = enrichedEnv(baseEnv);
-    env.BU_TARGET_ID = ctx.targetId;
-    env.BU_CDP_PORT = String(ctx.cdpPort);
     env.DO_NOT_TRACK = env.DO_NOT_TRACK ?? '1';
 
     const providerId = ctx.providerId ?? 'moonshotai';
@@ -157,7 +156,7 @@ const browserCodeAdapter: EngineAdapter = {
         },
       } : {}),
     });
-    return applyBrowserHarnessEnv(ctx, env);
+    return applyAgentBrowserEnv(ctx, env);
   },
 
   wrapPrompt(ctx: SpawnContext): string {
@@ -172,16 +171,12 @@ const browserCodeAdapter: EngineAdapter = {
     const skillIndexLines = skillIndex ? ['', skillIndex] : [];
     return [
       'You are running inside Browser Use Desktop through BrowserCode.',
-      'You are driving a specific Chromium browser view on this machine.',
-      `Your target is CDP target_id=${ctx.targetId} on port ${ctx.cdpPort} (env BU_TARGET_ID / BU_CDP_PORT).`,
-      'Do not use BrowserCode browser_execute. Read `./AGENTS.md` and use Browser Harness JS from this working directory for browser actions.',
+      ...browserToolPromptLines(),
+      'Do not use BrowserCode browser_execute — it drives a browser outside this app.',
       ...SKILL_DISCOVERY_AND_LIFECYCLE_LINES,
       ...htmlBlockGuidanceLines(resolveThemeMode()),
       ...optionsBlockGuidanceLines(),
       ...askBlockGuidanceLines(),
-      "Use the `browser-harness-js` CLI for browser actions. Start with `browser-harness-js 'await connectToAssignedTarget()'`.",
-      'Do not use old helpers.js convenience APIs for browser control.',
-      'Do not edit harness files unless the user asks or a confirmed Browser Harness JS defect blocks the task.',
       'For terminal commands, use BrowserCode/OpenCode\'s Bash tool and write commands for the current OS/shell it reports.',
       'When producing files, save them to `./outputs/' + ctx.sessionId + '/` and mention the filename in the final answer.',
       ...skillIndexLines,

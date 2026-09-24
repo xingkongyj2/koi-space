@@ -1,16 +1,15 @@
 /**
- * Harness directory bootstrap: seeds `<userData>/harness/` with the Browser
- * Harness JS runtime, provider-neutral agent-skill CLI, and app-specific
- * AGENTS.md. Agents drive the assigned browser target through the vendored
- * `browser-harness-js` CLI. Skills are discovered/created through
- * `agent-skill`.
+ * Harness directory bootstrap: seeds `<userData>/harness/` with the
+ * agent-browser PATH shim, provider-neutral agent-skill CLI, and app-specific
+ * AGENTS.md. Agents drive the assigned browser view through `agent-browser`,
+ * an external native CLI resolved at run time (see `hl/agent-browser/`).
+ * Skills are discovered/created through `agent-skill`.
  *
  * Stock content is bundled via Vite's `?raw` import modifier.
  *
- * Domain skills (`./stock/domain-skills/`) and interaction skills
- * (`./stock/interaction-skills/`) are separate, read-only reference folders.
- * They are fully re-materialized on every launch — the agent consults them but
- * must not edit them (upgrades will clobber any changes).
+ * Domain skills (`./stock/domain-skills/`) are separate, read-only reference
+ * folders. They are fully re-materialized on every launch — the agent consults
+ * them but must not edit them (upgrades will clobber any changes).
  *
  * User-created skills live under `<userData>/harness/skills/` and are
  * persistent. They are never replaced by bootstrap.
@@ -21,7 +20,6 @@ import path from 'node:path';
 import { app } from 'electron';
 import { mainLogger } from '../logger';
 
-import STOCK_HELPERS_JS from './stock/helpers.js?raw';
 import STOCK_SKILL_MD from './stock/AGENTS.md?raw';
 
 // Bundled domain-skills tree. Vite eagerly inlines every file under
@@ -33,14 +31,8 @@ const STOCK_DOMAIN_SKILLS = import.meta.glob('./stock/domain-skills/**/*', {
   import: 'default',
   eager: true,
 }) as Record<string, string>;
-const INTERACTION_SKILLS_PREFIX = './stock/interaction-skills/';
-const STOCK_INTERACTION_SKILLS = import.meta.glob('./stock/interaction-skills/**/*', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-const BROWSER_HARNESS_JS_PREFIX = './stock/browser-harness-js/';
-const STOCK_BROWSER_HARNESS_JS = import.meta.glob('./stock/browser-harness-js/**/*', {
+const AGENT_BROWSER_SHIM_PREFIX = './stock/agent-browser-shim/';
+const STOCK_AGENT_BROWSER_SHIM = import.meta.glob('./stock/agent-browser-shim/**/*', {
   query: '?raw',
   import: 'default',
   eager: true,
@@ -56,12 +48,10 @@ export function harnessDir(): string {
   return path.join(app.getPath('userData'), 'harness');
 }
 
-export function helpersPath(): string { return path.join(harnessDir(), 'helpers.js'); }
 export function toolsPath(): string { return path.join(harnessDir(), 'TOOLS.json'); }
 export function skillPath(): string { return path.join(harnessDir(), 'AGENTS.md'); }
 export function domainSkillsDir(): string { return path.join(harnessDir(), 'domain-skills'); }
-export function interactionSkillsDir(): string { return path.join(harnessDir(), 'interaction-skills'); }
-export function browserHarnessJsDir(): string { return path.join(harnessDir(), 'browser-harness-js'); }
+export function agentBrowserShimDir(): string { return path.join(harnessDir(), 'agent-browser-shim'); }
 export function agentSkillDir(): string { return path.join(harnessDir(), 'agent-skill'); }
 export function userSkillsDir(): string { return path.join(harnessDir(), 'skills'); }
 
@@ -118,14 +108,13 @@ export function skillIdToPath(skillId: string, rootDir: string = harnessDir()): 
 
 /**
  * Ensure `<userData>/harness/` exists and contains the stock files.
- * - Writes helpers.js if missing OR if the on-disk version predates the
- *   browser-harness-js bridge.
  * - Writes AGENTS.md if missing or stale.
- * - Removes stale TOOLS.json from the legacy dispatcher path.
- * - Fully replaces Browser Harness JS runtime, domain skills, and interaction
- *   skills from the bundle.
- * Manual edits to the up-to-date helpers.js / AGENTS.md are preserved as an
- * escape hatch, but app-spawned agents should normally use the bundled CLI.
+ * - Removes stale TOOLS.json from the legacy dispatcher path, and the legacy
+ *   helpers.js / browser-harness-js / interaction-skills trees that agent-browser
+ *   replaced.
+ * - Fully replaces the agent-browser shim, agent-skill CLI, and domain skills
+ *   from the bundle.
+ * Manual edits to an up-to-date AGENTS.md are preserved as an escape hatch.
  */
 export function bootstrapHarness(): void {
   const dir = harnessDir();
@@ -134,16 +123,6 @@ export function bootstrapHarness(): void {
   } catch (err) {
     mainLogger.error('harness.bootstrap.mkdir.failed', { dir, error: (err as Error).message });
     throw err;
-  }
-
-  const hp = helpersPath();
-  const needsHelpers = !fs.existsSync(hp) || (() => {
-    try { return !fs.readFileSync(hp, 'utf-8').includes('browser-harness-js bridge'); }
-    catch { return true; }
-  })();
-  if (needsHelpers) {
-    fs.writeFileSync(hp, STOCK_HELPERS_JS as string, 'utf-8');
-    mainLogger.info('harness.bootstrap.wroteHelpers', { path: hp, bytes: (STOCK_HELPERS_JS as string).length });
   }
 
   const sp = skillPath();
@@ -162,11 +141,11 @@ export function bootstrapHarness(): void {
   }
 
   removeLegacyToolsJson();
+  removeLegacyBrowserHarness();
 
   ensureUserSkillsDir();
   materializeAgentSkill();
-  materializeBrowserHarnessJs();
-  materializeInteractionSkills();
+  materializeAgentBrowserShim();
   materializeDomainSkills();
 }
 
@@ -186,22 +165,13 @@ function materializeDomainSkills(): void {
   });
 }
 
-function materializeInteractionSkills(): void {
+function materializeAgentBrowserShim(): void {
   materializeRawTree({
-    target: interactionSkillsDir(),
-    prefix: INTERACTION_SKILLS_PREFIX,
-    entries: Object.entries(STOCK_INTERACTION_SKILLS),
-    logName: 'interactionSkills',
-  });
-}
-
-function materializeBrowserHarnessJs(): void {
-  materializeRawTree({
-    target: browserHarnessJsDir(),
-    prefix: BROWSER_HARNESS_JS_PREFIX,
-    entries: Object.entries(STOCK_BROWSER_HARNESS_JS),
-    logName: 'browserHarnessJs',
-    executableBasenames: new Set(['browser-harness-js']),
+    target: agentBrowserShimDir(),
+    prefix: AGENT_BROWSER_SHIM_PREFIX,
+    entries: Object.entries(STOCK_AGENT_BROWSER_SHIM),
+    logName: 'agentBrowserShim',
+    executableBasenames: new Set(['agent-browser']),
   });
 }
 
@@ -233,6 +203,30 @@ function removeLegacyToolsJson(): void {
     mainLogger.info('harness.bootstrap.removedLegacyTools', { path: tp });
   } catch (err) {
     mainLogger.warn('harness.bootstrap.removeLegacyTools.failed', { path: tp, error: (err as Error).message });
+  }
+}
+
+/**
+ * Existing users have the browser-harness-js runtime materialized in userData
+ * from every previous launch. Nothing rewrites those paths now, so without this
+ * the stale CLI would stay on disk and — worse — stay reachable if an old
+ * AGENTS.md or a user-created skill still names it.
+ */
+function removeLegacyBrowserHarness(): void {
+  const dir = harnessDir();
+  const stale = [
+    path.join(dir, 'helpers.js'),
+    path.join(dir, 'browser-harness-js'),
+    path.join(dir, 'interaction-skills'),
+  ];
+  for (const target of stale) {
+    if (!fs.existsSync(target)) continue;
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      mainLogger.info('harness.bootstrap.removedLegacyHarness', { path: target });
+    } catch (err) {
+      mainLogger.warn('harness.bootstrap.removeLegacyHarness.failed', { path: target, error: (err as Error).message });
+    }
   }
 }
 

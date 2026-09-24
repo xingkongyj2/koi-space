@@ -17,6 +17,7 @@ function spawnContext(): SpawnContext {
     sessionId: 'session-123',
     targetId: 'target-123',
     cdpPort: 9222,
+    agentBrowserBinary: '/usr/local/bin/agent-browser',
     resumeSessionId: 'resume-123',
     providerId: 'alibaba',
     model: 'alibaba/qwen3-coder-plus',
@@ -28,7 +29,6 @@ function parseContext(): ParseContext {
   return {
     iter: 0,
     pendingTools: new Map(),
-    harnessHelpersPath: '/tmp/harness/helpers.js',
     harnessToolsPath: '/tmp/harness/TOOLS.json',
     harnessSkillPath: '/tmp/harness/skill.md',
   };

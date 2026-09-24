@@ -365,15 +365,19 @@ function ownerForRow(owner: ResourceOwner, descendant: boolean): ResourceOwner {
   };
 }
 
+/**
+ * agent-browser keeps one background daemon per session. Unlike the vendored
+ * harness it replaced, the daemon learns its session from the environment
+ * (AGENT_BROWSER_SOCKET_DIR) rather than argv, so a process-table scan cannot
+ * tell which session a daemon belongs to. Attribute it generically — the
+ * CPU/RSS still shows up, just not under a specific session.
+ */
 function harnessOwnerFromCommand(command: string): ResourceOwner | null {
-  if (!/browser-harness-js\/sdk\/repl\.ts/u.test(command)) return null;
-  const sessionId = command.match(/--resource-session=([^\s]+)/u)?.[1];
-  if (!sessionId || sessionId === 'unknown') return null;
+  if (!/(?:^|[\s/\\])agent-browser(?:-\w+)?(?:\.js)?(?:\s|$)/u.test(command)) return null;
   return {
     kind: 'harness',
-    component: 'browser-harness-js',
-    sessionId,
-    label: `harness:${sessionId.slice(0, 8)}`,
+    component: 'agent-browser',
+    label: 'harness:agent-browser',
   };
 }
 

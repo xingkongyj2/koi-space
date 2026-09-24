@@ -167,7 +167,7 @@ tasks:
       - npm run start:reset-sessions
 
   windows:agent:run:
-    desc: "Windows: submit a task to a running local app, e.g. task windows:agent:run PROMPT='open example.com' ENGINE=codex"
+    desc: "Windows: submit a task to a running local app, e.g. task windows:agent:run PROMPT='open example.com' ENGINE=python"
     platforms: [windows]
     silent: true
     env:
@@ -181,7 +181,7 @@ tasks:
         const engine=(process.env.TASK_ENGINE||'').trim();
         const json=process.env.TASK_JSON==='1';
         if (prompt.length === 0) {
-        console.error('Set PROMPT, e.g. task windows:agent:run PROMPT=open-example ENGINE=codex');
+        console.error('Set PROMPT, e.g. task windows:agent:run PROMPT=open-example ENGINE=python');
         process.exit(1);
         }
         const args=['app/scripts/run-task.mjs'];
@@ -395,7 +395,7 @@ tasks:
         Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs @PrettyArgs"
 
   agent:run:
-    desc: Submit a task to a running local app, e.g. task agent:run PROMPT='open example.com' ENGINE=codex
+    desc: Submit a task to a running local app, e.g. task agent:run PROMPT='open example.com' ENGINE=python
     silent: true
     cmds:
       - |
@@ -403,7 +403,7 @@ tasks:
         ENGINE="{{default "" .ENGINE}}"
         JSON="{{default "" .JSON}}"
         if [ -z "$PROMPT" ]; then
-          echo "Set PROMPT, e.g. task agent:run PROMPT='open example.com and report the title' ENGINE=codex"
+          echo "Set PROMPT, e.g. task agent:run PROMPT='open example.com and report the title' ENGINE=python"
           exit 1
         fi
         if [ -n "$ENGINE" ] && [ "$JSON" = "1" ]; then

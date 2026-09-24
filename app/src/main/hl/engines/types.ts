@@ -12,7 +12,7 @@ import type { HlEvent } from '../../../shared/session-schemas';
 export interface SpawnContext {
   /** User prompt to feed to the CLI. Adapters may wrap with seed/system text. */
   prompt: string;
-  /** Absolute path to <userData>/harness/ (AGENTS.md + browser-harness-js live here). */
+  /** Absolute path to <userData>/harness/ (AGENTS.md + the agent-browser shim live here). */
   harnessDir: string;
   /** App session id (used for naming uploads/outputs dirs + env injection). */
   sessionId: string;
@@ -20,6 +20,10 @@ export interface SpawnContext {
   targetId: string;
   /** Port Electron exposes CDP on. */
   cdpPort: number;
+  /** Absolute path to the real `agent-browser` binary, resolved during bind.
+   *  Null only when it is not installed, in which case the run fails before
+   *  spawn — adapters still get a stable field to read. */
+  agentBrowserBinary: string | null;
   /** If set, ask the CLI to continue a prior conversation with this id. */
   resumeSessionId?: string;
   /** Optional user-supplied API key; adapter decides how to inject. */
@@ -38,7 +42,6 @@ export interface ParseContext {
   /** In-flight tool calls keyed by engine-specific tool id for pairing with results. */
   pendingTools: Map<string, { name: string; startedAt: number; iter: number }>;
   /** Harness file paths, for harness_edited / skill_used detection. */
-  harnessHelpersPath: string;
   harnessToolsPath: string;
   harnessSkillPath: string;
   /** Last agent-facing narrative text seen this turn; adapters that don't

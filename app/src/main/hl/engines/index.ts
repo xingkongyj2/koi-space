@@ -4,8 +4,8 @@
  */
 
 // Adapters (side-effect register()):
+import './python/adapter';
 import './claude-code/adapter';
-import './codex/adapter';
 import './browsercode/adapter';
 
 export { runEngine } from './runEngine';

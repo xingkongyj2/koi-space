@@ -32,6 +32,14 @@ vi.mock('electron', () => ({
 
 vi.mock('../../../src/main/identity/authStore', () => authMocks);
 
+// runEngine binds agent-browser to the session's CDP target before spawning.
+// These tests have no real browser behind port 9222, and binding is orthogonal
+// to what they exercise, so stub it out as an already-successful bind.
+vi.mock('../../../src/main/hl/agent-browser/bind', () => ({
+  bindAgentBrowser: vi.fn(async () => ({ ok: true, binaryPath: '/usr/local/bin/agent-browser', tabId: 't1' })),
+  watchTargetFingerprint: vi.fn(() => () => undefined),
+}));
+
 const { register } = await import('../../../src/main/hl/engines/registry');
 const { runEngine } = await import('../../../src/main/hl/engines/runEngine');
 
@@ -43,6 +51,10 @@ function createWebContents() {
       detach: vi.fn(),
       sendCommand: vi.fn(async () => ({ targetInfo: { targetId: 'target-1' } })),
     },
+    getURL: vi.fn(() => 'about:blank'),
+    getTitle: vi.fn(() => ''),
+    on: vi.fn(),
+    off: vi.fn(),
   };
 }
 
@@ -50,7 +62,6 @@ function prepareHarness(): string {
   const harnessDir = path.join(mockState.userData, 'harness');
   fs.rmSync(harnessDir, { recursive: true, force: true });
   fs.mkdirSync(harnessDir, { recursive: true });
-  fs.writeFileSync(path.join(harnessDir, 'helpers.js'), 'module.exports = {};\n');
   fs.writeFileSync(path.join(harnessDir, 'TOOLS.json'), '{}\n');
   fs.writeFileSync(path.join(harnessDir, 'AGENTS.md'), '# Harness\n');
   return harnessDir;
@@ -117,10 +128,10 @@ describe('runEngine harness watcher', () => {
     fs.rmSync(mockState.userData, { recursive: true, force: true });
   });
 
-  test('emits harness_edited from an actual helpers.js content change before done', async () => {
+  test('emits harness_edited from an actual AGENTS.md content change before done', async () => {
     const script = [
       "const fs = require('node:fs');",
-      "fs.appendFileSync('helpers.js', '\\n// changed by fake engine\\n');",
+      "fs.appendFileSync('AGENTS.md', '\\n<!-- changed by fake engine -->\\n');",
       "console.log(JSON.stringify({ type: 'done' }));",
     ].join('\n');
     const engineId = registerFakeEngine(script, (line) => {
@@ -137,9 +148,9 @@ describe('runEngine harness watcher', () => {
     expect(doneIndex).toBeGreaterThan(harnessIndex);
     expect(events[harnessIndex]).toMatchObject({
       type: 'harness_edited',
-      target: 'helpers',
+      target: 'tools',
       action: 'patch',
-      path: path.join(harnessDir, 'helpers.js'),
+      path: path.join(harnessDir, 'AGENTS.md'),
     });
   });
 
@@ -181,7 +192,7 @@ describe('runEngine harness watcher', () => {
           events: [{
             type: 'tool_call',
             name: 'edit',
-            args: { file_path: 'helpers.js' },
+            args: { file_path: 'AGENTS.md' },
             iteration: 1,
           }],
         };

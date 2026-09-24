@@ -30,6 +30,7 @@ function spawnContext(resumeSessionId?: string): SpawnContext {
     sessionId: 'session-123',
     targetId: 'target-123',
     cdpPort: 9222,
+    agentBrowserBinary: '/usr/local/bin/agent-browser',
     resumeSessionId,
     attachmentRefs: [],
   };

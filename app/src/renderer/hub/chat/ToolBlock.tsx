@@ -67,8 +67,8 @@ type OutputRender =
 /**
  * YAML-ish flattening of a parsed JSON value. Long / multi-line string fields
  * are emitted as `key: |` block scalars so embedded \n actually render as
- * real line breaks — that's the readability problem with browser-harness-js
- * payloads like `{url, title, bodyText}` where bodyText is multi-paragraph.
+ * real line breaks — that's the readability problem with browser tool payloads
+ * like `{url, title, bodyText}` where bodyText is multi-paragraph.
  */
 function toReadableYaml(value: unknown, indent = 0): string {
   const pad = '  '.repeat(indent);

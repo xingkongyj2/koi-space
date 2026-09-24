@@ -12,8 +12,9 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { engineLogger } from '../../logger';
-import { resolveAuth, loadOpenAIKey, loadClaudeSubscriptionType, loadBrowserCodeConfig } from '../../identity/authStore';
-import { helpersPath, skillPath, skillMetaFromPath as resolveSkillMetaFromPath } from '../harness';
+import { resolveAuth, loadClaudeSubscriptionType, loadBrowserCodeConfig } from '../../identity/authStore';
+import { skillPath, skillMetaFromPath as resolveSkillMetaFromPath } from '../harness';
+import { bindAgentBrowser, watchTargetFingerprint } from '../agent-browser/bind';
 import { get as getAdapter } from './registry';
 import { spawnCli } from './cliSpawn';
 import { registerResourceOwner, unregisterResourceOwner } from '../../resourceMonitor';
@@ -99,7 +100,21 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     return;
   }
 
-  // 2. Prepare uploads/ + outputs/ dirs, write attachments to disk.
+  // 2. Point agent-browser at this session's view before the agent starts.
+  //    agent-browser has no notion of a CDP targetId, so this is where
+  //    targetId gets translated into one of its tab ids. Doing it here rather
+  //    than lazily inside the agent means a missing binary or an ambiguous tab
+  //    becomes a user-visible error instead of the agent quietly driving
+  //    whichever page agent-browser happened to pick.
+  const bindParams = { harnessDir: opts.harnessDir, sessionId: opts.sessionId, targetId, cdpPort: opts.cdpPort };
+  const bound = await bindAgentBrowser(bindParams, opts.webContents);
+  if (!bound.ok) {
+    engineLogger.error('agentBrowser.bind.failed', { engineId: opts.engineId, sessionId: opts.sessionId, error: bound.error });
+    opts.onEvent({ type: 'error', message: bound.error ?? 'Failed to bind agent-browser to this session\'s browser view.' });
+    return;
+  }
+
+  // 3. Prepare uploads/ + outputs/ dirs, write attachments to disk.
   const uploadsDir = path.join(opts.harnessDir, 'uploads', opts.sessionId);
   const outputsDir = path.join(opts.harnessDir, 'outputs', opts.sessionId);
   try {
@@ -126,7 +141,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     }
   }
 
-  // 3. Resolve auth. Per-engine keychain slots: Claude reads the Anthropic
+  // 4. Resolve auth. Per-engine keychain slots: Claude reads the Anthropic
   //    key via resolveAuth(), Codex reads its OpenAI slot. Each adapter gets
   //    the key appropriate to its provider so we can't accidentally send an
   //    Anthropic key to OpenAI (or vice versa).
@@ -135,10 +150,11 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   let model: string | undefined;
   let cliAuthed = false;
   try {
-    if (adapter.id === 'codex') {
-      const k = await loadOpenAIKey();
-      if (k) savedApiKey = k;
-      cliAuthed = (await adapter.probeAuthed()).authed;
+    if (adapter.id === 'python') {
+      // The app's own backend. Any model access it grows is configured inside
+      // app/python, so there is no provider key to inject and no CLI OAuth to
+      // detect — sessions on this engine simply carry no provider auth.
+      cliAuthed = false;
     } else if (adapter.id === 'browsercode') {
       const cfg = await loadBrowserCodeConfig();
       if (cfg?.apiKey) savedApiKey = cfg.apiKey;
@@ -157,8 +173,8 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   }
   // Headline auth-path log — greppable: `session.auth.path`. Tells you
   // which of the three cases this session falls into:
-  //   - 'apiKey'       → using saved API key (ANTHROPIC / OPENAI env var)
-  //   - 'subscription' → using the CLI's own OAuth (Claude Keychain / Codex auth.json)
+  //   - 'apiKey'       → using saved API key (ANTHROPIC env var)
+  //   - 'subscription' → using the CLI's own OAuth (Claude Keychain)
   //   - 'both'         → both are available; we chose `chosen` (apiKey wins
   //                      because the adapter's buildEnv sets the env var when
   //                      savedApiKey is present)
@@ -185,15 +201,10 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   const resolvedAuthMode: 'apiKey' | 'subscription' | null = chosen === 'none' ? null : chosen;
   let resolvedSubType: string | null = null;
   if (resolvedAuthMode === 'subscription') {
-    if (adapter.id === 'codex') {
-      // Codex CLI does not expose Plus vs Pro locally; use a generic label.
-      resolvedSubType = 'chatgpt';
-    } else {
-      try {
-        resolvedSubType = await loadClaudeSubscriptionType();
-      } catch (err) {
-        engineLogger.warn('engines.run.subType.loadFailed', { error: (err as Error).message });
-      }
+    try {
+      resolvedSubType = await loadClaudeSubscriptionType();
+    } catch (err) {
+      engineLogger.warn('engines.run.subType.loadFailed', { error: (err as Error).message });
     }
   }
   engineLogger.info('session.auth.resolved', {
@@ -218,13 +229,14 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     catch (err) { engineLogger.warn('engines.run.onModelResolved.threw', { source: 'config', error: (err as Error).message }); }
   }
 
-  // 4. Build spawn context + let adapter compose args/env/prompt.
+  // 5. Build spawn context + let adapter compose args/env/prompt.
   const spawnCtx: SpawnContext = {
     prompt: opts.prompt,
     harnessDir: opts.harnessDir,
     sessionId: opts.sessionId,
     targetId,
     cdpPort: opts.cdpPort,
+    agentBrowserBinary: bound.binaryPath,
     resumeSessionId: opts.resumeSessionId,
     savedApiKey,
     providerId,
@@ -261,15 +273,14 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   const stdinPayload = adapter.getStdinPayload?.(spawnCtx, wrappedPrompt);
   const stdinMode: 'pipe' | 'ignore' = stdinPayload != null ? 'pipe' : 'ignore';
 
-  const harnessHelpersAbs = path.resolve(helpersPath());
   const harnessSkillAbs = path.resolve(skillPath());
 
   const watchedHarnessFiles: HarnessFileWatch[] = [
-    { path: harnessHelpersAbs, basename: path.basename(harnessHelpersAbs), target: 'helpers', hash: hashFile(harnessHelpersAbs) ?? null },
     { path: harnessSkillAbs, basename: path.basename(harnessSkillAbs), target: 'tools', hash: hashFile(harnessSkillAbs) ?? null },
   ];
 
   const useProcessGroup = process.platform !== 'win32';
+  let stopFingerprintWatch: (() => void) | null = null;
   let child: ChildProcessWithoutNullStreams;
   try {
     child = spawnCli(adapter.binaryName, args, {
@@ -285,6 +296,9 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
       engineId: adapter.id,
       label: `${adapter.id}:${opts.sessionId.slice(0, 8)}`,
     });
+    // Keeps shim-config.json's url/title fingerprint current so the shim can
+    // re-resolve the tab if agent-browser's daemon dies mid-run.
+    stopFingerprintWatch = watchTargetFingerprint(bindParams, opts.webContents);
   } catch (err) {
     opts.onEvent({ type: 'error', message: `spawn_failed: ${(err as Error).message}` });
     return;
@@ -381,7 +395,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   };
   opts.signal?.addEventListener('abort', onAbort);
 
-  // 5. Outputs watcher — emits one file_output event per completed file write.
+  // 6. Outputs watcher — emits one file_output event per completed file write.
   //    `fs.watch` fires repeatedly while a file is being written; if we emit
   //    on every change we get multiple events per file (one per intermediate
   //    size during the write). Debounce per filename and emit only after the
@@ -448,6 +462,8 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   const closeWatchers = (): void => {
     try { outputsWatcher?.close(); } catch { /* already closed */ }
     try { harnessWatcher?.close(); } catch { /* already closed */ }
+    stopFingerprintWatch?.();
+    stopFingerprintWatch = null;
     for (const timer of harnessCheckTimers.values()) clearTimeout(timer);
     harnessCheckTimers.clear();
     for (const timer of outputsTimers.values()) clearTimeout(timer);
@@ -521,7 +537,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     engineLogger.warn('engines.run.harnessWatch.watchFailed', { harnessDir: opts.harnessDir, error: (err as Error).message });
   }
 
-  // 6. Generic post-processor over tool_call events: detect skill edits and
+  // 7. Generic post-processor over tool_call events: detect skill edits and
   //    reads. Harness edits are emitted by the file watcher above, using actual
   //    file content as the source of truth instead of provider-specific tool
   //    metadata.
@@ -601,7 +617,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     const extra: HlEvent[] = [];
     if (isWrite) {
       const action = /edit|patch/i.test(e.name) ? 'patch' : 'write';
-      if (resolved !== harnessHelpersAbs && resolved !== harnessSkillAbs) {
+      if (resolved !== harnessSkillAbs) {
         const m = skillMetaFromPath(resolved);
         if (m) extra.push({ type: 'skill_written', path: resolved, domain: m.domain, topic: m.topic, bytes: 0, action });
       }
@@ -615,7 +631,6 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   const parseCtx: ParseContext = {
     iter: 0,
     pendingTools: new Map(),
-    harnessHelpersPath: harnessHelpersAbs,
     harnessToolsPath: '',
     harnessSkillPath: harnessSkillAbs,
   };

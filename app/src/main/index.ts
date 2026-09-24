@@ -129,8 +129,8 @@ import {
   verifyCdpOwnership,
 } from './startup/cli';
 import { assertString, assertAttachments, type ValidatedAttachment } from './ipc-validators';
-// Agent loop: CLI subprocess driving the browser harness. Engine is
-// pluggable (claude-code, codex, …) — see src/main/hl/engines/.
+// Agent loop: engine subprocess driving the browser via agent-browser. Engine is
+// pluggable (python, claude-code, …) — see src/main/hl/engines/.
 import { bootstrapHarness, harnessDir, skillIdToPath, skillMetaFromPath } from './hl/harness';
 import { runEngine, DEFAULT_ENGINE_ID } from './hl/engines';
 import type { EngineRunControl } from './hl/engines/types';
@@ -207,8 +207,9 @@ let onboardingWindow: BrowserWindow | null = null;
 let isQuitting = false;
 
 const sessionManager = new SessionManager(path.join(app.getPath('userData'), 'sessions.db'));
-// Bootstrap the editable helpers harness — writes stock helpers.js + TOOLS.json
-// to <userData>/harness/ on first run, preserves user edits on subsequent runs.
+// Bootstrap the harness — writes stock AGENTS.md, the agent-skill CLI, the
+// agent-browser shim, and domain skills to <userData>/harness/, and clears out
+// the browser-harness-js runtime it replaced.
 bootstrapHarness();
 const browserPool = new BrowserPool();
 const sessionScreencast = new SessionScreencast(browserPool);

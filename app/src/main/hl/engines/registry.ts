@@ -27,4 +27,4 @@ export function list(): EngineAdapter[] {
 }
 
 /** Preferred default when a session has no engine set. */
-export const DEFAULT_ENGINE_ID = 'claude-code';
+export const DEFAULT_ENGINE_ID = 'python';

@@ -1,24 +1,27 @@
 # Legacy Harness Self-Edit Test
 
-Historical notes from the pre-`browser-harness-js` helper/`TOOLS.json` harness.
-This is not runtime guidance for app-spawned agents.
+Historical notes about the harness self-edit escape hatch. This is not runtime
+guidance for app-spawned agents — `AGENTS.md` is.
 
-Browser Harness JS should cover normal browser automation. Treat harness edits
-as an escape hatch only when the user explicitly asks for them, or when a
-confirmed harness/runtime defect blocks the task.
+Browser automation runs through `agent-browser`, an external CLI the app binds
+to the session's view before the agent starts. Treat harness edits as an escape
+hatch only when the user explicitly asks for them, or when a confirmed defect
+blocks the task.
 
 ## Files that matter
 
-- `helpers.js` — now a small compatibility bridge to `browser-harness-js`, not
-  a normal extension surface.
-- `AGENTS.md` — the app-specific browser harness manual.
-- `browser-harness-js/` — bundled runtime; app launches may replace it.
+- `AGENTS.md` — the app-specific harness manual.
+- `agent-browser-shim/` — the PATH shim that keeps the session bound to its own
+  browser view; app launches replace it.
+- `domain-skills/` — site playbooks, synced from upstream; app launches replace it.
 
 ## Legacy notes
 
-The old model used `helpers.js` implementations plus `TOOLS.json` schemas.
-That model has been removed from the desktop runtime. Do not revive it for
-ordinary browser tasks.
+Two earlier browser runtimes have been removed from the desktop app: the
+`helpers.js` + `TOOLS.json` dispatcher, and the vendored `browser-harness-js`
+CDP REPL (plus its `interaction-skills/` recipes). Do not revive either for
+ordinary browser tasks — `agent-browser skills get core --full` covers browser
+mechanics now.
 
 ## If an edit is unavoidable
 

@@ -34,10 +34,6 @@ const INSTALLERS: Record<string, InstallSpec> = {
       return 'curl -fsSL https://claude.ai/install.sh | bash';
     },
   },
-  codex: {
-    displayName: 'Codex',
-    command: () => 'npm install -g @openai/codex',
-  },
   browsercode: {
     displayName: 'BrowserCode',
     command: (platform) => {

@@ -18,11 +18,10 @@ vi.mock('electron', () => ({
 }));
 
 const {
+  agentBrowserShimDir,
   agentSkillDir,
   bootstrapHarness,
-  browserHarnessJsDir,
-  helpersPath,
-  interactionSkillsDir,
+  harnessDir,
   skillIdToPath,
   skillPath,
   skillPathFromMeta,
@@ -30,7 +29,7 @@ const {
   userSkillsDir,
 } = await import('../../../src/main/hl/harness');
 
-describe('bootstrapHarness browser-harness-js materialization', () => {
+describe('bootstrapHarness agent-browser materialization', () => {
   beforeEach(() => {
     fs.rmSync(path.join(mockState.userData, 'harness'), { recursive: true, force: true });
   });
@@ -39,14 +38,15 @@ describe('bootstrapHarness browser-harness-js materialization', () => {
     fs.rmSync(mockState.userData, { recursive: true, force: true });
   });
 
-  test('writes Browser Harness JS runtime and removes legacy TOOLS.json', () => {
+  test('writes the agent-browser shim and removes legacy TOOLS.json', () => {
     fs.mkdirSync(path.dirname(toolsPath()), { recursive: true });
     fs.writeFileSync(toolsPath(), '{}\n');
 
     bootstrapHarness();
 
-    const cli = path.join(browserHarnessJsDir(), 'sdk', 'browser-harness-js');
-    const cliCmd = path.join(browserHarnessJsDir(), 'sdk', 'browser-harness-js.cmd');
+    const shim = path.join(agentBrowserShimDir(), 'agent-browser');
+    const shimCmd = path.join(agentBrowserShimDir(), 'agent-browser.cmd');
+    const rebind = path.join(agentBrowserShimDir(), 'rebind.mjs');
     const agentSkill = path.join(agentSkillDir(), 'agent-skill');
     const userSkill = path.join(userSkillsDir(), 'general', 'existing', 'SKILL.md');
     fs.mkdirSync(path.dirname(userSkill), { recursive: true });
@@ -54,34 +54,47 @@ describe('bootstrapHarness browser-harness-js materialization', () => {
 
     bootstrapHarness();
 
-    expect(fs.existsSync(helpersPath())).toBe(true);
-    expect(fs.readFileSync(skillPath(), 'utf-8')).toContain('Browser Harness JS');
+    expect(fs.readFileSync(skillPath(), 'utf-8')).toContain('agent-browser');
     expect(fs.existsSync(toolsPath())).toBe(false);
-    expect(fs.existsSync(cli)).toBe(true);
+    expect(fs.existsSync(shim)).toBe(true);
+    expect(fs.existsSync(rebind)).toBe(true);
     expect(fs.existsSync(agentSkill)).toBe(true);
     expect(fs.existsSync(path.join(agentSkillDir(), 'agent-skill.cmd'))).toBe(true);
     expect(fs.existsSync(userSkill)).toBe(true);
-    // Windows launcher ships alongside the bash script so Codex can find it
-    // via PATHEXT (.CMD) instead of hitting the no-handler popup on the
-    // extensionless bash file.
-    expect(fs.existsSync(cliCmd)).toBe(true);
-    expect(fs.readFileSync(cliCmd, 'utf-8')).toContain('bash.exe');
-    expect(fs.existsSync(path.join(interactionSkillsDir(), 'screenshots.md'))).toBe(true);
+    // Windows launcher ships alongside the POSIX shim so Codex can find it via
+    // PATHEXT (.CMD) instead of hitting the no-handler popup on the
+    // extensionless shell script.
+    expect(fs.existsSync(shimCmd)).toBe(true);
+    expect(fs.readFileSync(shimCmd, 'utf-8')).toContain('BU_AGENT_BROWSER_SHIMCMD');
     // Executable-bit assert: skipped on Windows because NTFS permission
     // mapping doesn't expose POSIX exec bits the way the test asserts.
     if (process.platform !== 'win32') {
-      expect(fs.statSync(cli).mode & 0o111).not.toBe(0);
+      expect(fs.statSync(shim).mode & 0o111).not.toBe(0);
       expect(fs.statSync(agentSkill).mode & 0o111).not.toBe(0);
     }
+  });
+
+  test('clears the browser-harness-js runtime left behind by older versions', () => {
+    const dir = harnessDir();
+    const legacyCli = path.join(dir, 'browser-harness-js', 'sdk', 'browser-harness-js');
+    fs.mkdirSync(path.dirname(legacyCli), { recursive: true });
+    fs.writeFileSync(legacyCli, '#!/bin/sh\n');
+    fs.writeFileSync(path.join(dir, 'helpers.js'), 'module.exports = {};\n');
+    fs.mkdirSync(path.join(dir, 'interaction-skills'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'interaction-skills', 'screenshots.md'), '# legacy\n');
+
+    bootstrapHarness();
+
+    expect(fs.existsSync(path.join(dir, 'browser-harness-js'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'helpers.js'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'interaction-skills'))).toBe(false);
   });
 
   test('rejects traversal and absolute skill IDs before converting to paths', () => {
     const root = path.join(mockState.userData, 'harness');
 
     expect(skillIdToPath('domain/github/repo', root)).toBe(path.join(root, 'domain-skills', 'github/repo.md'));
-    expect(skillIdToPath('interaction/screenshots.md', root)).toBe(path.join(root, 'interaction-skills', 'screenshots.md'));
     expect(skillIdToPath("'domain/github/repo'", root)).toBe(path.join(root, 'domain-skills', 'github/repo.md'));
-    expect(skillIdToPath('"interaction/screenshots.md"', root)).toBe(path.join(root, 'interaction-skills', 'screenshots.md'));
     expect(skillIdToPath('domain/../secret', root)).toBeNull();
     expect(skillIdToPath('domain/./github', root)).toBeNull();
     expect(skillIdToPath('domain//github', root)).toBeNull();

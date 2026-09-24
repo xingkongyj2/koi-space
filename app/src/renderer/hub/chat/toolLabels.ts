@@ -350,75 +350,80 @@ export function stripShellWrapper(cmd: string): string {
 type Pattern = { re: RegExp; build: (m: RegExpMatchArray) => BashSummary };
 
 /**
- * Pattern-match the JS body of a `browser-harness-js '<JS>'` (or heredoc)
- * invocation. The harness API is well-defined in
- * `app/src/main/hl/stock/browser-harness-js/SKILL.md` — each match below
- * corresponds to a single, unambiguous CDP method. Anything not matched
- * returns null so the caller can fall through rather than guess.
+ * Label an `agent-browser <verb> …` invocation.
+ *
+ * agent-browser is verb-first, so intent reads straight off the command — no
+ * JS-payload sniffing. For chained commands (`a && b`) we label the first
+ * browser invocation, which is the one the user sees the page react to.
  */
 // Rendering convention for these summaries:
 //   • The `value` slot is shown muted/secondary in the chat pill — reserve it
-//     for SPECIFIC IDENTIFIERS (URLs, filenames, branches, search patterns).
-//   • When the action's target is a generic noun ("browser", "page", "tests"),
-//     fold the noun into the bold label and leave value empty. Otherwise the
-//     chip reads awkwardly: bold "Connected to" + muted "the browser".
-// Ordered most-specific to least. Scripts often bundle `connect + navigate +
-// evaluate` — when that happens the *user-visible* action (navigate, click,
-// screenshot) should label the pill, not the scaffolding (`connect`). So
-// connect/auto-detect sit at the bottom.
-const BROWSER_JS_PATTERNS: Pattern[] = [
-  // page.goto(URL) — Puppeteer-style call. Not in our harness API, but agents
-  // try it routinely and the intent (navigate) is unambiguous from the call
-  // shape. Treat as a navigate.
-  { re: /\bpage\.goto\s*\(\s*['"`]([^'"`]+)['"`]/, build: (m) => ({ active: 'Visiting', completed: 'Visited', value: m[1] }) },
-  // Input — explicit user-driven actions
-  { re: /\bInput\.dispatchMouseEvent\b/, build: () => ({ active: 'Clicking on page', completed: 'Clicked on page', value: '' }) },
-  { re: /\bInput\.insertText\b/, build: () => ({ active: 'Typing on page', completed: 'Typed on page', value: '' }) },
-  { re: /\bInput\.dispatchKeyEvent\b/, build: () => ({ active: 'Pressing key', completed: 'Pressed key', value: '' }) },
-  // Navigation — surface URL as the specific value when present
-  { re: /\bPage\.navigate\b[\s\S]*?url\s*:\s*['"`]([^'"`]+)['"`]/, build: (m) => ({ active: 'Visiting', completed: 'Visited', value: m[1] }) },
-  { re: /\bPage\.navigate\b/, build: () => ({ active: 'Visiting page', completed: 'Visited page', value: '' }) },
-  { re: /\bPage\.reload\b/, build: () => ({ active: 'Reloading page', completed: 'Reloaded page', value: '' }) },
-  // Captures
-  { re: /\bPage\.captureScreenshot\b/, build: () => ({ active: 'Taking screenshot', completed: 'Took screenshot', value: '' }) },
-  { re: /\bPage\.printToPDF\b/, build: () => ({ active: 'Saving page as PDF', completed: 'Saved page as PDF', value: '' }) },
-  // DOM inspection
-  { re: /\bDOM\.(?:querySelector|getDocument|describeNode|getAttributes|getOuterHTML)\b/, build: () => ({ active: 'Inspecting page', completed: 'Inspected page', value: '' }) },
-  // Runtime.evaluate — only mapped when the expression reads well-known
-  // document/location properties (the agent's bread-and-butter state read).
-  // Anything else falls through — arbitrary JS, intent unknowable.
-  {
-    re: /\bRuntime\.evaluate\b[\s\S]*?expression\s*:\s*['"`][\s\S]*?(?:document\.title|document\.body|document\.readyState|location\.href|location\.host)/,
-    build: () => ({ active: 'Looking at page', completed: 'Looked at page', value: '' }),
-  },
-  // Tabs / targets
-  { re: /\blistPageTargets\s*\(/, build: () => ({ active: 'Listing open tabs', completed: 'Listed open tabs', value: '' }) },
-  { re: /\bsession\.use\s*\(/, build: () => ({ active: 'Switching tab', completed: 'Switched tab', value: '' }) },
-  { re: /\bTarget\.closeTarget\b/, build: () => ({ active: 'Closing tab', completed: 'Closed tab', value: '' }) },
-  { re: /\bdetectBrowsers\s*\(/, build: () => ({ active: 'Looking for open browsers', completed: 'Looked for open browsers', value: '' }) },
-  // Connection — scaffolding, lowest priority
-  { re: /\bconnectToAssignedTarget\s*\(/, build: () => ({ active: 'Connecting to browser', completed: 'Connected to browser', value: '' }) },
-  { re: /\bsession\.connect\s*\(/, build: () => ({ active: 'Connecting to browser', completed: 'Connected to browser', value: '' }) },
-];
+//     for SPECIFIC IDENTIFIERS (URLs, filenames, keys, search text).
+//   • When the action's target is a generic noun ("page", "browser"), fold the
+//     noun into the bold label and leave value empty. Otherwise the chip reads
+//     awkwardly: bold "Clicked on" + muted "the page".
+const AGENT_BROWSER_LABELS: Record<string, (rest: string[]) => BashSummary> = {
+  open: (r) => (r[0]
+    ? { active: 'Visiting', completed: 'Visited', value: r[0] }
+    : { active: 'Visiting page', completed: 'Visited page', value: '' }),
+  back: () => ({ active: 'Going back', completed: 'Went back', value: '' }),
+  forward: () => ({ active: 'Going forward', completed: 'Went forward', value: '' }),
+  reload: () => ({ active: 'Reloading page', completed: 'Reloaded page', value: '' }),
+  click: (r) => ({ active: 'Clicking', completed: 'Clicked', value: r[0] ?? '' }),
+  dblclick: (r) => ({ active: 'Double-clicking', completed: 'Double-clicked', value: r[0] ?? '' }),
+  hover: (r) => ({ active: 'Hovering over', completed: 'Hovered over', value: r[0] ?? '' }),
+  focus: (r) => ({ active: 'Focusing', completed: 'Focused', value: r[0] ?? '' }),
+  type: () => ({ active: 'Typing on page', completed: 'Typed on page', value: '' }),
+  fill: () => ({ active: 'Filling in field', completed: 'Filled in field', value: '' }),
+  press: (r) => ({ active: 'Pressing key', completed: 'Pressed key', value: r[0] ?? '' }),
+  keyboard: () => ({ active: 'Typing on page', completed: 'Typed on page', value: '' }),
+  mouse: () => ({ active: 'Moving mouse', completed: 'Moved mouse', value: '' }),
+  select: () => ({ active: 'Choosing dropdown option', completed: 'Chose dropdown option', value: '' }),
+  check: () => ({ active: 'Ticking checkbox', completed: 'Ticked checkbox', value: '' }),
+  uncheck: () => ({ active: 'Unticking checkbox', completed: 'Unticked checkbox', value: '' }),
+  scroll: () => ({ active: 'Scrolling page', completed: 'Scrolled page', value: '' }),
+  scrollintoview: (r) => ({ active: 'Scrolling to', completed: 'Scrolled to', value: r[0] ?? '' }),
+  drag: () => ({ active: 'Dragging on page', completed: 'Dragged on page', value: '' }),
+  upload: () => ({ active: 'Uploading file', completed: 'Uploaded file', value: '' }),
+  download: () => ({ active: 'Downloading file', completed: 'Downloaded file', value: '' }),
+  snapshot: () => ({ active: 'Reading page', completed: 'Read page', value: '' }),
+  screenshot: () => ({ active: 'Taking screenshot', completed: 'Took screenshot', value: '' }),
+  pdf: () => ({ active: 'Saving page as PDF', completed: 'Saved page as PDF', value: '' }),
+  eval: () => ({ active: 'Running JavaScript on page', completed: 'Ran JavaScript on page', value: '' }),
+  wait: () => ({ active: 'Waiting for page', completed: 'Waited for page', value: '' }),
+  find: (r) => ({ active: 'Looking for', completed: 'Looked for', value: r.slice(0, 2).join(' ') }),
+  get: (r) => ({ active: 'Reading page', completed: 'Read page', value: r[0] ?? '' }),
+  is: (r) => ({ active: 'Checking page', completed: 'Checked page', value: r[0] ?? '' }),
+  console: () => ({ active: 'Checking console output', completed: 'Checked console output', value: '' }),
+  errors: () => ({ active: 'Checking page errors', completed: 'Checked page errors', value: '' }),
+  network: () => ({ active: 'Checking network requests', completed: 'Checked network requests', value: '' }),
+  cookies: () => ({ active: 'Reading cookies', completed: 'Read cookies', value: '' }),
+  storage: () => ({ active: 'Reading page storage', completed: 'Read page storage', value: '' }),
+  highlight: (r) => ({ active: 'Highlighting', completed: 'Highlighted', value: r[0] ?? '' }),
+  clipboard: () => ({ active: 'Using clipboard', completed: 'Used clipboard', value: '' }),
+};
 
-function summarizeBrowserHarnessJs(code: string): BashSummary | null {
-  for (const { re, build } of BROWSER_JS_PATTERNS) {
-    const m = code.match(re);
-    if (m) return build(m);
+/** Global flags that swallow the next token, so verb detection skips both. */
+const AGENT_BROWSER_VALUE_FLAGS = new Set(['--session', '--cdp', '--profile', '--namespace', '--model', '-p']);
+
+const AGENT_BROWSER_VERB_ALIASES: Record<string, string> = {
+  goto: 'open',
+  navigate: 'open',
+  key: 'press',
+  scrollto: 'scrollintoview',
+};
+
+function summarizeAgentBrowser(cmd: string): BashSummary {
+  const parts = cmd.split(/\s+/).filter(Boolean);
+  let i = 1; // parts[0] is the agent-browser invocation itself (possibly a path)
+  while (i < parts.length && parts[i].startsWith('-')) {
+    i += AGENT_BROWSER_VALUE_FLAGS.has(parts[i]) ? 2 : 1;
   }
-  return null;
-}
-
-/**
- * Extract the JS payload from a `browser-harness-js` invocation, handling
- * both inline (`browser-harness-js 'CODE'`) and heredoc (`<<EOF…EOF`) forms.
- */
-function extractBrowserHarnessJs(cmd: string): string | null {
-  const inline = cmd.match(/^(?:\S*\/)?browser-harness(?:-js)?\s+(['"])([\s\S]+)\1\s*$/);
-  if (inline) return inline[2];
-  const here = cmd.match(/^(?:\S*\/)?browser-harness(?:-js)?\s+<<-?\s*['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\1/);
-  if (here) return here[2];
-  return null;
+  const verb = parts[i]?.toLowerCase();
+  if (!verb) return { active: 'Using browser', completed: 'Used browser', value: '' };
+  const build = AGENT_BROWSER_LABELS[AGENT_BROWSER_VERB_ALIASES[verb] ?? verb];
+  if (!build) return { active: 'Using browser', completed: 'Used browser', value: verb };
+  return build(parts.slice(i + 1).filter((p) => !p.startsWith('-')));
 }
 
 // Plain-English labels. Optimized for a non-technical observer watching the
@@ -538,17 +543,11 @@ export function summarizeBashCommand(rawCmd: string | undefined): BashSummary | 
   // paths (cd "/Application Support/…") since those have embedded spaces.
   inner = inner.replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/, '');
 
-  // browser-harness-js: pattern-match the JS payload to identify the CDP call.
-  // When the inline quoting is malformed (truncated previews, multi-statement
-  // scripts with unbalanced quotes, etc.) extractBrowserHarnessJs gives up —
-  // fall back to scanning the raw inner string, since the same method calls
-  // we look for are unambiguous wherever they appear.
-  if (/^(?:\S*\/)?browser-harness(?:-js)?\b/.test(inner)) {
-    const js = extractBrowserHarnessJs(inner) ?? inner;
-    const browserSummary = summarizeBrowserHarnessJs(js);
-    if (browserSummary) return browserSummary;
-    return null;
-  }
+  // agent-browser: intent reads off the verb. Agents chain browser commands
+  // with `&&`, so look for the first invocation anywhere in the string rather
+  // than requiring it to be the leading token.
+  const browserMatch = inner.match(/(?:^|[\s&;|(])(\S*\/?agent-browser\b[\s\S]*)/);
+  if (browserMatch) return summarizeAgentBrowser(browserMatch[1]);
 
   for (const { re, build } of BASH_PATTERNS) {
     const m = inner.match(re);

@@ -17,7 +17,6 @@ module.exports = [
       'dist/**',
       'node_modules/**',
       'docker/agent/dist/**',
-      'src/main/hl/stock/browser-harness-js/sdk/**',
       // JS files were never linted under the old --ext .ts,.tsx flag
       '**/*.js',
       '**/*.mjs',

@@ -122,7 +122,7 @@ function parseArgs(argv) {
     json: false,
     keepFixtures: false,
     output: '',
-    liveEngines: (process.env.SKILLS_EVAL_ENGINES || process.env.SKILLS_EVAL_ENGINE || 'codex')
+    liveEngines: (process.env.SKILLS_EVAL_ENGINES || process.env.SKILLS_EVAL_ENGINE || 'python')
       .split(',')
       .map((engine) => engine.trim())
       .filter(Boolean),
@@ -265,7 +265,7 @@ function waitForLiveSession(userDataDir, sessionId, deadlineMs) {
 function runLiveNoWriteTask(task, opts) {
   const started = performance.now();
   const userDataDir = resolveUserDataDir(opts);
-  const engines = opts.liveEngines.length > 0 ? opts.liveEngines : ['codex'];
+  const engines = opts.liveEngines.length > 0 ? opts.liveEngines : ['python'];
   const runs = [];
 
   for (const engine of engines) {
