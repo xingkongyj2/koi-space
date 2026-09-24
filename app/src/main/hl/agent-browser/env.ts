@@ -17,12 +17,23 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { enrichedPath } from '../engines/pathEnrich';
 import type { SpawnContext } from '../engines/types';
 
-/** agent-browser session names become socket filenames; keep them boring. */
+/**
+ * agent-browser refuses to start when `<socketDir>/<session>.sock` would exceed
+ * the platform's Unix socket path limit (103 bytes on macOS — it validates this
+ * itself and exits 1). Everything about these names is therefore budgeted for
+ * length: a hashed session id instead of the raw UUID, and a short socket dir
+ * under tmpdir instead of under userData, whose path already eats most of the
+ * budget (`…/Library/Application Support/Browser Use/harness/…`).
+ */
+export const SOCKET_PATH_LIMIT = 103;
+
+/** Short, stable, collision-resistant name for one app session. */
 export function agentBrowserSessionName(sessionId: string): string {
-  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '-');
-  return `bu-${safe}`.slice(0, 100);
+  return `bu${createHash('sha256').update(sessionId).digest('hex').slice(0, 10)}`;
 }
 
 /** Directory materialized from `stock/agent-browser-shim/`; goes on child PATH. */
@@ -31,29 +42,34 @@ export function shimDir(harnessDir: string): string {
 }
 
 /**
- * Per-session agent-browser state. Lives under the harness dir rather than
- * `~/.agent-browser` so a session's daemon cannot collide with — or be
- * disturbed by — the user's own agent-browser usage.
+ * Shared by every session — isolation comes from the session name, not from
+ * per-session directories, because directory depth is exactly what we cannot
+ * afford here.
  */
-export function socketDir(harnessDir: string, sessionId: string): string {
-  return path.join(harnessDir, 'agent-browser', 'sockets', sessionId.replace(/[^A-Za-z0-9._-]/g, '-'));
+export function socketDir(): string {
+  return path.join(os.tmpdir(), 'buab');
 }
 
-export function configPath(harnessDir: string, sessionId: string): string {
-  return path.join(socketDir(harnessDir, sessionId), 'shim-config.json');
+/** Absolute path agent-browser will bind its Unix socket to. */
+export function socketPath(sessionId: string): string {
+  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.sock`);
 }
 
-export function shimEnvPath(harnessDir: string, sessionId: string): string {
-  return path.join(socketDir(harnessDir, sessionId), 'shim.env');
+export function configPath(sessionId: string): string {
+  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.config.json`);
+}
+
+export function shimEnvPath(sessionId: string): string {
+  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.shim.env`);
 }
 
 /** Same content as `shim.env`, in `set "K=V"` form for the `.cmd` shim. */
-export function shimCmdPath(harnessDir: string, sessionId: string): string {
-  return path.join(socketDir(harnessDir, sessionId), 'shim.cmd');
+export function shimCmdPath(sessionId: string): string {
+  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.shim.cmd`);
 }
 
-export function daemonPidCachePath(harnessDir: string, sessionId: string): string {
-  return path.join(socketDir(harnessDir, sessionId), 'daemon.pid');
+export function daemonPidCachePath(sessionId: string): string {
+  return path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.daemon.pid`);
 }
 
 /** Where the agent's user-facing files go; watched by runEngine -> `file_output`. */
@@ -103,12 +119,18 @@ function isExecutable(file: string): boolean {
 }
 
 /**
- * Find the real agent-browser on PATH, skipping `excludeDirs` so we never
- * resolve our own shim. Returns an absolute path or null.
+ * Find the real agent-browser, skipping `excludeDirs` so we never resolve our
+ * own shim. Returns an absolute path or null.
+ *
+ * Searched over the *enriched* PATH, not the process PATH: a Dock-launched
+ * Electron app inherits a minimal PATH with no nvm/Homebrew/volta dirs, and
+ * `npm install -g agent-browser` lands in exactly those. Every other CLI in this
+ * app is resolved the same way (see engines/pathEnrich.ts).
  */
 export function resolveAgentBrowserBinary(env: NodeJS.ProcessEnv = process.env, excludeDirs: string[] = []): string | null {
   const pathKey = IS_WIN && Object.prototype.hasOwnProperty.call(env, 'Path') ? 'Path' : 'PATH';
-  const dirs = (env[pathKey] ?? '').split(path.delimiter).filter(Boolean);
+  const enriched = enrichedPath(env[pathKey], { env });
+  const dirs = enriched.split(path.delimiter).filter(Boolean);
   const excluded = new Set(excludeDirs.map((d) => path.resolve(d)));
   for (const dir of dirs) {
     if (excluded.has(path.resolve(dir))) continue;
@@ -118,14 +140,6 @@ export function resolveAgentBrowserBinary(env: NodeJS.ProcessEnv = process.env, 
     for (const candidate of candidates) {
       if (isExecutable(candidate)) return candidate;
     }
-  }
-  // npm's global prefix is not always on a GUI-launched app's PATH.
-  const home = os.homedir();
-  const fallbacks = IS_WIN
-    ? [path.join(env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'npm', 'agent-browser.cmd')]
-    : [path.join(home, '.npm-global', 'bin', 'agent-browser'), '/opt/homebrew/bin/agent-browser', '/usr/local/bin/agent-browser'];
-  for (const candidate of fallbacks) {
-    if (isExecutable(candidate)) return candidate;
   }
   return null;
 }
@@ -141,8 +155,6 @@ export function resolveAgentBrowserBinary(env: NodeJS.ProcessEnv = process.env, 
 const IDLE_TIMEOUT_MS = '86400000';
 
 export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const session = agentBrowserSessionName(ctx.sessionId);
-  const sockDir = socketDir(ctx.harnessDir, ctx.sessionId);
   const shim = shimDir(ctx.harnessDir);
 
   // Shim dir goes FIRST so the agent's `agent-browser` resolves to our wrapper.
@@ -152,9 +164,9 @@ export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv):
   env[pathKey] = env[pathKey] ? `${prefix}${path.delimiter}${env[pathKey]}` : prefix;
 
   // Read by the real binary itself.
-  env.AGENT_BROWSER_SESSION = session;
+  env.AGENT_BROWSER_SESSION = agentBrowserSessionName(ctx.sessionId);
   env.AGENT_BROWSER_CDP = String(ctx.cdpPort);
-  env.AGENT_BROWSER_SOCKET_DIR = sockDir;
+  env.AGENT_BROWSER_SOCKET_DIR = socketDir();
   env.AGENT_BROWSER_IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MS;
   // Deliberately NOT setting AGENT_BROWSER_SCREENSHOT_DIR: that would route
   // every screenshot into the watched outputs dir and flood the chat with the
@@ -168,9 +180,9 @@ export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv):
   env.BU_OUTPUTS_DIR = outputsDir(ctx.harnessDir, ctx.sessionId);
 
   // Read by the shim.
-  env.BU_AGENT_BROWSER_SHIMENV = shimEnvPath(ctx.harnessDir, ctx.sessionId);
-  env.BU_AGENT_BROWSER_SHIMCMD = shimCmdPath(ctx.harnessDir, ctx.sessionId);
-  env.BU_AGENT_BROWSER_CONFIG = configPath(ctx.harnessDir, ctx.sessionId);
+  env.BU_AGENT_BROWSER_SHIMENV = shimEnvPath(ctx.sessionId);
+  env.BU_AGENT_BROWSER_SHIMCMD = shimCmdPath(ctx.sessionId);
+  env.BU_AGENT_BROWSER_CONFIG = configPath(ctx.sessionId);
   if (!ctx.agentBrowserBinary) {
     // bindAgentBrowser surfaces a proper user-visible error before we ever get
     // here; this just keeps the shim from exec'ing a half-configured command.
@@ -180,15 +192,13 @@ export function applyAgentBrowserEnv(ctx: SpawnContext, env: NodeJS.ProcessEnv):
 }
 
 /**
- * Write the files the shim consumes. `shim.env` is plain `KEY=value` so the
- * POSIX shim can `.` it without a JSON parser; `shim.cmd` is the `set "K=V"`
- * equivalent for Windows; `shim-config.json` carries everything rebind.mjs
- * needs.
+ * Write the files the shim consumes. `*.shim.env` is plain `KEY=value` so the
+ * POSIX shim can `.` it without a JSON parser; `*.shim.cmd` is the `set "K=V"`
+ * equivalent for Windows; `*.config.json` carries everything rebind.mjs needs.
  */
-export function writeShimFiles(harnessDir: string, sessionId: string, config: AgentBrowserConfig): void {
-  const dir = socketDir(harnessDir, sessionId);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(configPath(harnessDir, sessionId), JSON.stringify(config, null, 2), 'utf-8');
+export function writeShimFiles(sessionId: string, config: AgentBrowserConfig): void {
+  fs.mkdirSync(socketDir(), { recursive: true });
+  fs.writeFileSync(configPath(sessionId), JSON.stringify(config, null, 2), 'utf-8');
 
   const pairs: Array<[string, string]> = [
     ['AB_BIN', config.realBinary],
@@ -200,8 +210,8 @@ export function writeShimFiles(harnessDir: string, sessionId: string, config: Ag
 
   const shQuote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
   const shBody = pairs.map(([k, v]) => `${k}=${shQuote(v)}`).join('\n') + '\n';
-  fs.writeFileSync(shimEnvPath(harnessDir, sessionId), shBody, { encoding: 'utf-8', mode: 0o600 });
+  fs.writeFileSync(shimEnvPath(sessionId), shBody, { encoding: 'utf-8', mode: 0o600 });
 
   const cmdBody = pairs.map(([k, v]) => `set "${k}=${v.replace(/"/g, '')}"`).join('\r\n') + '\r\n';
-  fs.writeFileSync(shimCmdPath(harnessDir, sessionId), cmdBody, { encoding: 'utf-8', mode: 0o600 });
+  fs.writeFileSync(shimCmdPath(sessionId), cmdBody, { encoding: 'utf-8', mode: 0o600 });
 }

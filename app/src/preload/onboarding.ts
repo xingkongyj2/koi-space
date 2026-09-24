@@ -76,21 +76,7 @@ const onboardingAPI = {
   openClaudeLoginTerminal: (): Promise<{ opened: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:open-claude-login-terminal'),
 
-  detectCodex: (): Promise<{
-    available: boolean;
-    installed: boolean;
-    authed: boolean;
-    version: string | null;
-    error?: string | null;
-  }> => ipcRenderer.invoke('onboarding:detect-codex'),
-
-  useCodex: (): Promise<{ ok: boolean }> =>
-    ipcRenderer.invoke('onboarding:use-codex'),
-
-  openCodexLoginTerminal: (opts?: { deviceAuth?: boolean }): Promise<{ opened: boolean; error?: string; verificationUrl?: string; deviceCode?: string }> =>
-    ipcRenderer.invoke('onboarding:open-codex-login-terminal', opts),
-
-  installEngine: (engineId: 'claude-code' | 'codex'): Promise<{
+  installEngine: (engineId: 'claude-code'): Promise<{
     opened: boolean;
     completed?: boolean;
     exitCode?: number | null;
@@ -109,12 +95,6 @@ const onboardingAPI = {
 
   testApiKey: (key: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:test-api-key', key),
-
-  saveOpenAIKey: (key: string): Promise<void> =>
-    ipcRenderer.invoke('onboarding:save-openai-key', key),
-
-  testOpenAIKey: (key: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:test-openai-key', key),
 
   getPlatform: (): Promise<string> => ipcRenderer.invoke('shell:get-platform'),
 

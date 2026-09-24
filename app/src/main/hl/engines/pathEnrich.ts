@@ -100,8 +100,6 @@ const POSIX_EXTRA_DIRS_FNS: Array<(home: string, platform: Platform, env: NodeJS
   () => '/usr/local/bin',
   () => '/usr/local/sbin',
   (_home, _platform, _env, pathMod) => platformDir(pathMod, '/snap/bin'),
-  (_home, platform) => platform === 'darwin' ? '/Applications/Codex.app/Contents/Resources' : null,
-  (home, platform, _env, pathMod) => platform === 'darwin' ? pathMod.join(home, 'Applications', 'Codex.app', 'Contents', 'Resources') : null,
   (home, _platform, _env, pathMod) => pathMod.join(home, '.npm-global', 'bin'),
   (home, _platform, _env, pathMod) => pathMod.join(home, '.npm-packages', 'bin'),
   (home, _platform, _env, pathMod) => pathMod.join(home, '.volta', 'bin'),
@@ -225,8 +223,8 @@ export function enrichedEnv(baseEnv: NodeJS.ProcessEnv = process.env, opts: Omit
 
 /**
  * Windows CreateProcess can't execute `.cmd` / `.bat` shims directly — it only
- * runs true `.exe` files. npm-installed CLIs (like `codex`) ship as `.cmd`
- * shims with no `.exe`, so a plain `spawn('codex', …)` returns ENOENT (-4058)
+ * runs true `.exe` files. npm-installed CLIs (like `claude`) ship as `.cmd`
+ * shims with no `.exe`, so a plain `spawn('claude', …)` returns ENOENT (-4058)
  * even though the command works fine in any shell.
  *
  * `resolveCliSpawn` finds the actual file the OS would run (PATHEXT order),
@@ -343,7 +341,7 @@ export function resolveCliSpawn(
   // of escaped quotes — cmd.exe then sees `"\"path args\""`, the backslashes
   // are literal (cmd doesn't recognize `\"` as an escape), and the whole
   // mess is treated as a single program name. Verified against Win11 +
-  // GitHub Actions windows-latest in tests/unit/hl/codexStdinWindows.test.ts.
+  // GitHub Actions windows-latest in tests/unit/pathEnrich.test.ts.
   const cmdline = [resolved, ...args].map(quoteForCmdExe).join(' ');
   return {
     command: env.ComSpec || 'cmd.exe',
@@ -366,7 +364,7 @@ export interface CliLaunchSpec extends ResolvedCli {
  *
  * Windows gets the same PATH enrichment, then adds shim resolution for npm's
  * `.cmd`/`.ps1` launchers so callers can keep passing plain names like
- * `codex` or `claude` without knowing how the package manager installed them.
+ * `claude` or `bcode` without knowing how the package manager installed them.
  */
 export function resolveCliLaunch(
   name: string,

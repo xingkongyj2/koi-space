@@ -5,7 +5,7 @@
  * extractor must produce the same logical sequence of (text, html_block,
  * text, …) events. This file pins down the contract with both
  * synthetic stress tests and engine-flavored fixtures derived from how
- * claude-code, codex, and browsercode/opencode actually emit deltas.
+ * claude-code and browsercode/opencode actually emit deltas.
  *
  * Conventions:
  *   - "stream(s, n)" = split `s` into n-character chunks (worst-case
@@ -273,18 +273,17 @@ describe('htmlBlocks — engine fixtures', () => {
     });
   });
 
-  // codex (src/main/hl/engines/codex/adapter.ts:230)
-  // Emits a single `thinking` per agent_message item — chunks tend to
-  // be whole paragraphs rather than tokens. Fences therefore arrive
-  // mostly-intact, but the opener and closer can sit at the very edge
-  // of a chunk.
-  describe('codex: paragraph-sized chunks', () => {
-    const codexChunks = [
+  // Engines that report a whole agent message at once emit a single
+  // `thinking` per message — chunks tend to be whole paragraphs rather
+  // than tokens. Fences therefore arrive mostly-intact, but the opener
+  // and closer can sit at the very edge of a chunk.
+  describe('paragraph-sized chunks', () => {
+    const paragraphChunks = [
       'I will lay out the steps as an HTML plan so you can read it at a glance.\n\n',
       '```html\n<ol>\n  <li>Inventory call sites</li>\n  <li>Replace one at a time</li>\n  <li>Run the integration suite</li>\n</ol>\n```\n',
       'Each step is independent — feel free to reorder.',
     ];
-    const events = extractAll(codexChunks);
+    const events = extractAll(paragraphChunks);
     it('separates prose, block, prose in order', () => {
       expect(events.map((e) => e.kind)).toEqual(['text', 'html_block', 'text']);
     });

@@ -23,7 +23,7 @@ extras object — pass an `Error` and it expands into `{error, stack, name}`.
 ## Console formatting
 
 ```
-[EnginePicker] refreshStatus.request {ids: ['codex', 'claude-code']}
+[EnginePicker] refreshStatus.request {ids: ['claude-code', 'python']}
 [EnginePicker] engineInstall failed {error: '...', stack: '...', name: 'Error'}
 ```
 

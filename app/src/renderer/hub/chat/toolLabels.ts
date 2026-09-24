@@ -266,7 +266,7 @@ export interface BashResult {
 
 /**
  * Decode a JSON-encoded string field manually — handles \n, \t, \", \\ and
- * \uXXXX. Used as a fallback when JSON.parse fails because the codex adapter
+ * \uXXXX. Used as a fallback when JSON.parse fails because an adapter
  * sliced the result to 2000 chars and broke the JSON tail.
  */
 function decodeJsonString(s: string): string {

@@ -28,7 +28,7 @@ source of truth. This module exists so we can:
 
 In this codebase a `thinking` HlEvent is the **assistant's streaming
 output text** (mapped from `content_block_delta.text_delta` in the
-claude-code adapter, `agent_message` in codex, etc.) — NOT
+claude-code adapter, etc.) — NOT
 chain-of-thought reasoning. The transform therefore maps `thinking`
 to a `text` part.
 

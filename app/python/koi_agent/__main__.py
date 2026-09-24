@@ -13,15 +13,12 @@ the Executor seam. Replace the body of `analyze()`; leave the protocol alone.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from dataclasses import dataclass
 
 from . import browser, protocol
 
-FALLBACK_URL = "https://example.com"
-
-_URL_RE = re.compile(r"(?:https?://[^\s'\"<>]+|(?:[\w-]+\.)+[a-z]{2,}(?:/[^\s'\"<>]*)?)", re.IGNORECASE)
+FIXED_URL = "https://v.qq.com/"
 
 
 @dataclass(frozen=True)
@@ -35,17 +32,12 @@ class Plan:
 def analyze(prompt: str) -> Plan:
     """Turn a user request into an action.
 
-    Placeholder intelligence: pull the first URL out of the prompt. When there is
-    none, fall back to a fixed target so the end-to-end chain is still exercised
-    and visible in the browser view.
+    Deliberately hardcoded: every task opens the same site, so the whole chain
+    (UI -> main process -> this agent -> agent-browser -> browser view) can be
+    verified without any model in the loop. `prompt` is unused for now and is
+    the seam the Planner and Decision modules from `koi/Koi方案设计.md` take over.
     """
-    match = _URL_RE.search(prompt or "")
-    if match:
-        url = match.group(0)
-        if not url.startswith(("http://", "https://")):
-            url = f"https://{url}"
-        return Plan(url=url, rationale="found a URL in the request")
-    return Plan(url=FALLBACK_URL, rationale=f"no URL in the request; using the fixed target {FALLBACK_URL}")
+    return Plan(url=FIXED_URL, rationale="fixed target — no analysis yet")
 
 
 def read_task() -> dict:

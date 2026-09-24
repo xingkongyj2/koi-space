@@ -186,7 +186,7 @@ describe('SessionManager persistence', () => {
     const first = new SessionManager(dbPath);
     const id = first.createSession('Open example.com');
 
-    first.setSessionEngine(id, 'codex');
+    first.setSessionEngine(id, 'python');
     first.setEngineSessionId(id, 'thread-123');
     first.updateNavigationFromUrl(id, 'https://example.com/docs?tab=api');
     first.updateNavigationFromUrl(id, 'about:blank');
@@ -198,7 +198,7 @@ describe('SessionManager persistence', () => {
     expect(session?.primarySite).toBe('example.com');
     expect(session?.lastUrl).toBe('https://example.com/docs?tab=api');
     expect(session?.canResume).toBe(true);
-    expect(second.getSessionEngine(id)).toBe('codex');
+    expect(second.getSessionEngine(id)).toBe('python');
     expect(second.getEngineSessionId(id)).toBe('thread-123');
 
     second.destroy();

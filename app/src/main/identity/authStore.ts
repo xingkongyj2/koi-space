@@ -1,7 +1,6 @@
 /**
  * Stores user-managed credentials only:
  *   - Anthropic API key (manual entry; alternative to subscription)
- *   - OpenAI API key (manual entry; alternative to ChatGPT subscription)
  *   - active auth-mode flag ('apiKey' | 'claudeCode')
  *
  * Claude Code subscription OAuth tokens are NOT stored here. They live in
@@ -16,8 +15,8 @@
  *   account = "default"
  *   password = JSON.stringify(Credentials)   (one entry → one prompt)
  *
- * On first load we migrate the legacy 4-entry layout
- * (com.browser-use.desktop.{anthropic, anthropic-oauth, openai, auth-mode})
+ * On first load we migrate the legacy 3-entry layout
+ * (com.browser-use.desktop.{anthropic, anthropic-oauth, auth-mode})
  * for users upgrading from older builds. The OAuth blob is read once for
  * subscriptionType extraction (kept on the new blob until we can derive it
  * from the live Claude CLI state) and the legacy entry is then deleted.
@@ -33,7 +32,6 @@ const DEFAULT_ACCOUNT = 'default';
 // any external diagnostic code that imports them still resolves; new code
 // must NOT call keytar with these.
 export const API_KEY_SERVICE = 'com.browser-use.desktop.anthropic';
-export const OPENAI_KEY_SERVICE = 'com.browser-use.desktop.openai';
 export const OAUTH_SERVICE = 'com.browser-use.desktop.anthropic-oauth';
 const AUTH_MODE_SERVICE = 'com.browser-use.desktop.auth-mode';
 
@@ -61,12 +59,11 @@ function getKeytar(): KeytarLike | null {
 interface Credentials {
   authMode: AuthMode | null;
   anthropicApiKey: string | null;
-  openaiApiKey: string | null;
   browserCode: BrowserCodeStore | null;
 }
 
 function emptyCredentials(): Credentials {
-  return { authMode: null, anthropicApiKey: null, openaiApiKey: null, browserCode: null };
+  return { authMode: null, anthropicApiKey: null, browserCode: null };
 }
 
 export interface BrowserCodeKeyEntry {
@@ -121,7 +118,6 @@ async function getAll(): Promise<Credentials> {
           cached = {
             authMode: parsed.authMode === 'apiKey' || parsed.authMode === 'claudeCode' ? parsed.authMode : null,
             anthropicApiKey: parsed.anthropicApiKey ?? null,
-            openaiApiKey: parsed.openaiApiKey ?? null,
             browserCode: normalizeBrowserCodeStore((parsed as Partial<Credentials>).browserCode),
           };
           return cached;
@@ -129,39 +125,34 @@ async function getAll(): Promise<Credentials> {
           mainLogger.warn('authStore.parseBlob.failed', { error: (err as Error).message });
         }
       }
-      // No new blob yet — try the legacy 4-entry layout. We DROP the legacy
+      // No new blob yet — try the legacy 3-entry layout. We DROP the legacy
       // anthropic-oauth blob: subscription state now comes live from
       // the Claude CLI's own credential-store entry).
-      const [authModeRaw, apiKeyRaw, oauthRaw, openaiRaw] = await Promise.all([
+      const [authModeRaw, apiKeyRaw, oauthRaw] = await Promise.all([
         keytar.getPassword(AUTH_MODE_SERVICE, DEFAULT_ACCOUNT),
         keytar.getPassword(API_KEY_SERVICE, DEFAULT_ACCOUNT),
         keytar.getPassword(OAUTH_SERVICE, DEFAULT_ACCOUNT),
-        keytar.getPassword(OPENAI_KEY_SERVICE, DEFAULT_ACCOUNT),
       ]);
       cached = {
         authMode: authModeRaw === 'apiKey' || authModeRaw === 'claudeCode' ? authModeRaw : null,
         anthropicApiKey: apiKeyRaw ?? null,
-        openaiApiKey: openaiRaw ?? null,
         browserCode: null,
       };
       const hasLegacyData =
         cached.authMode !== null ||
         cached.anthropicApiKey !== null ||
-        oauthRaw !== null ||
-        cached.openaiApiKey !== null;
+        oauthRaw !== null;
       if (hasLegacyData) {
         mainLogger.info('authStore.migration.start', {
           hasAuthMode: cached.authMode !== null,
           hasApiKey: cached.anthropicApiKey !== null,
           hadLegacyOAuth: oauthRaw !== null,
-          hasOpenAi: cached.openaiApiKey !== null,
         });
         await persistCache();
         await Promise.all([
           keytar.deletePassword(AUTH_MODE_SERVICE, DEFAULT_ACCOUNT).catch(() => false),
           keytar.deletePassword(API_KEY_SERVICE, DEFAULT_ACCOUNT).catch(() => false),
           keytar.deletePassword(OAUTH_SERVICE, DEFAULT_ACCOUNT).catch(() => false),
-          keytar.deletePassword(OPENAI_KEY_SERVICE, DEFAULT_ACCOUNT).catch(() => false),
         ]);
         mainLogger.info('authStore.migration.complete');
       }
@@ -211,17 +202,6 @@ export async function saveApiKey(key: string): Promise<void> {
   c.authMode = 'apiKey';
   await persistCache();
   mainLogger.info('authStore.saveApiKey.ok');
-}
-
-export async function saveOpenAIKey(key: string): Promise<void> {
-  const c = await getAll();
-  c.openaiApiKey = key;
-  await persistCache();
-  mainLogger.info('authStore.saveOpenAIKey.ok');
-}
-
-export async function loadOpenAIKey(): Promise<string | null> {
-  return (await getAll()).openaiApiKey;
 }
 
 function normalizeBrowserCodeStore(value: unknown): BrowserCodeStore | null {
@@ -324,13 +304,6 @@ export async function deleteBrowserCodeConfig(): Promise<void> {
   mainLogger.info('authStore.browserCode.deleteAll');
 }
 
-export async function deleteOpenAIKey(): Promise<void> {
-  const c = await getAll();
-  c.openaiApiKey = null;
-  await persistCache();
-  mainLogger.info('authStore.deleteOpenAIKey.ok');
-}
-
 /**
  * Mark the user's choice to use Claude Code subscription. We don't copy the
  * CLI's OAuth tokens into our credential store — the agent spawns `claude`
@@ -384,7 +357,6 @@ export interface CredentialStatus {
     | { type: 'oauth'; subscriptionType: string | null }
     | { type: 'apiKey'; masked: string }
     | { type: 'none' };
-  openai: { present: boolean; masked?: string };
   browserCode: {
     keys: Record<string, { masked: string; lastModel?: string }>;
     active: string | null;
@@ -422,9 +394,6 @@ export async function getCredentialStatus(): Promise<CredentialStatus> {
       anthropic = { type: 'none' };
     }
   }
-  const openai: CredentialStatus['openai'] = c.openaiApiKey
-    ? { present: true, masked: maskKey(c.openaiApiKey) }
-    : { present: false };
   const browserCode: CredentialStatus['browserCode'] = (() => {
     if (!c.browserCode) return { keys: {}, active: null };
     const keys: Record<string, { masked: string; lastModel?: string }> = {};
@@ -433,7 +402,7 @@ export async function getCredentialStatus(): Promise<CredentialStatus> {
     }
     return { keys, active: c.browserCode.active };
   })();
-  return { anthropic, openai, browserCode };
+  return { anthropic, browserCode };
 }
 
 /**

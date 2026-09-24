@@ -1,6 +1,6 @@
 /**
  * EngineAdapter — pluggable interface for CLI-agent backends (Claude Code,
- * Codex, etc.). Each adapter knows how to detect install/auth, build spawn
+ * BrowserCode, etc.). Each adapter knows how to detect install/auth, build spawn
  * args, and translate its NDJSON event stream into universal HlEvent shapes.
  */
 
@@ -45,10 +45,10 @@ export interface ParseContext {
   harnessToolsPath: string;
   harnessSkillPath: string;
   /** Last agent-facing narrative text seen this turn; adapters that don't
-   *  emit a proper summary (codex) use this as the `done.summary` so users
+   *  emit a proper summary use this as the `done.summary` so users
    *  see a meaningful sentence instead of token telemetry. */
   lastNarrative?: string;
-  /** Model id reported by the engine (e.g. 'gpt-5-codex', 'claude-sonnet-4-5').
+  /** Model id reported by the engine (e.g. 'claude-sonnet-4-5').
    *  Adapters capture this from their init/thread-started event so cost
    *  estimation and future per-turn UI can cite the model that ran. */
   currentModel?: string;
@@ -58,7 +58,7 @@ export interface ParseContext {
 export interface ParseResult {
   /** Zero or more HlEvents to emit downstream. */
   events: HlEvent[];
-  /** Engine-reported session id (e.g. Claude `system/init.session_id`, Codex `thread.started.thread_id`). */
+  /** Engine-reported session id (e.g. Claude `system/init.session_id`). */
   capturedSessionId?: string;
   /** The agent signaled completion in this event; runner may early-exit wait. */
   terminalDone?: boolean;
@@ -93,10 +93,10 @@ export interface EngineAdapter {
   probeInstalled(): Promise<InstallProbe>;
   probeAuthed(): Promise<AuthProbe>;
   /** Kick off the engine's login flow. `opened` means "the flow is now
-   *  underway" — for Claude Code that's the OAuth browser handoff, for Codex
-   *  it's the URL (+ optional device code) returned in this result. Codex
-   *  supports a `deviceAuth` escape hatch for remote/headless machines that
-   *  can't use the default localhost-callback OAuth. Callers should poll
+   *  underway" — for Claude Code that's the OAuth browser handoff. Engines
+   *  whose OAuth can't use a localhost callback may instead return a
+   *  `verificationUrl` (+ optional `deviceCode`) here and accept the
+   *  `deviceAuth` option for remote/headless machines. Callers should poll
    *  `probeAuthed()` to detect when auth.json / OAuth creds appear. */
   openLoginInTerminal(opts?: { deviceAuth?: boolean }): Promise<{ opened: boolean; error?: string; verificationUrl?: string; deviceCode?: string }>;
 
@@ -114,7 +114,7 @@ export interface EngineAdapter {
    *  truncates the command and the prompt gets word-split. Returning a
    *  string here makes runEngine open stdin as a pipe, write the payload,
    *  and close it. Adapters that opt in must omit the prompt from
-   *  `buildSpawnArgs` and tell their CLI to read stdin (e.g. `codex exec -`). */
+   *  `buildSpawnArgs` and tell their CLI to read stdin. */
   getStdinPayload?(ctx: SpawnContext, wrappedPrompt: string): string | undefined;
   /** Translate one NDJSON line from stdout into HlEvents. */
   parseLine(line: string, ctx: ParseContext): ParseResult;

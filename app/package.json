@@ -2,7 +2,7 @@
   "name": "browser-use-desktop",
   "productName": "Browser Use",
   "version": "0.0.31",
-  "description": "Browser Use — a desktop agent hub for Claude Code and Codex",
+  "description": "Browser Use — a desktop agent hub for AI agents that browse the web",
   "homepage": "https://github.com/browser-use/desktop",
   "repository": {
     "type": "git",

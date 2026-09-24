@@ -12,8 +12,6 @@ import {
   saveApiKey,
   useClaudeCodeSubscription,
   clearAuth,
-  saveOpenAIKey,
-  deleteOpenAIKey,
   getCredentialStatus,
   saveBrowserCodeKey,
   deleteBrowserCodeKey,
@@ -28,7 +26,6 @@ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const TEST_MODEL = 'claude-haiku-4-5-20251001';
 const TEST_TIMEOUT_MS = 8000;
-const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
 
 const CH_GET_STATUS = 'settings:api-key:get-status';
 const CH_GET_MASKED = 'settings:api-key:get-masked';
@@ -37,11 +34,6 @@ const CH_TEST = 'settings:api-key:test';
 const CH_DELETE = 'settings:api-key:delete';
 const CH_CC_AVAILABLE = 'settings:claude-code:available';
 const CH_CC_USE = 'settings:claude-code:use';
-const CH_OAI_GET_STATUS = 'settings:openai-key:get-status';
-const CH_OAI_SAVE = 'settings:openai-key:save';
-const CH_OAI_TEST = 'settings:openai-key:test';
-const CH_OAI_DELETE = 'settings:openai-key:delete';
-const CH_CODEX_LOGOUT = 'settings:codex:logout';
 const CH_CC_LOGIN = 'settings:claude-code:login';
 const CH_CC_LOGOUT = 'settings:claude-code:logout';
 const CH_BCODE_GET_STATUS = 'settings:browsercode:get-status';
@@ -250,59 +242,6 @@ async function handleUseClaudeCode(): Promise<{ subscriptionType: string | null 
   // eslint-disable-next-line react-hooks/rules-of-hooks -- not a React hook; main-process function that happens to start with `use`
   await useClaudeCodeSubscription();
   return { subscriptionType: status.subscriptionType ?? null };
-}
-
-export interface OpenAiKeyStatus {
-  present: boolean;
-  masked?: string;
-}
-
-async function handleOpenAiGetStatus(): Promise<OpenAiKeyStatus> {
-  const { openai } = await getCredentialStatus();
-  if (openai.present) return { present: true, masked: openai.masked };
-  return { present: false };
-}
-
-async function handleOpenAiSave(_e: Electron.IpcMainInvokeEvent, key: string): Promise<void> {
-  const validated = assertString(key, 'key', 500);
-  mainLogger.info('apiKeyIpc.openai.save', { keyLength: validated.length });
-  await saveOpenAIKey(validated);
-}
-
-async function handleOpenAiTest(
-  _e: Electron.IpcMainInvokeEvent,
-  key: string,
-): Promise<{ success: boolean; error?: string }> {
-  const validated = assertString(key, 'key', 500);
-  mainLogger.info('apiKeyIpc.openai.test', { keyLength: validated.length });
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(OPENAI_MODELS_URL, {
-      method: 'GET',
-      signal: controller.signal,
-      headers: { 'authorization': `Bearer ${validated}` },
-    });
-    clearTimeout(timeoutId);
-    if (response.ok) return { success: true };
-    let errorMsg = `HTTP ${response.status}`;
-    try {
-      const body = (await response.json()) as { error?: { message?: string } };
-      if (body?.error?.message) errorMsg = body.error.message;
-    } catch { /* ignore */ }
-    mainLogger.warn('apiKeyIpc.openai.test.failed', { status: response.status, error: errorMsg });
-    return { success: false, error: errorMsg };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const msg = (err as Error).message ?? 'Network error';
-    mainLogger.warn('apiKeyIpc.openai.test.exception', { error: msg });
-    return { success: false, error: msg };
-  }
-}
-
-async function handleOpenAiDelete(): Promise<void> {
-  mainLogger.info('apiKeyIpc.openai.delete');
-  await deleteOpenAIKey();
 }
 
 async function handleBrowserCodeGetStatus(): Promise<{
@@ -555,11 +494,6 @@ function runLogoutCommand(bin: string, args: string[]): Promise<{ opened: boolea
   });
 }
 
-async function handleCodexLogout(): Promise<{ opened: boolean; error?: string }> {
-  mainLogger.info('apiKeyIpc.codex.logout');
-  return runLogoutCommand('codex', ['logout']);
-}
-
 async function handleClaudeCodeLogout(): Promise<{ opened: boolean; error?: string }> {
   mainLogger.info('apiKeyIpc.claudeCode.logout');
   // Clear our keychain mirror first so the UI updates immediately; then
@@ -578,11 +512,6 @@ export function registerApiKeyHandlers(): void {
   ipcMain.handle(CH_DELETE, handleDelete);
   ipcMain.handle(CH_CC_AVAILABLE, handleClaudeCodeAvailable);
   ipcMain.handle(CH_CC_USE, handleUseClaudeCode);
-  ipcMain.handle(CH_OAI_GET_STATUS, handleOpenAiGetStatus);
-  ipcMain.handle(CH_OAI_SAVE, handleOpenAiSave);
-  ipcMain.handle(CH_OAI_TEST, handleOpenAiTest);
-  ipcMain.handle(CH_OAI_DELETE, handleOpenAiDelete);
-  ipcMain.handle(CH_CODEX_LOGOUT, handleCodexLogout);
   ipcMain.handle(CH_CC_LOGIN, handleClaudeCodeLogin);
   ipcMain.handle(CH_CC_LOGOUT, handleClaudeCodeLogout);
   ipcMain.handle(CH_BCODE_GET_STATUS, handleBrowserCodeGetStatus);

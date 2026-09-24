@@ -27,7 +27,7 @@ describe.skipIf(onWindows)('runCliCapture timeout handling', () => {
 
 describe('spawnCli executable validation', () => {
   it('rejects shell metacharacters in executable names before spawning', () => {
-    expect(() => spawnCli('codex;rm', [])).toThrow(/unsupported executable name/);
-    expect(() => spawnCli('codex\nrm', [])).toThrow(/unsafe executable name/);
+    expect(() => spawnCli('claude;rm', [])).toThrow(/unsupported executable name/);
+    expect(() => spawnCli('claude\nrm', [])).toThrow(/unsafe executable name/);
   });
 });

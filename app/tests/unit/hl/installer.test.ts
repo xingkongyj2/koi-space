@@ -9,7 +9,7 @@ function nodeCommand(script: string): string {
 
 describe('engine installer background runner', () => {
   it('routes Windows installs through hidden cmd.exe without opening a terminal', () => {
-    const command = 'npm install -g @openai/codex';
+    const command = 'npm install -g @anthropic-ai/claude-code';
 
     const spec = installerSpawnSpec(command, {
       platform: 'win32',

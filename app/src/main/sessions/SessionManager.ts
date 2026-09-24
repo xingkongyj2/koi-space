@@ -34,8 +34,8 @@ export class SessionManager extends EventEmitter {
   private abortControllers: Map<string, AbortController> = new Map();
   private stuckTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   /**
-   * Per-session provider conversation id (Claude `session_id`, Codex
-   * `thread_id`, BrowserCode/OpenCode `sessionID`). Passed to the adapter on
+   * Per-session provider conversation id (Claude `session_id`, BrowserCode
+   * `sessionID`). Passed to the adapter on
    * follow-up so the provider continues its own local transcript.
    */
   private engineSessionIds: Map<string, string> = new Map();

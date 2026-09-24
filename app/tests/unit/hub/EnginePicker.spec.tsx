@@ -87,21 +87,21 @@ describe('EnginePicker', () => {
 
   it('does not retrigger install while the same engine install is already in progress', async () => {
     const sessions = installElectronApi({
-      id: 'codex',
-      displayName: 'Codex',
+      id: 'claude-code',
+      displayName: 'Claude Code',
       installed: { installed: false },
       authed: { authed: false },
     });
-    const { container, root } = renderPicker('codex');
+    const { container, root } = renderPicker('claude-code');
 
     await flush();
 
     act(() => {
-      getMenuItemButton(container, 'Codex').click();
+      getMenuItemButton(container, 'Claude Code').click();
     });
     await flush();
 
-    const installButton = getMenuItemButton(container, 'Codex');
+    const installButton = getMenuItemButton(container, 'Claude Code');
     expect(installButton.disabled).toBe(true);
 
     act(() => {
@@ -115,8 +115,8 @@ describe('EnginePicker', () => {
 
   it('keeps install pending until the background installer process resolves', async () => {
     let status: EngineStatus = {
-      id: 'codex',
-      displayName: 'Codex',
+      id: 'claude-code',
+      displayName: 'Claude Code',
       installed: { installed: false },
       authed: { authed: false },
     };
@@ -125,21 +125,21 @@ describe('EnginePicker', () => {
       engineStatus: vi.fn(async () => status),
       engineInstall: vi.fn(() => install.promise),
     });
-    const { container, root } = renderPicker('codex');
+    const { container, root } = renderPicker('claude-code');
 
     await flush();
 
     act(() => {
-      getMenuItemButton(container, 'Codex').click();
+      getMenuItemButton(container, 'Claude Code').click();
     });
     await flush();
 
     expect(sessions.engineInstall).toHaveBeenCalledTimes(1);
-    expect(getMenuItemButton(container, 'Codex').disabled).toBe(true);
+    expect(getMenuItemButton(container, 'Claude Code').disabled).toBe(true);
 
     status = {
-      id: 'codex',
-      displayName: 'Codex',
+      id: 'claude-code',
+      displayName: 'Claude Code',
       installed: { installed: true, version: '1.2.3' },
       authed: { authed: false },
     };
@@ -152,7 +152,7 @@ describe('EnginePicker', () => {
     await flush();
 
     expect(sessions.engineStatus).toHaveBeenCalled();
-    expect(getMenuItemButton(container, 'Codex').disabled).toBe(false);
+    expect(getMenuItemButton(container, 'Claude Code').disabled).toBe(false);
 
     act(() => root.unmount());
   });
@@ -162,30 +162,30 @@ describe('EnginePicker', () => {
     let installed = false;
     const install = deferred<{ opened: boolean; completed: boolean; installed: { installed: boolean; error?: string } }>();
     const sessions = installElectronApi({
-      id: 'codex',
-      displayName: 'Codex',
+      id: 'claude-code',
+      displayName: 'Claude Code',
       installed: { installed: false },
       authed: { authed: false },
     }, {
       engineStatus: vi.fn(async () => ({
-        id: 'codex',
-        displayName: 'Codex',
+        id: 'claude-code',
+        displayName: 'Claude Code',
         installed: { installed },
         authed: { authed: false },
       })),
       engineInstall: vi.fn(() => install.promise),
     });
-    const { container, root } = renderPicker('codex');
+    const { container, root } = renderPicker('claude-code');
 
     await flush();
 
     act(() => {
-      getMenuItemButton(container, 'Codex').click();
+      getMenuItemButton(container, 'Claude Code').click();
     });
     await flush();
 
     await act(async () => {
-      install.resolve({ opened: true, completed: true, installed: { installed: false, error: 'codex not found on PATH' } });
+      install.resolve({ opened: true, completed: true, installed: { installed: false, error: 'claude not found on PATH' } });
       await install.promise;
       await Promise.resolve();
       await Promise.resolve();
@@ -193,8 +193,8 @@ describe('EnginePicker', () => {
     await flush();
 
     expect(sessions.engineInstall).toHaveBeenCalledTimes(1);
-    expect(getMenuItemButton(container, 'Codex').disabled).toBe(true);
-    expect(getMenuItemButton(container, 'Codex').textContent).toContain('Installing');
+    expect(getMenuItemButton(container, 'Claude Code').disabled).toBe(true);
+    expect(getMenuItemButton(container, 'Claude Code').textContent).toContain('Installing');
 
     installed = true;
     await act(async () => {
@@ -204,8 +204,8 @@ describe('EnginePicker', () => {
     });
     await flush();
 
-    expect(getMenuItemButton(container, 'Codex').disabled).toBe(false);
-    expect(getMenuItemButton(container, 'Codex').textContent).toContain('Log in');
+    expect(getMenuItemButton(container, 'Claude Code').disabled).toBe(false);
+    expect(getMenuItemButton(container, 'Claude Code').textContent).toContain('Log in');
 
     act(() => root.unmount());
   });

@@ -86,6 +86,17 @@ export function HubApp(): React.ReactElement {
     setChatSession(id);
     setViewMode('chat');
   }, [setChatSession, setViewMode]);
+  /**
+   * Submitting a task lands on the browser pane, not the transcript: the point
+   * of the app is watching the agent drive the page, and grid mode is also what
+   * anchors the bottom-right logs pill (see the effect that closes it whenever
+   * viewMode !== 'grid'). Chat stays reachable from the pane header.
+   */
+  const enterBrowser = useCallback((id: string) => {
+    console.log('[HubApp] enterBrowser', { id });
+    setChatSession(id);
+    setViewMode('grid');
+  }, [setChatSession, setViewMode]);
   const openPill = useCallback(() => { window.electronAPI?.pill.toggle(); }, []);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsIntent, setSettingsIntent] = useState<SettingsOpenIntent | null>(null);
@@ -322,10 +333,10 @@ export function HubApp(): React.ReactElement {
     knownIdsRef.current = new Set(sessions.map((s) => s.id));
     if (!newSession) return;
     const globalIdx = sessions.findIndex((s) => s.id === newSession.id);
-    console.log('[HubApp] new session detected -> chat', { id: newSession.id, globalIdx });
-    enterChat(newSession.id);
+    console.log('[HubApp] new session detected -> browser pane', { id: newSession.id, globalIdx });
+    enterBrowser(newSession.id);
     setFocusIndex(globalIdx);
-  }, [sessions, enterChat]);
+  }, [sessions, enterBrowser]);
 
   useEffect(() => {
     const visible = sessions;
@@ -355,7 +366,7 @@ export function HubApp(): React.ReactElement {
       };
       console.log('[HubApp] createSession (mock)', { id, prompt });
       pendingFocusIdRef.current = id;
-      enterChat(id);
+      enterBrowser(id);
       setSessions((prev) => [...prev, newSession]);
 
       const pushEvent = (event: HlEvent, statusOverride?: AgentSession['status']) => {
@@ -389,13 +400,13 @@ export function HubApp(): React.ReactElement {
       );
       console.log('[HubApp] session created', { id });
       pendingFocusIdRef.current = id;
-      enterChat(id);
+      enterBrowser(id);
       await api.sessions.start(id);
       console.log('[HubApp] session started', { id });
     } catch (err) {
       console.error('[HubApp] createSession failed', err);
     }
-  }, [isMock, setViewMode, enterChat]);
+  }, [isMock, setViewMode, enterBrowser]);
 
 
   const handleFollowUp = useCallback(async (

@@ -875,8 +875,8 @@
   line-height: 1;
 }
 
-/* Cost readout — tilde prefix signals notional/estimated (subscription or
-   Codex); clean $ signals exact (Claude CLI's own total_cost_usd). */
+/* Cost readout — tilde prefix signals notional/estimated (subscription);
+   clean $ signals exact (Claude CLI's own total_cost_usd). */
 .pane__cost {
   flex-shrink: 0;
   font-size: 10px;
@@ -5247,63 +5247,6 @@ button:focus:not(:focus-visible) {
   height: 1px;
   background: var(--color-border-subtle);
   margin: 4px 0;
-}
-
-/* Codex device-auth code panel (Settings → Connections → Codex). Surfaced
-   only when the user picks the device-code fallback; default plain OAuth
-   never returns a code. Mirrors the onboarding panel visually. */
-.codex-device-auth {
-  margin-top: 10px;
-  padding: 12px 14px;
-  background: var(--color-surface-raised, var(--color-bg-overlay));
-  border: 1px solid var(--color-border-muted, var(--color-border-subtle));
-  border-radius: var(--radius-md, 6px);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.codex-device-auth__label {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-}
-.codex-device-auth__code {
-  font-family: var(--font-family-mono, ui-monospace, monospace);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  user-select: all;
-  color: var(--color-text-primary);
-}
-.codex-device-auth__hint {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-}
-.codex-device-auth__url {
-  font-family: var(--font-family-mono, ui-monospace, monospace);
-  user-select: all;
-}
-.codex-device-auth__link {
-  background: transparent;
-  border: none;
-  padding: 0;
-  color: var(--palette-500, var(--color-accent));
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.codex-device-auth__link:hover {
-  text-decoration: underline;
-}
-.codex-device-auth__link--secondary {
-  color: var(--color-text-secondary);
-}
-.codex-device-auth__fallback {
-  margin-top: 6px;
-  padding: 2px 0;
-  font-size: 12px;
-  align-self: flex-start;
 }
 
 /* ---------------------------------------------------------------------------

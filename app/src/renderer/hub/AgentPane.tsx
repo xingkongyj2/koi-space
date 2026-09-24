@@ -4,8 +4,6 @@ import { ContentRenderer, getPreview } from './ContentRenderer';
 import { Markdown, linkifyOutputPaths } from './Markdown';
 import { TerminalPane } from './TerminalPane';
 import claudeCodeLogo from './claude-code-logo.svg';
-import openaiLogoDark from './openai-logo.svg';
-import openaiLogoLight from './openai-logo-light.svg';
 import opencodeLogoDark from './opencode-logo-dark.svg';
 import opencodeLogoLight from './opencode-logo-light.svg';
 import { useThemedAsset } from '../design/useThemedAsset';
@@ -706,7 +704,6 @@ interface AgentPaneProps {
 }
 
 export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onDismiss, onCancel, onSelect, onOpenFollowUp, onOpenSettings, onOpenChat, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
-  const openaiLogo = useThemedAsset(openaiLogoDark, openaiLogoLight);
   const opencodeLogo = useThemedAsset(opencodeLogoDark, opencodeLogoLight);
   const paneRef = useRef<HTMLDivElement>(null);
   const pendingUnmountDetachRef = useRef<number | null>(null);
@@ -1014,9 +1011,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
         <span className={`pane__dot pane__dot--${session.status}`} />
         <div className="pane__title-group">
           <span className="pane__prompt">{session.prompt}</span>
-          {session.engine === 'codex' && (
-            <img className="pane__engine-icon" src={openaiLogo} alt="Codex" title="Codex" />
-          )}
           {session.engine === 'browsercode' && (
             <img className="pane__engine-icon" src={opencodeLogo} alt="BrowserCode" title="BrowserCode" />
           )}

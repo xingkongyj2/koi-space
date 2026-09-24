@@ -266,24 +266,6 @@ interface ElectronSettingsClaudeCodeAPI {
   logout: () => Promise<{ opened: boolean; error?: string }>;
 }
 
-interface ElectronSettingsOpenAiKeyAPI {
-  getStatus: () => Promise<{ present: boolean; masked?: string }>;
-  save: (key: string) => Promise<void>;
-  test: (key: string) => Promise<{ success: boolean; error?: string }>;
-  delete: () => Promise<void>;
-}
-
-interface ElectronSettingsCodexAPI {
-  status: () => Promise<{
-    id: string;
-    displayName: string;
-    installed: { installed: boolean; version?: string; error?: string };
-    authed: { authed: boolean; error?: string };
-  }>;
-  login: (opts?: { deviceAuth?: boolean }) => Promise<{ opened: boolean; error?: string; verificationUrl?: string; deviceCode?: string }>;
-  logout: () => Promise<{ opened: boolean; error?: string }>;
-}
-
 interface ElectronSettingsBrowserCodeAPI {
   getStatus: () => Promise<{
     keys: Record<string, { masked: string; lastModel?: string }>;
@@ -353,8 +335,6 @@ interface ElectronSettingsAPI {
   open?: (payload?: { focusBrowserCodeProvider?: string }) => Promise<void>;
   apiKey: ElectronSettingsApiKeyAPI;
   claudeCode?: ElectronSettingsClaudeCodeAPI;
-  openaiKey?: ElectronSettingsOpenAiKeyAPI;
-  codex?: ElectronSettingsCodexAPI;
   browserCode?: ElectronSettingsBrowserCodeAPI;
   app?: ElectronSettingsAppAPI;
 }

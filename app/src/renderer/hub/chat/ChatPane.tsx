@@ -11,7 +11,6 @@ import { QuoteSelectionButton } from './QuoteSelectionButton';
 import { formatUserMessageWithQuote } from './parseUserMessage';
 import { useToast } from '@/renderer/components/base/Toast';
 import claudeCodeLogo from '../claude-code-logo.svg';
-import openaiLogo from '../openai-logo.svg';
 import opencodeLogo from '../opencode-logo-light.svg';
 import './chat.css';
 
@@ -303,9 +302,6 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps
       <div className="chat-pane__header">
         <div className="chat-pane__title" aria-hidden="true" />
         <div className="chat-pane__meta">
-          {header.engine === 'codex' && (
-            <img className="pane__engine-icon" src={openaiLogo} alt="Codex" title="Codex" />
-          )}
           {header.engine === 'browsercode' && (
             <img className="pane__engine-icon" src={opencodeLogo} alt="BrowserCode" title="BrowserCode" />
           )}

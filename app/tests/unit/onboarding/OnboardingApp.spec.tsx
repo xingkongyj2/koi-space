@@ -18,8 +18,6 @@ function installOnboardingApi(overrides: Partial<OnboardingApi> = {}): Onboardin
     getChromeProfileSyncs: vi.fn(async () => ({})),
     saveApiKey: vi.fn(async () => undefined),
     testApiKey: vi.fn(async () => ({ success: true })),
-    saveOpenAIKey: vi.fn(async () => undefined),
-    testOpenAIKey: vi.fn(async () => ({ success: true })),
     detectClaudeCode: vi.fn(async () => ({
       available: true,
       installed: false,
@@ -30,14 +28,6 @@ function installOnboardingApi(overrides: Partial<OnboardingApi> = {}): Onboardin
     useClaudeCode: vi.fn(async () => ({ subscriptionType: null })),
     runClaudeLogin: vi.fn(async () => ({ ok: true })),
     openClaudeLoginTerminal: vi.fn(async () => ({ opened: true })),
-    detectCodex: vi.fn(async () => ({
-      available: true,
-      installed: false,
-      authed: false,
-      version: null,
-    })),
-    useCodex: vi.fn(async () => ({ ok: true })),
-    openCodexLoginTerminal: vi.fn(async () => ({ opened: true })),
     installEngine: vi.fn(async () => ({
       opened: true,
       completed: true,
@@ -110,56 +100,64 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
-describe('OnboardingApp provider installs', () => {
+describe('OnboardingApp provider step', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
   });
 
-  it('keeps each install button pending independently when provider installs overlap', async () => {
-    const claudeInstall = deferred<InstallResult>();
-    const codexInstall = deferred<InstallResult>();
-    const api = installOnboardingApi({
-      installEngine: vi.fn((engineId: 'claude-code' | 'codex') => (
-        engineId === 'claude-code' ? claudeInstall.promise : codexInstall.promise
-      )),
-    });
+  // The default engine is the app's own Python backend, which needs no
+  // provider credentials — the provider step must never block progression.
+  it('continues past the provider step with nothing configured', async () => {
+    const api = installOnboardingApi();
     const { container, root } = renderOnboarding();
 
     await flush();
     expect(container.textContent).toContain('Vendor setup');
+
+    const continueButton = buttonByText(container, 'Save & Continue');
+    expect(continueButton.disabled).toBe(false);
+
+    act(() => {
+      continueButton.click();
+    });
+    await flush();
+
+    expect(api.saveApiKey).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Preferences');
+
+    act(() => root.unmount());
+  });
+
+  it('keeps the Claude Code install button pending while the installer runs', async () => {
+    const claudeInstall = deferred<InstallResult>();
+    const api = installOnboardingApi({
+      installEngine: vi.fn(() => claudeInstall.promise),
+    });
+    const { container, root } = renderOnboarding();
+
+    await flush();
 
     act(() => {
       buttonByText(container, 'Install Claude Code').click();
     });
     await flush();
 
+    expect(api.installEngine).toHaveBeenCalledWith('claude-code');
     expect(buttonByText(container, 'Installing Claude Code').disabled).toBe(true);
-    expect(buttonByText(container, 'Install Codex CLI').disabled).toBe(false);
-
-    act(() => {
-      buttonByText(container, 'Install Codex CLI').click();
-    });
-    await flush();
-
-    expect(api.installEngine).toHaveBeenCalledTimes(2);
-    expect(api.installEngine).toHaveBeenNthCalledWith(1, 'claude-code');
-    expect(api.installEngine).toHaveBeenNthCalledWith(2, 'codex');
-    expect(buttonByText(container, 'Installing Claude Code').disabled).toBe(true);
-    expect(buttonByText(container, 'Installing Codex').disabled).toBe(true);
 
     act(() => root.unmount());
   });
 
-  it('describes the Codex install button as an automatic background installer', async () => {
+  it('describes the Claude Code install button as an automatic background installer', async () => {
     installOnboardingApi();
     const { container, root } = renderOnboarding();
 
     await flush();
-    const codexButton = buttonByText(container, 'Install Codex CLI');
+    const claudeButton = buttonByText(container, 'Install Claude Code');
 
-    expect(codexButton.textContent).toContain('Runs the installer in the background. We\u2019ll detect it when it finishes.');
-    expect(codexButton.textContent).not.toContain('npm i -g @openai/codex');
+    expect(claudeButton.textContent).toContain('Runs the installer in the background. We\u2019ll detect it when it finishes.');
+    expect(claudeButton.textContent).not.toContain('npm install -g @anthropic-ai/claude-code');
 
     act(() => root.unmount());
   });

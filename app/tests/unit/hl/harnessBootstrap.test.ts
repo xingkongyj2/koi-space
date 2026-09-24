@@ -61,8 +61,8 @@ describe('bootstrapHarness agent-browser materialization', () => {
     expect(fs.existsSync(agentSkill)).toBe(true);
     expect(fs.existsSync(path.join(agentSkillDir(), 'agent-skill.cmd'))).toBe(true);
     expect(fs.existsSync(userSkill)).toBe(true);
-    // Windows launcher ships alongside the POSIX shim so Codex can find it via
-    // PATHEXT (.CMD) instead of hitting the no-handler popup on the
+    // Windows launcher ships alongside the POSIX shim so engine CLIs can find
+    // it via PATHEXT (.CMD) instead of hitting the no-handler popup on the
     // extensionless shell script.
     expect(fs.existsSync(shimCmd)).toBe(true);
     expect(fs.readFileSync(shimCmd, 'utf-8')).toContain('BU_AGENT_BROWSER_SHIMCMD');

@@ -67,18 +67,6 @@ describe('pathEnrich', () => {
     expect(parts).toContain('/snap/bin');
   });
 
-  it('adds bundled Codex.app CLI locations on macOS', () => {
-    const result = enrichedPath('/usr/bin:/bin', {
-      platform: 'darwin',
-      homedir: '/Users/ada',
-      env: { SHELL: '/missing-shell' },
-    });
-
-    const parts = result.split(':');
-    expect(parts).toContain('/Applications/Codex.app/Contents/Resources');
-    expect(parts).toContain('/Users/ada/Applications/Codex.app/Contents/Resources');
-  });
-
   it('adds existing POSIX Node version-manager bins', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'path-enrich-'));
     try {
@@ -110,13 +98,13 @@ describe('pathEnrich', () => {
   });
 
   it('routes macOS/Linux CLI launches through a PATH-enriched env without a shell', () => {
-    const spec = resolveCliLaunch('codex', ['--version'], {
+    const spec = resolveCliLaunch('claude', ['--version'], {
       platform: 'linux',
       homedir: '/home/ada',
       env: { PATH: '/usr/bin' },
     });
 
-    expect(spec.command).toBe('codex');
+    expect(spec.command).toBe('claude');
     expect(spec.args).toEqual(['--version']);
     expect(spec.viaCmdShell).toBe(false);
     expect(spec.spawnOptions).toEqual({});
@@ -130,11 +118,11 @@ describe('pathEnrich', () => {
 
   it('routes Windows CLI launches through the same PATH enrichment and shim resolver', () => {
     vi.spyOn(fs, 'statSync').mockImplementation((candidate) => ({
-      isFile: () => String(candidate).endsWith('codex.cmd'),
+      isFile: () => String(candidate).endsWith('claude.cmd'),
       isDirectory: () => false,
     }) as fs.Stats);
 
-    const spec = resolveCliLaunch('codex', ['login'], {
+    const spec = resolveCliLaunch('claude', ['login'], {
       platform: 'win32',
       homedir: 'C:\\Users\\Ada',
       env: {
@@ -146,7 +134,7 @@ describe('pathEnrich', () => {
 
     expect(spec.command).toBe('C:\\Windows\\System32\\cmd.exe');
     expect(spec.args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
-    expect(spec.args[3]).toContain('codex.cmd');
+    expect(spec.args[3]).toContain('claude.cmd');
     expect(spec.args[3]).toContain('login');
     expect(spec.env.PATH?.split(';')).toContain('C:\\Users\\Ada\\AppData\\Roaming\\npm');
     expect(spec.env.PATH?.split(';')).toContain('C:\\Users\\Ada\\.volta\\bin');

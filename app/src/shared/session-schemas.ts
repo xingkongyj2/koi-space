@@ -90,8 +90,7 @@ export const HlEventFileOutputSchema = z.object({
 
 // Emitted by adapters at turn end. Carries cumulative-for-this-turn tokens
 // and the dollar cost. For Claude Code, costUsd is the CLI's own total_cost_usd
-// (authoritative). For Codex, costUsd is computed from a local price table in
-// main/hl/pricing.ts (estimated — may drift from OpenAI's dashboard).
+// (authoritative).
 export const HlEventTurnUsageSchema = z.object({
   type: z.literal('turn_usage'),
   inputTokens: z.number(),
@@ -99,8 +98,9 @@ export const HlEventTurnUsageSchema = z.object({
   cachedInputTokens: z.number(),
   costUsd: z.number(),
   model: z.string().optional(),
-  // 'exact' for Claude's CLI-reported number; 'estimated' when we multiplied
-  // token counts ourselves (Codex). Drives the `~` prefix on the UI.
+  // 'exact' for Claude's CLI-reported number; 'estimated' when an engine
+  // multiplied token counts itself (only seen on historical rows now).
+  // Drives the `~` prefix on the UI.
   source: z.enum(['exact', 'estimated']),
 });
 
@@ -148,8 +148,7 @@ export const AgentSessionSchema = z.object({
   // users may flip between modes, but historical sessions should still reflect
   // the mode that actually ran them (for cost attribution).
   // Cumulative usage totals, updated on each turn_usage event. For Claude Code
-  // these reflect the CLI's own figures; for Codex they are computed locally
-  // via main/hl/pricing.ts and may drift from OpenAI's dashboard.
+  // these reflect the CLI's own figures.
   costUsd: z.number().optional(),
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
@@ -157,9 +156,7 @@ export const AgentSessionSchema = z.object({
   costSource: z.enum(['exact', 'estimated']).optional(),
   authMode: z.enum(['apiKey', 'subscription']).optional(),
   // Subscription tier label when authMode === 'subscription'. For Claude Code
-  // this is the OAuth credential's subscriptionType ("max" | "pro"). For Codex
-  // we use 'chatgpt' as a generic label since the CLI does not expose the
-  // plan tier locally.
+  // this is the OAuth credential's subscriptionType ("max" | "pro").
   subscriptionType: z.string().optional(),
 });
 

@@ -43,7 +43,7 @@ describe('resourceMonitor snapshotResourceUsage', () => {
     const snapshot = snapshotResourceUsage({
       browserSessions: () => [{ sessionId: 'session-1', attached: true, createdAt: 1, pid: 202 }],
       sessionInfo: (sessionId) => sessionId === 'session-1'
-        ? { prompt: 'Open example.com and summarize it', status: 'running', engine: 'codex' }
+        ? { prompt: 'Open example.com and summarize it', status: 'running', engine: 'python' }
         : undefined,
     });
 
@@ -60,13 +60,13 @@ describe('resourceMonitor snapshotResourceUsage', () => {
       cpuPercent: 11.3,
       processCount: 1,
       status: 'running',
-      engine: 'codex',
+      engine: 'python',
       label: 'Open example.com and summarize it',
     });
     expect(snapshot.processes.find((p) => p.pid === 202)).toMatchObject({
       kind: 'browser-session',
       sessionId: 'session-1',
-      engineId: 'codex',
+      engineId: 'python',
       label: 'Open example.com and summarize it',
     });
   });

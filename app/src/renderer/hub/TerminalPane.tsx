@@ -34,7 +34,6 @@ const SPINNER_IDLE_CHECK_MS = 250;
 function spinnerColorAnsi(engine: string | null | undefined): string {
   if (engine === 'python') return '\x1b[38;2;255;214;102m';
   if (engine === 'claude-code') return '\x1b[38;2;204;120;92m';
-  if (engine === 'codex') return '\x1b[38;2;91;155;255m';
   return '\x1b[38;2;214;216;220m';
 }
 

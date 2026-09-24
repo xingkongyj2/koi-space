@@ -1,10 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import anthropicLogo from './anthropic-logo.svg';
 import claudeCodeLogo from './claude-code-logo.svg';
-import openaiLogoDark from './openai-logo.svg';
-import openaiLogoLight from './openai-logo-light.svg';
-import codexLogoDark from './codex-logo.svg';
-import codexLogoLight from './openai-logo-light.svg';
 import opencodeLogoDark from './opencode-logo-dark.svg';
 import opencodeLogoLight from './opencode-logo-light.svg';
 import kimiLogoDark from './kimi-color.svg';
@@ -23,10 +19,6 @@ interface AuthStatus {
   masked?: string;
   subscriptionType?: string | null;
   expiresAt?: number;
-}
-interface OpenAiStatus {
-  present: boolean;
-  masked?: string;
 }
 interface EngineCliStatus {
   installed: boolean;
@@ -105,9 +97,7 @@ export function ConnectionsPane({
   focusBrowserCodeProvider,
 }: ConnectionsPaneProps): React.ReactElement {
   const toast = useToast();
-  const openaiLogo = useThemedAsset(openaiLogoDark, openaiLogoLight);
   const opencodeLogo = useThemedAsset(opencodeLogoDark, opencodeLogoLight);
-  const codexLogo = useThemedAsset(codexLogoDark, codexLogoLight);
   const browserCodeProviderLogos = useBrowserCodeProviderLogos();
   const [waStatus, setWaStatus] = useState<WaStatus>('disconnected');
   const [waIdentity, setWaIdentity] = useState<string | null>(null);
@@ -139,22 +129,6 @@ export function ConnectionsPane({
   const [keyStatus, setKeyStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [keyError, setKeyError] = useState<string | null>(null);
 
-  const [openaiStatus, setOpenaiStatus] = useState<OpenAiStatus>({ present: false });
-  const [openaiStatusLoaded, setOpenaiStatusLoaded] = useState(false);
-  const [openaiEditing, setOpenaiEditing] = useState(false);
-  const [openaiDraft, setOpenaiDraft] = useState('');
-  const [openaiKeyStatus, setOpenaiKeyStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
-  const [openaiError, setOpenaiError] = useState<string | null>(null);
-
-  const [codexStatus, setCodexStatus] = useState<EngineCliStatus>({ installed: false, authed: false });
-  const [codexStatusLoaded, setCodexStatusLoaded] = useState(false);
-  const [codexWaiting, setCodexWaiting] = useState(false);
-  // Surfaced from the codex login PTY when --device-auth is in play. Drives
-  // the small "one-time code" block below the Codex card so users on
-  // restricted networks (no localhost-callback) can still sign in.
-  const [codexDeviceCode, setCodexDeviceCode] = useState<string | null>(null);
-  const [codexVerificationUrl, setCodexVerificationUrl] = useState<string | null>(null);
-
   const [browserCodeStatus, setBrowserCodeStatus] = useState<BrowserCodeStatus>({ keys: {}, active: null, providers: [] });
   const [browserCodeLoaded, setBrowserCodeLoaded] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
@@ -182,22 +156,6 @@ export function ConnectionsPane({
     }
   }, []);
 
-  const refreshOpenai = useCallback(async () => {
-    const api = window.electronAPI;
-    if (!api?.settings?.openaiKey) {
-      setOpenaiStatusLoaded(true);
-      return;
-    }
-    try {
-      const s = await api.settings.openaiKey.getStatus();
-      setOpenaiStatus(s);
-    } catch (err) {
-      console.error('[connections] refreshOpenai failed', err);
-    } finally {
-      setOpenaiStatusLoaded(true);
-    }
-  }, []);
-
   const refreshClaudeCli = useCallback(async (): Promise<EngineCliStatus | null> => {
     const api = window.electronAPI;
     if (!api?.sessions?.engineStatus) {
@@ -220,31 +178,6 @@ export function ConnectionsPane({
       return null;
     } finally {
       setClaudeStatusLoaded(true);
-    }
-  }, [installingEngine]);
-
-  const refreshCodex = useCallback(async (): Promise<EngineCliStatus | null> => {
-    const api = window.electronAPI;
-    if (!api?.settings?.codex) {
-      setCodexStatusLoaded(true);
-      return null;
-    }
-    try {
-      const s = await api.settings.codex.status();
-      const status = {
-        installed: s.installed.installed,
-        authed: s.authed.authed,
-        version: s.installed.version,
-        error: s.installed.error ?? s.authed.error,
-      };
-      setCodexStatus(status);
-      if (s.installed.installed && installingEngine === 'codex') setInstallingEngine(null);
-      return status;
-    } catch (err) {
-      console.error('[connections] refreshCodex failed', err);
-      return null;
-    } finally {
-      setCodexStatusLoaded(true);
     }
   }, [installingEngine]);
 
@@ -278,14 +211,12 @@ export function ConnectionsPane({
     if (!api?.sessions?.engineInstall) return;
     setInstallingEngine(engineId);
     setKeyError(null);
-    setOpenaiError(null);
     setBrowserCodeError(null);
     try {
       const result = await api.sessions.engineInstall(engineId);
       console.info('[connections] engine.install.result', { engineId, result });
       const refreshInstalledStatus = async () => {
         if (engineId === 'claude-code') return refreshClaudeCli();
-        if (engineId === 'codex') return refreshCodex();
         if (engineId === 'browsercode') return refreshBrowserCode();
         return null;
       };
@@ -295,18 +226,16 @@ export function ConnectionsPane({
       if (!status?.installed) {
         const msg = result.error ?? result.installed?.error ?? `Installer finished but ${engineId} was not detected.`;
         if (engineId === 'claude-code') setKeyError(msg);
-        else if (engineId === 'codex') setOpenaiError(msg);
         else if (engineId === 'browsercode') setBrowserCodeError(msg);
       }
     } catch (err) {
       const msg = (err as Error).message;
       if (engineId === 'claude-code') setKeyError(msg);
-      else if (engineId === 'codex') setOpenaiError(msg);
       else if (engineId === 'browsercode') setBrowserCodeError(msg);
     } finally {
       setInstallingEngine((current) => (current === engineId ? null : current));
     }
-  }, [refreshBrowserCode, refreshClaudeCli, refreshCodex]);
+  }, [refreshBrowserCode, refreshClaudeCli]);
 
   const handleUseClaudeCode = useCallback(async () => {
     const api = window.electronAPI;
@@ -378,86 +307,20 @@ export function ConnectionsPane({
   useEffect(() => {
     refreshKey();
     refreshClaudeCli();
-    refreshOpenai();
-    refreshCodex();
     refreshBrowserCode();
-  }, [refreshKey, refreshClaudeCli, refreshOpenai, refreshCodex, refreshBrowserCode]);
+  }, [refreshKey, refreshClaudeCli, refreshBrowserCode]);
 
   // Periodic refresh while the pane is mounted — catches external state
-  // changes (user runs `claude auth logout` in a terminal, codex token
-  // expires server-side, etc.) so the panel never goes more than ~5s out
-  // of sync with reality.
+  // changes (user runs `claude auth logout` in a terminal, etc.) so the
+  // panel never goes more than ~5s out of sync with reality.
   useEffect(() => {
     const id = setInterval(() => {
       refreshKey();
       refreshClaudeCli();
-      refreshOpenai();
-      refreshCodex();
       refreshBrowserCode();
     }, 5000);
     return () => clearInterval(id);
-  }, [refreshKey, refreshClaudeCli, refreshOpenai, refreshCodex, refreshBrowserCode]);
-
-  // Poll codex status while user completes the codex OAuth flow. Tighter
-  // interval than the 5s panel refresh so the UI flips to "Signed in" the
-  // second `~/.codex/auth.json` appears.
-  useEffect(() => {
-    if (!codexWaiting) return;
-    let cancelled = false;
-    let attempts = 0;
-    const MAX = 180;
-    const tick = async () => {
-      if (cancelled) return;
-      attempts++;
-      await refreshCodex();
-      if (codexStatus.authed) {
-        setCodexWaiting(false);
-        setCodexDeviceCode(null);
-        setCodexVerificationUrl(null);
-        return;
-      }
-      if (attempts >= MAX) { setCodexWaiting(false); return; }
-      setTimeout(tick, 1000);
-    };
-    void tick();
-    return () => { cancelled = true; };
-  }, [codexWaiting, refreshCodex, codexStatus.authed]);
-
-  const handleSaveOpenai = useCallback(async () => {
-    const api = window.electronAPI;
-    if (!api?.settings?.openaiKey) return;
-    if (!codexStatus.installed) {
-      setOpenaiKeyStatus('error');
-      setOpenaiError('Install Codex before adding an OpenAI API key.');
-      return;
-    }
-    const trimmed = openaiDraft.trim();
-    if (!trimmed) return;
-    setOpenaiKeyStatus('testing');
-    setOpenaiError(null);
-    const test = await api.settings.openaiKey.test(trimmed);
-    if (!test.success) {
-      setOpenaiKeyStatus('error');
-      setOpenaiError(test.error ?? 'Key rejected by OpenAI');
-      return;
-    }
-    await api.settings.openaiKey.save(trimmed);
-    setOpenaiKeyStatus('ok');
-    setOpenaiDraft('');
-    setOpenaiEditing(false);
-    await refreshOpenai();
-    toast.show({ variant: 'success', title: 'OpenAI API key saved' });
-  }, [codexStatus.installed, openaiDraft, refreshOpenai, toast]);
-
-  const handleDeleteOpenai = useCallback(async () => {
-    const api = window.electronAPI;
-    if (!api?.settings?.openaiKey) return;
-    await api.settings.openaiKey.delete();
-    setOpenaiKeyStatus('idle');
-    setOpenaiError(null);
-    await refreshOpenai();
-    toast.show({ variant: 'success', title: 'OpenAI API key removed' });
-  }, [refreshOpenai, toast]);
+  }, [refreshKey, refreshClaudeCli, refreshBrowserCode]);
 
   const handleStartEditBrowserCode = useCallback((providerId: string) => {
     setEditingProviderId(providerId);
@@ -546,40 +409,6 @@ export function ConnectionsPane({
     });
     handleStartEditBrowserCode(focusBrowserCodeProvider.providerId);
   }, [focusBrowserCodeProvider?.providerId, focusBrowserCodeProvider?.requestId, handleStartEditBrowserCode]);
-
-  const handleCodexLogin = useCallback(async (opts?: { deviceAuth?: boolean }) => {
-    const api = window.electronAPI;
-    if (!api?.settings?.codex) return;
-    setCodexWaiting(true);
-    setCodexDeviceCode(null);
-    setCodexVerificationUrl(null);
-    const res = await api.settings.codex.login(opts);
-    if (!res.opened) {
-      console.warn('[connections] codex login failed', res.error);
-      setCodexWaiting(false);
-      return;
-    }
-    if (res.deviceCode) setCodexDeviceCode(res.deviceCode);
-    if (res.verificationUrl) setCodexVerificationUrl(res.verificationUrl);
-  }, []);
-  // Stable callbacks for the Codex login buttons. Plain OAuth is the default;
-  // device-auth is the "Having trouble?" fallback for users on networks/setups
-  // where the localhost callback can't reach the browser.
-  const handleCodexLoginPlain = useCallback(() => handleCodexLogin(), [handleCodexLogin]);
-  const handleCodexLoginDeviceAuth = useCallback(() => handleCodexLogin({ deviceAuth: true }), [handleCodexLogin]);
-
-  const handleCodexLogout = useCallback(async () => {
-    const api = window.electronAPI;
-    if (!api?.settings?.codex?.logout) return;
-    // codex logout is now a non-interactive subprocess (codex logout writes
-    // to ~/.codex/auth.json then exits); no Terminal involvement. Refresh
-    // immediately, no polling needed.
-    const res = await api.settings.codex.logout();
-    if (!res.opened) console.warn('[connections] codex logout failed', res.error);
-    setCodexDeviceCode(null);
-    setCodexVerificationUrl(null);
-    await refreshCodex();
-  }, [refreshCodex]);
 
   const handleSaveKey = useCallback(async () => {
     const api = window.electronAPI;
@@ -690,7 +519,6 @@ export function ConnectionsPane({
     waStatus === 'error' ? (waDetail ?? 'Connection error') :
     'Not connected';
   const anthropicLoading = !editing && (!authStatusLoaded || !claudeStatusLoaded);
-  const openaiLoading = !openaiEditing && (!openaiStatusLoaded || !codexStatusLoaded);
 
   return (
     <div className={embedded ? 'conn-section' : 'conn-pane'}>
@@ -969,159 +797,6 @@ export function ConnectionsPane({
         {browserCodeError && !editingProviderId && (
           <div className="conn-card__api-key-edit">
             <span className="conn-card__api-key-error">{browserCodeError}</span>
-          </div>
-        )}
-      </div>
-
-      <div className="conn-card" aria-busy={openaiLoading}>
-        <div className="conn-card__header">
-          <img
-            className="conn-card__icon"
-            src={codexStatus.authed ? codexLogo : openaiLogo}
-            alt=""
-          />
-          <div className="conn-card__info">
-            <div className="conn-card__title-row">
-              <span className="conn-card__name">OpenAI</span>
-              <span className={`conn-card__dot ${openaiLoading ? 'conn-card__dot--connecting' : (codexStatus.authed || openaiStatus.present) && codexStatus.installed ? 'conn-card__dot--connected' : codexWaiting || installingEngine === 'codex' ? 'conn-card__dot--connecting' : 'conn-card__dot--disconnected'}`} />
-            </div>
-            {openaiLoading ? (
-              <span className="conn-card__skeleton conn-card__skeleton--subtitle" aria-hidden="true" />
-            ) : (
-              <span className="conn-card__subtitle">
-                {openaiEditing
-                  ? 'Enter a new key — it will be tested before saving'
-                  : !codexStatus.installed && openaiStatus.present
-                  ? 'API key saved · Codex CLI not installed'
-                  : !codexStatus.installed
-                  ? 'Codex CLI not installed'
-                  : openaiStatus.present && openaiStatus.masked
-                  ? `API key · ${openaiStatus.masked}`
-                  : codexStatus.authed
-                  ? `Signed in with ChatGPT subscription${codexStatus.version ? ` · Codex v${codexStatus.version}` : ''}`
-                  : codexWaiting && codexDeviceCode
-                  ? 'Enter the code shown below on the verification page.'
-                  : codexWaiting
-                  ? 'Finish the OAuth flow in your browser…'
-                  : 'Not connected'}
-              </span>
-            )}
-          </div>
-          <div className="conn-card__actions">
-            {openaiLoading && <ConnectionActionSkeleton />}
-            {!openaiLoading && !openaiEditing && !codexStatus.installed && (
-              <button
-                className="conn-card__btn conn-card__btn--primary"
-                onClick={() => handleInstallEngine('codex')}
-                disabled={installingEngine === 'codex'}
-              >
-                {installingEngine === 'codex' ? 'Installing…' : 'Install Codex'}
-              </button>
-            )}
-            {!openaiLoading && !openaiEditing && !openaiStatus.present && !codexStatus.authed && codexStatus.installed && (
-              <button
-                className="conn-card__btn conn-card__btn--primary"
-                onClick={handleCodexLoginPlain}
-              >
-                {codexWaiting ? 'Restart' : 'Sign in with Codex'}
-              </button>
-            )}
-            {!openaiLoading && !openaiEditing && codexStatus.installed && !openaiStatus.present && !codexStatus.authed && (
-              <button
-                className="conn-card__btn conn-card__btn--secondary"
-                onClick={() => { setOpenaiEditing(true); setOpenaiDraft(''); setOpenaiKeyStatus('idle'); setOpenaiError(null); }}
-              >
-                Add API key
-              </button>
-            )}
-            {!openaiLoading && !openaiEditing && codexStatus.installed && openaiStatus.present && (
-              <button
-                className="conn-card__btn conn-card__btn--secondary"
-                onClick={() => { setOpenaiEditing(true); setOpenaiDraft(''); setOpenaiKeyStatus('idle'); setOpenaiError(null); }}
-              >
-                Change API key
-              </button>
-            )}
-            {!openaiLoading && !openaiEditing && openaiStatus.present && !codexStatus.authed && (
-              <button className="conn-card__btn conn-card__btn--secondary" onClick={handleDeleteOpenai}>
-                Sign out
-              </button>
-            )}
-            {!openaiLoading && !openaiEditing && codexStatus.authed && (
-              <button className="conn-card__btn conn-card__btn--secondary" onClick={handleCodexLogout}>
-                {openaiStatus.present ? 'Sign out of ChatGPT' : 'Sign out'}
-              </button>
-            )}
-            {!openaiLoading && openaiEditing && (
-              <button
-                className="conn-card__btn conn-card__btn--secondary"
-                onClick={() => { setOpenaiEditing(false); setOpenaiDraft(''); setOpenaiError(null); setOpenaiKeyStatus('idle'); }}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </div>
-        {codexDeviceCode && (
-          <div className="codex-device-auth">
-            <div className="codex-device-auth__label">One-time code</div>
-            <div className="codex-device-auth__code">{codexDeviceCode}</div>
-            {codexVerificationUrl && (
-              <div className="codex-device-auth__hint">
-                Verification page should have opened automatically.{' '}
-                If not, navigate to{' '}
-                <span className="codex-device-auth__url">{codexVerificationUrl}</span>{' '}
-                and enter the code above.
-              </div>
-            )}
-          </div>
-        )}
-        {/* Remote/headless fallback. Mirrors the onboarding affordance —
-            ChatGPT accounts need 'Enable device code authorization' in
-            Security Settings for this path to work server-side. */}
-        {!openaiLoading && !openaiEditing && !openaiStatus.present && !codexStatus.authed && codexStatus.installed && !codexDeviceCode && (
-          <button
-            type="button"
-            className="codex-device-auth__link codex-device-auth__link--secondary codex-device-auth__fallback"
-            onClick={handleCodexLoginDeviceAuth}
-          >
-            Having trouble? Use device code flow instead
-          </button>
-        )}
-        {openaiEditing && (
-          <div className="conn-card__api-key-edit">
-            <input
-              type="password"
-              className="conn-card__api-key-input"
-              placeholder="sk-..."
-              value={openaiDraft}
-              onChange={(e) => { setOpenaiDraft(e.target.value); setOpenaiKeyStatus('idle'); setOpenaiError(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveOpenai(); }}
-              autoFocus
-            />
-            <button
-              className="conn-card__btn conn-card__btn--primary"
-              onClick={handleSaveOpenai}
-              disabled={!openaiDraft.trim() || openaiKeyStatus === 'testing'}
-            >
-              {openaiKeyStatus === 'testing' ? 'Testing...' : 'Save'}
-            </button>
-            {openaiStatus.present && (
-              <button
-                className="conn-card__btn conn-card__btn--secondary"
-                onClick={() => { void handleDeleteOpenai(); setOpenaiEditing(false); }}
-              >
-                Remove API key
-              </button>
-            )}
-            {openaiKeyStatus === 'error' && openaiError && (
-              <span className="conn-card__api-key-error">{openaiError}</span>
-            )}
-          </div>
-        )}
-        {!openaiEditing && openaiError && (
-          <div className="conn-card__api-key-edit">
-            <span className="conn-card__api-key-error">{openaiError}</span>
           </div>
         )}
       </div>

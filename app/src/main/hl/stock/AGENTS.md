@@ -179,8 +179,8 @@ one directory up from the harness:
   and `../logs/engine.log`
 - Account state: `../account.json`
 - Local task control: `../local-task-server.json`
-- Browser binding state: `./agent-browser/sockets/<session_id>/shim-config.json`
-  records which tab this session is bound to and the url/title it expects.
+- Browser binding state: the JSON file at `$BU_AGENT_BROWSER_CONFIG` records
+  which tab this session is bound to and the url/title it expects.
 
 For repo-level local development, do not assume the platform default profile.
 Coding agents should use the repo `AGENTS.md` and `task worktree:profile:path`

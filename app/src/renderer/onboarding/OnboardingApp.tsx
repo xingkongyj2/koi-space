@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { OnboardingCookieList } from './OnboardingCookieList';
 import introImage from './intro.png';
 import claudeCodeLogo from './claude-code-logo.svg';
-import codexLogo from './codex-logo.svg';
 import { BrowserLogoAvatar } from '../shared/BrowserLogoAvatar';
 import { userFacingIpcError } from '../shared/ipcErrors';
 import {
@@ -64,8 +63,6 @@ declare global {
       }>>;
       saveApiKey: (key: string) => Promise<void>;
       testApiKey: (key: string) => Promise<{ success: boolean; error?: string }>;
-      saveOpenAIKey: (key: string) => Promise<void>;
-      testOpenAIKey: (key: string) => Promise<{ success: boolean; error?: string }>;
       detectClaudeCode: () => Promise<{
         available: boolean;
         installed: boolean;
@@ -78,16 +75,7 @@ declare global {
       useClaudeCode: () => Promise<{ subscriptionType: string | null }>;
       runClaudeLogin: () => Promise<{ ok: boolean; error?: string; stdout?: string }>;
       openClaudeLoginTerminal: () => Promise<{ opened: boolean; error?: string }>;
-      detectCodex: () => Promise<{
-        available: boolean;
-        installed: boolean;
-        authed: boolean;
-        version: string | null;
-        error?: string | null;
-      }>;
-      useCodex: () => Promise<{ ok: boolean }>;
-      openCodexLoginTerminal: (opts?: { deviceAuth?: boolean }) => Promise<{ opened: boolean; error?: string; verificationUrl?: string; deviceCode?: string }>;
-      installEngine: (engineId: 'claude-code' | 'codex') => Promise<{
+      installEngine: (engineId: 'claude-code') => Promise<{
         opened: boolean;
         completed?: boolean;
         exitCode?: number | null;
@@ -128,7 +116,7 @@ declare global {
 }
 
 type Step = 'intro' | 'profile' | 'apikey' | 'notifications' | 'shortcut';
-type InstallableOnboardingEngine = 'claude-code' | 'codex';
+type InstallableOnboardingEngine = 'claude-code';
 type InstallingEngines = Record<InstallableOnboardingEngine, boolean>;
 
 function buildAccelerator(e: KeyboardEvent, platform: string): string | null {
@@ -271,7 +259,6 @@ const IS_WINDOWS = typeof window !== 'undefined'
 // clipboard and poll detect-IPC until they finish running it manually.
 const ENGINE_INSTALL_COMMANDS: Record<InstallableOnboardingEngine, string> = {
   'claude-code': 'npm install -g @anthropic-ai/claude-code',
-  codex: 'npm install -g @openai/codex',
 };
 
 export function OnboardingApp() {
@@ -332,15 +319,8 @@ export function OnboardingApp() {
   const [saving, setSaving] = useState(false);
 
   // Per-provider API key fallback — expanded via the "Use X API key instead"
-  // links beneath each provider's card cluster. Each feeds a separate keychain
-  // slot so Anthropic and OpenAI keys are never mixed up at spawn time.
+  // links beneath each provider's card cluster.
   const [showAnthropicInput, setShowAnthropicInput] = useState(false);
-  const [showOpenaiInput, setShowOpenaiInput] = useState(false);
-  const [openaiKey, setOpenaiKey] = useState('');
-  const [showOpenaiKey, setShowOpenaiKey] = useState(false);
-  const [openaiTesting, setOpenaiTesting] = useState(false);
-  const [openaiTestResult, setOpenaiTestResult] = useState<{ success: boolean; error?: string } | null>(null);
-  const [openaiSaving, setOpenaiSaving] = useState(false);
 
   const [claudeCode, setClaudeCode] = useState<{
     available: boolean;
@@ -353,26 +333,11 @@ export function OnboardingApp() {
   const [usingClaudeCode, setUsingClaudeCode] = useState(false);
   const [waitingForLogin, setWaitingForLogin] = useState(false);
 
-  const [codex, setCodex] = useState<{
-    available: boolean;
-    installed: boolean;
-    authed: boolean;
-    version: string | null;
-    error?: string | null;
-  } | null>(null);
-  const [usingCodex, setUsingCodex] = useState(false);
-  const [waitingForCodexLogin, setWaitingForCodexLogin] = useState(false);
-  // Device-auth flow state: the URL the user visits + the one-time code they
-  // paste. Populated by handleStartCodexLogin and cleared once auth completes.
-  const [codexDeviceCode, setCodexDeviceCode] = useState<string | null>(null);
-  const [codexVerificationUrl, setCodexVerificationUrl] = useState<string | null>(null);
   const [installingEngines, setInstallingEngines] = useState<InstallingEngines>({
     'claude-code': false,
-    codex: false,
   });
   const installingEnginesRef = useRef<InstallingEngines>({
     'claude-code': false,
-    codex: false,
   });
 
   const refreshClaudeStatus = useCallback(async () => {
@@ -396,102 +361,6 @@ export function OnboardingApp() {
   useEffect(() => {
     void refreshClaudeStatus();
   }, [refreshClaudeStatus]);
-
-  const refreshCodexStatus = useCallback(async () => {
-    try {
-      console.log('[onboarding] refreshCodexStatus: invoking detectCodex');
-      const res = await window.onboardingAPI.detectCodex();
-      console.log('[onboarding] refreshCodexStatus: result', res);
-      setCodex({
-        available: res.available,
-        installed: res.installed,
-        authed: res.authed,
-        version: res.version,
-        error: res.error ?? null,
-      });
-      return res;
-    } catch (err) {
-      console.error('[onboarding] refreshCodexStatus: detectCodex threw', err);
-      setCodex({ available: false, installed: false, authed: false, version: null, error: (err as Error)?.message ?? 'detect failed' });
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshCodexStatus();
-  }, [refreshCodexStatus]);
-
-  // Poll while the user completes codex login. Short interval + immediate
-  // first tick so the UI flips to "configured" within a second of auth.json
-  // appearing, not after the full 3s loop.
-  useEffect(() => {
-    if (!waitingForCodexLogin) return;
-    let cancelled = false;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 180; // 3 minutes at 1s
-    const tick = async () => {
-      if (cancelled) return;
-      attempts++;
-      const res = await refreshCodexStatus();
-      if (res?.authed) { setWaitingForCodexLogin(false); return; }
-      if (attempts >= MAX_ATTEMPTS) { setWaitingForCodexLogin(false); return; }
-      setTimeout(tick, 1000);
-    };
-    // Kick off immediately (not after 3s) so the first detection happens
-    // right after the main-process write, not a full interval later.
-    void tick();
-    return () => { cancelled = true; };
-  }, [waitingForCodexLogin, refreshCodexStatus]);
-
-  const handleUseCodex = useCallback(async () => {
-    if (!codex?.installed) return;
-    console.log('[onboarding] handleUseCodex: invoking useCodex');
-    try {
-      const res = await window.onboardingAPI.useCodex();
-      console.log('[onboarding] handleUseCodex: ok', res);
-      setUsingCodex(true);
-      setUsingClaudeCode(false);
-      window.onboardingAPI.capture?.('onboarding_provider_selected', { provider: 'codex' });
-    } catch (err) {
-      console.error('[onboarding] handleUseCodex: useCodex threw', err);
-    }
-  }, [codex?.installed]);
-
-  const handleStartCodexLogin = useCallback(async (opts?: { deviceAuth?: boolean }) => {
-    if (!codex?.installed) return;
-    console.log('[onboarding] handleStartCodexLogin: invoking openCodexLoginTerminal', opts);
-    setWaitingForCodexLogin(true);
-    setCodexDeviceCode(null);
-    setCodexVerificationUrl(null);
-    try {
-      const res = await window.onboardingAPI.openCodexLoginTerminal(opts);
-      console.log('[onboarding] handleStartCodexLogin: result', res);
-      if (!res.opened) {
-        console.warn('[onboarding] openCodexLoginTerminal failed', res.error);
-        setWaitingForCodexLogin(false);
-        return;
-      }
-      if (res.deviceCode) setCodexDeviceCode(res.deviceCode);
-      if (res.verificationUrl) setCodexVerificationUrl(res.verificationUrl);
-    } catch (err) {
-      console.error('[onboarding] openCodexLoginTerminal threw', err);
-      setWaitingForCodexLogin(false);
-    }
-  }, [codex?.installed]);
-
-  // Click handlers for the card + the explicit device-auth fallback link.
-  // Keeping these as plain references so React binds identity-stable functions.
-  const handleStartCodexLoginPlain = useCallback(() => handleStartCodexLogin(), [handleStartCodexLogin]);
-  const handleStartCodexLoginDeviceAuth = useCallback(() => handleStartCodexLogin({ deviceAuth: true }), [handleStartCodexLogin]);
-
-  // Clear the device code as soon as the backend observes auth.json — the
-  // polling effect below flips waitingForCodexLogin off and we follow suit.
-  useEffect(() => {
-    if (!waitingForCodexLogin && (codexDeviceCode || codexVerificationUrl)) {
-      setCodexDeviceCode(null);
-      setCodexVerificationUrl(null);
-    }
-  }, [waitingForCodexLogin, codexDeviceCode, codexVerificationUrl]);
 
   // Poll while waiting for Claude Code to finish browser-based login.
   // Stops when authed becomes true or after a cap.
@@ -518,7 +387,6 @@ export function OnboardingApp() {
       await window.onboardingAPI.useClaudeCode();
       console.log('[onboarding] handleUseClaudeCode: ok');
       setUsingClaudeCode(true);
-      setUsingCodex(false);
       window.onboardingAPI.capture?.('onboarding_provider_selected', { provider: 'claude-code' });
     } catch (err) {
       console.error('[onboarding] handleUseClaudeCode: threw', err);
@@ -542,12 +410,10 @@ export function OnboardingApp() {
   }, [refreshClaudeStatus]);
 
   const waitForInstalledStatus = useCallback(async (
-    engineId: InstallableOnboardingEngine,
     initialInstalled?: { installed: boolean; version?: string; error?: string },
   ) => {
-    const refreshStatus = engineId === 'claude-code' ? refreshClaudeStatus : refreshCodexStatus;
-    return pollInstalledStatus(refreshStatus, { initialInstalled });
-  }, [refreshClaudeStatus, refreshCodexStatus]);
+    return pollInstalledStatus(refreshClaudeStatus, { initialInstalled });
+  }, [refreshClaudeStatus]);
 
   const setEngineInstalling = useCallback((engineId: InstallableOnboardingEngine, installing: boolean) => {
     const current = installingEnginesRef.current;
@@ -563,10 +429,8 @@ export function OnboardingApp() {
     try {
       const res = await window.onboardingAPI.installEngine(engineId);
       const status = res.opened
-        ? await waitForInstalledStatus(engineId, res.installed)
-        : engineId === 'claude-code'
-          ? await refreshClaudeStatus()
-          : await refreshCodexStatus();
+        ? await waitForInstalledStatus(res.installed)
+        : await refreshClaudeStatus();
       if (!res.opened || !status?.installed) {
         console.warn('[onboarding] installEngine failed', engineId, res.error);
         return;
@@ -576,14 +440,10 @@ export function OnboardingApp() {
     } finally {
       setEngineInstalling(engineId, false);
     }
-  }, [refreshClaudeStatus, refreshCodexStatus, setEngineInstalling, waitForInstalledStatus]);
+  }, [refreshClaudeStatus, setEngineInstalling, waitForInstalledStatus]);
 
   const handleInstallClaudeCode = useCallback(() => {
     void handleInstallEngine('claude-code');
-  }, [handleInstallEngine]);
-
-  const handleInstallCodex = useCallback(() => {
-    void handleInstallEngine('codex');
   }, [handleInstallEngine]);
 
   // Windows-only: copy the npm install command to the clipboard, then poll
@@ -599,7 +459,7 @@ export function OnboardingApp() {
     }
     setEngineInstalling(engineId, true);
     try {
-      await waitForInstalledStatus(engineId);
+      await waitForInstalledStatus();
     } finally {
       setEngineInstalling(engineId, false);
     }
@@ -609,18 +469,8 @@ export function OnboardingApp() {
     void handleManualInstallEngine('claude-code');
   }, [handleManualInstallEngine]);
 
-  const handleManualInstallCodex = useCallback(() => {
-    void handleManualInstallEngine('codex');
-  }, [handleManualInstallEngine]);
-
   const claudeCodeReady = Boolean(claudeCode?.installed && claudeCode.authed);
-  const codexReady = Boolean(codex?.installed && codex.authed);
-  const hasUsableAnthropicKey = Boolean(claudeCode?.installed && apiKey.trim());
-  const hasUsableOpenaiKey = Boolean(codex?.installed && openaiKey.trim());
-
-  const canContinueProviderSetup = claudeCodeReady || codexReady || hasUsableAnthropicKey || hasUsableOpenaiKey;
   const installingClaudeCode = installingEngines['claude-code'];
-  const installingCodex = installingEngines.codex;
 
   const [accelerator, setAccelerator] = useState<string>(() => defaultGlobalCmdbarAccelerator(window.onboardingAPI.platform));
   const [recording, setRecording] = useState(false);
@@ -701,70 +551,22 @@ export function OnboardingApp() {
     }
   }, [apiKey]);
 
-  const handleTestOpenaiKey = useCallback(async () => {
-    if (!openaiKey.trim()) return;
-    console.log('[onboarding] handleTestOpenaiKey: invoking testOpenAIKey');
-    setOpenaiTesting(true);
-    setOpenaiTestResult(null);
-    try {
-      const result = await window.onboardingAPI.testOpenAIKey(openaiKey.trim());
-      console.log('[onboarding] handleTestOpenaiKey: result', result);
-      setOpenaiTestResult(result);
-    } catch (err) {
-      console.error('[onboarding] handleTestOpenaiKey: threw', err);
-      setOpenaiTestResult({ success: false, error: (err as Error).message });
-    } finally {
-      setOpenaiTesting(false);
-    }
-  }, [openaiKey]);
-
-  useEffect(() => {
-    if (!openaiTestResult) return;
-    const t = setTimeout(() => setOpenaiTestResult(null), 3500);
-    return () => clearTimeout(t);
-  }, [openaiTestResult]);
-
-  const handleSaveOpenaiKeyAndContinue = useCallback(async () => {
-    if (!openaiKey.trim()) return;
-    console.log('[onboarding] handleSaveOpenaiKeyAndContinue: saving');
-    setOpenaiSaving(true);
-    try {
-      await window.onboardingAPI.saveOpenAIKey(openaiKey.trim());
-      console.log('[onboarding] handleSaveOpenaiKeyAndContinue: saved, advancing');
-      setStep('notifications');
-    } catch (err) {
-      console.error('[onboarding] save openai key failed', err);
-    } finally {
-      setOpenaiSaving(false);
-    }
-  }, [openaiKey]);
-
-  // Single bottom-of-step handler — saves whatever keys are filled and
-  // advances. Works alongside the provider-subscription path (usingX), which
-  // doesn't need a save step. Verbose logging so we can trace the path taken.
+  // Single bottom-of-step handler — saves the Anthropic key if one was filled
+  // and advances. Provider setup is optional: the default engine is the app's
+  // own Python backend, which needs no provider credentials, and Claude Code
+  // is an optional connection the user may set up here or later in Settings.
   const [stepSaving, setStepSaving] = useState(false);
   const handleStepSaveAndContinue = useCallback(async () => {
     console.log('[onboarding] handleStepSaveAndContinue', {
       claudeAuthed: claudeCodeReady,
-      codexAuthed: codexReady,
       hasAnthropicKey: apiKey.trim().length > 0,
-      hasOpenaiKey: openaiKey.trim().length > 0,
     });
-    if (!canContinueProviderSetup) return;
     setStepSaving(true);
     try {
-      const ops: Promise<unknown>[] = [];
-      if (claudeCode?.installed && apiKey.trim()) ops.push(window.onboardingAPI.saveApiKey(apiKey.trim()));
-      if (codex?.installed && openaiKey.trim()) ops.push(window.onboardingAPI.saveOpenAIKey(openaiKey.trim()));
-      if (ops.length > 0) {
-        console.log('[onboarding] handleStepSaveAndContinue: saving', ops.length, 'key(s)');
-        await Promise.all(ops);
-      }
       if (claudeCode?.installed && apiKey.trim()) {
+        console.log('[onboarding] handleStepSaveAndContinue: saving anthropic key');
+        await window.onboardingAPI.saveApiKey(apiKey.trim());
         window.onboardingAPI.capture?.('onboarding_provider_selected', { provider: 'anthropic-key' });
-      }
-      if (codex?.installed && openaiKey.trim()) {
-        window.onboardingAPI.capture?.('onboarding_provider_selected', { provider: 'openai-key' });
       }
       console.log('[onboarding] handleStepSaveAndContinue: advancing to notifications step');
       setStep('notifications');
@@ -773,7 +575,7 @@ export function OnboardingApp() {
     } finally {
       setStepSaving(false);
     }
-  }, [apiKey, canContinueProviderSetup, claudeCode?.installed, claudeCodeReady, codex?.installed, codexReady, openaiKey]);
+  }, [apiKey, claudeCode?.installed, claudeCodeReady]);
 
   const handleFinish = useCallback(async () => {
     window.onboardingAPI.capture?.('onboarding_completed');
@@ -1194,160 +996,12 @@ export function OnboardingApp() {
               </div>
             )}
 
-            {/* Codex — authed → selectable card. Click flips to configured state. */}
-            {codexReady && (
-              <div className="claude-code-card claude-code-card--selected">
-                <div className="claude-code-card__icon">
-                  <img src={codexLogo} alt="" />
-                </div>
-                <div className="claude-code-card__text">
-                  <div className="claude-code-card__title">Codex successfully configured</div>
-                  <div className="claude-code-card__sub">
-                    {`Signed in via Codex CLI${codex.version ? ` (v${codex.version})` : ''}. No API key needed.`}
-                  </div>
-                </div>
-                <div className="claude-code-card__check">✓</div>
-              </div>
-            )}
-
-            {/* Codex not authed → same merged card pattern as Claude. */}
-            {codex && !codexReady && !usingCodex && (
-              <div className="provider-card">
-                {codex.installed && (
-                  <div className="provider-card__tabs" role="tablist">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={!showOpenaiInput}
-                      className={`provider-card__tab${!showOpenaiInput ? ' is-active' : ''}`}
-                      onClick={() => setShowOpenaiInput(false)}
-                    >
-                      Connect subscription
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={showOpenaiInput}
-                      className={`provider-card__tab${showOpenaiInput ? ' is-active' : ''}`}
-                      onClick={() => setShowOpenaiInput(true)}
-                    >
-                      Use API key
-                    </button>
-                  </div>
-                )}
-
-                <div className="provider-card__body">
-                  {!codex.installed && (
-                    <button
-                      type="button"
-                      className="provider-card__action"
-                      onClick={IS_WINDOWS ? handleManualInstallCodex : handleInstallCodex}
-                      disabled={installingCodex}
-                    >
-                      <div className="claude-code-card__icon">
-                        <img src={codexLogo} alt="" />
-                      </div>
-                      <div className="claude-code-card__text">
-                        <div className="claude-code-card__title">
-                          {installingCodex
-                            ? (IS_WINDOWS ? 'Waiting for Codex…' : 'Installing Codex…')
-                            : (IS_WINDOWS ? 'Copy install command' : 'Install Codex CLI')}
-                        </div>
-                        <div className="claude-code-card__sub">
-                          {IS_WINDOWS
-                            ? (installingCodex
-                              ? `Run ${ENGINE_INSTALL_COMMANDS.codex} in your terminal — we’ll detect it when it finishes.`
-                              : `Click to copy ${ENGINE_INSTALL_COMMANDS.codex}. Paste it into PowerShell, and we’ll detect when it finishes.`)
-                            : 'Runs the installer in the background. We’ll detect it when it finishes.'}
-                        </div>
-                      </div>
-                      <div className="claude-code-card__chevron">{installingCodex ? '\u2026' : '\u203A'}</div>
-                    </button>
-                  )}
-
-                  {codex.installed && !showOpenaiInput && (
-                    <>
-                      <button
-                        type="button"
-                        className="provider-card__action"
-                        onClick={handleStartCodexLoginPlain}
-                      >
-                        <div className="claude-code-card__icon">
-                          <img src={codexLogo} alt="" />
-                        </div>
-                        <div className="claude-code-card__text">
-                          <div className="claude-code-card__title">
-                            {waitingForCodexLogin ? 'Waiting for login…' : 'Log in to Codex'}
-                          </div>
-                          <div className="claude-code-card__sub">
-                            {waitingForCodexLogin && codexDeviceCode
-                              ? 'Enter the code shown below, or click to restart.'
-                              : waitingForCodexLogin
-                                ? 'Finish the OAuth flow in your browser. Click to restart.'
-                                : 'Starts the Codex CLI login flow in your browser. Sign in once and we’ll detect it.'}
-                          </div>
-                        </div>
-                        <div className="claude-code-card__chevron">{waitingForCodexLogin ? '↻' : '›'}</div>
-                      </button>
-                      {codexDeviceCode && (
-                        <div className="codex-device-auth">
-                          <div className="codex-device-auth__label">One-time code</div>
-                          <div className="codex-device-auth__code">{codexDeviceCode}</div>
-                          {codexVerificationUrl && (
-                            <button
-                              type="button"
-                              className="codex-device-auth__link"
-                              onClick={() => window.onboardingAPI.openExternal?.(codexVerificationUrl)}
-                            >
-                              Open verification page ↗
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      {!codexDeviceCode && (
-                        <button
-                          type="button"
-                          className="codex-device-auth__link codex-device-auth__link--secondary codex-device-auth__fallback"
-                          onClick={handleStartCodexLoginDeviceAuth}
-                        >
-                          Having trouble? Use device code flow instead
-                        </button>
-                      )}
-                    </>
-                  )}
-
-                  {codex.installed && showOpenaiInput && (
-                    <div className="provider-card__keyform">
-                      <div className="apikey-input-wrap">
-                        <input
-                          type={showOpenaiKey ? 'text' : 'password'}
-                          className="apikey-input"
-                          placeholder="sk-..."
-                          value={openaiKey}
-                          onChange={(e) => { setOpenaiKey(e.target.value); setOpenaiTestResult(null); }}
-                          spellCheck={false}
-                        />
-                        <button className="apikey-toggle" onClick={() => setShowOpenaiKey(!showOpenaiKey)} tabIndex={-1}>
-                          {showOpenaiKey ? 'Hide' : 'Show'}
-                        </button>
-                      </div>
-                      <div className="apikey-actions">
-                        <button className="btn btn-secondary" onClick={handleTestOpenaiKey} disabled={!openaiKey.trim() || openaiTesting}>
-                          {openaiTesting ? 'Testing...' : 'Test Key'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
             <div className="apikey-actions apikey-actions--footer">
               <button
                 type="button"
                 className="btn btn-primary apikey-continue-btn"
                 onClick={handleStepSaveAndContinue}
-                disabled={!canContinueProviderSetup || stepSaving}
+                disabled={stepSaving}
               >
                 {stepSaving ? 'Saving...' : 'Save & Continue'}
               </button>

@@ -100,27 +100,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       logout: (): Promise<{ opened: boolean; error?: string }> =>
         ipcRenderer.invoke('settings:claude-code:logout'),
     },
-    openaiKey: {
-      getStatus: (): Promise<{ present: boolean; masked?: string }> =>
-        ipcRenderer.invoke('settings:openai-key:get-status'),
-      save: (key: string): Promise<void> =>
-        ipcRenderer.invoke('settings:openai-key:save', key),
-      test: (key: string): Promise<{ success: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:openai-key:test', key),
-      delete: (): Promise<void> => ipcRenderer.invoke('settings:openai-key:delete'),
-    },
-    codex: {
-      status: (): Promise<{
-        id: string;
-        displayName: string;
-        installed: { installed: boolean; version?: string; error?: string };
-        authed: { authed: boolean; error?: string };
-      }> => ipcRenderer.invoke('sessions:engine-status', 'codex'),
-      login: (opts?: { deviceAuth?: boolean }): Promise<{ opened: boolean; error?: string; verificationUrl?: string; deviceCode?: string }> =>
-        ipcRenderer.invoke('sessions:engine-login', 'codex', opts),
-      logout: (): Promise<{ opened: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:codex:logout'),
-    },
     browserCode: {
       getStatus: (): Promise<{
         keys: Record<string, { masked: string; lastModel?: string }>;

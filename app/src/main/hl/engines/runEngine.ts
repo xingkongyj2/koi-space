@@ -142,9 +142,9 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   }
 
   // 4. Resolve auth. Per-engine keychain slots: Claude reads the Anthropic
-  //    key via resolveAuth(), Codex reads its OpenAI slot. Each adapter gets
-  //    the key appropriate to its provider so we can't accidentally send an
-  //    Anthropic key to OpenAI (or vice versa).
+  //    key via resolveAuth(), BrowserCode reads its per-provider key store.
+  //    Each adapter gets the key appropriate to its provider so we can't
+  //    accidentally cross provider credentials.
   let savedApiKey: string | undefined;
   let providerId: string | undefined;
   let model: string | undefined;

@@ -2,8 +2,8 @@
  * Prompt lines that introduce the browser tool to an agent.
  *
  * Shared by every engine adapter — the browser contract is identical across
- * Claude Code, Codex, and BrowserCode, so the prose lives here rather than in
- * three copies that drift apart.
+ * the Python agent, Claude Code, and BrowserCode, so the prose lives here
+ * rather than in three copies that drift apart.
  */
 
 export function browserToolPromptLines(): string[] {

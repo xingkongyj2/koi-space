@@ -16,7 +16,6 @@ const mockState = vi.hoisted(() => {
 
 const authMocks = vi.hoisted(() => ({
   resolveAuth: vi.fn(async (): Promise<unknown> => null),
-  loadOpenAIKey: vi.fn(async (): Promise<string | null> => null),
   loadClaudeSubscriptionType: vi.fn(async (): Promise<string | null> => null),
   loadBrowserCodeConfig: vi.fn(async (): Promise<unknown> => null),
 }));
@@ -119,7 +118,6 @@ describe('runEngine harness watcher', () => {
   beforeEach(() => {
     harnessDir = prepareHarness();
     authMocks.resolveAuth.mockResolvedValue(null);
-    authMocks.loadOpenAIKey.mockResolvedValue(null);
     authMocks.loadClaudeSubscriptionType.mockResolvedValue(null);
     authMocks.loadBrowserCodeConfig.mockResolvedValue(null);
   });

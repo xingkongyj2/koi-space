@@ -21,6 +21,7 @@ import { engineLogger } from '../../logger';
 import { runCliCapture } from '../engines/cliSpawn';
 import {
   type AgentBrowserConfig,
+  SOCKET_PATH_LIMIT,
   agentBrowserSessionName,
   configPath,
   daemonPidCachePath,
@@ -28,8 +29,11 @@ import {
   resolveAgentBrowserBinary,
   shimDir,
   socketDir,
+  socketPath,
   writeShimFiles,
 } from './env';
+
+const IS_WIN = process.platform === 'win32';
 
 /** The subset of a run that binding needs; kept off SpawnContext so binding can
  *  happen before the context (and therefore the resolved binary) exists. */
@@ -93,7 +97,7 @@ export function selectTab(tabs: TabEntry[], target: { markerTitle?: string; url?
 }
 
 function childEnv(ctx: BindParams, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const sockDir = socketDir(ctx.harnessDir, ctx.sessionId);
+  const sockDir = socketDir();
   fs.mkdirSync(sockDir, { recursive: true });
   return {
     ...baseEnv,
@@ -105,6 +109,29 @@ function childEnv(ctx: BindParams, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEn
 
 function readPidFile(file: string): string {
   try { return fs.readFileSync(file, 'utf-8').trim(); } catch { return ''; }
+}
+
+/**
+ * Extract something worth showing from a failed agent-browser call.
+ *
+ * It reports failures as JSON on **stdout** with an empty stderr (`{"error":
+ * "…","success":false}`, exit 1), so reading only stderr — the obvious choice —
+ * yields an empty string and the real reason never reaches the log or the user.
+ */
+function cliFailureText(result: { error?: string; stdout: string; stderr: string }): string {
+  for (const chunk of [result.error, result.stderr, result.stdout]) {
+    const text = (chunk ?? '').trim();
+    if (!text) continue;
+    const start = text.indexOf('{');
+    if (start >= 0) {
+      try {
+        const parsed = JSON.parse(text.slice(start)) as { error?: unknown };
+        if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim();
+      } catch { /* not JSON after all — fall through to the raw text */ }
+    }
+    return text;
+  }
+  return 'agent-browser produced no output';
 }
 
 /**
@@ -127,6 +154,18 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
   const env = childEnv(ctx, process.env);
   const pidFile = path.join(env.AGENT_BROWSER_SOCKET_DIR as string, `${env.AGENT_BROWSER_SESSION}.pid`);
 
+  // agent-browser validates this itself and exits 1, but the message would land
+  // in a log rather than in front of the user — and it cost a debugging session
+  // to find it once already. Check it here where we can say what to do.
+  const sockPath = socketPath(ctx.sessionId);
+  if (!IS_WIN && Buffer.byteLength(sockPath) > SOCKET_PATH_LIMIT) {
+    return {
+      ok: false,
+      binaryPath,
+      error: `agent-browser socket path is ${Buffer.byteLength(sockPath)} bytes, over the ${SOCKET_PATH_LIMIT}-byte Unix socket limit: ${sockPath}. Shorten TMPDIR.`,
+    };
+  }
+
   // Plant the marker. Fails harmlessly on chrome:// or a crashed renderer —
   // we fall back to url matching below.
   let planted = false;
@@ -145,7 +184,7 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
     return {
       ok: false,
       binaryPath,
-      error: `agent-browser could not reach the browser on CDP port ${ctx.cdpPort}: ${(listing.error ?? listing.stderr).trim().slice(0, 400)}`,
+      error: `agent-browser could not reach the browser on CDP port ${ctx.cdpPort}: ${cliFailureText(listing).slice(0, 400)}`,
     };
   }
   const tabs = parseTabList(listing.stdout);
@@ -169,7 +208,7 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
 
   const switched = await runCliCapture(binaryPath, ['tab', tabId], 15_000, { env, cwd: ctx.harnessDir });
   if (!switched.ok) {
-    return { ok: false, binaryPath, error: `agent-browser failed to switch to ${tabId}: ${(switched.error ?? switched.stderr).trim().slice(0, 300)}` };
+    return { ok: false, binaryPath, error: `agent-browser failed to switch to ${tabId}: ${cliFailureText(switched).slice(0, 300)}` };
   }
 
   const config: AgentBrowserConfig = {
@@ -180,11 +219,11 @@ export async function bindAgentBrowser(ctx: BindParams, webContents: WebContents
     cdpPort: ctx.cdpPort,
     targetId: ctx.targetId,
     pidFile,
-    pidCache: daemonPidCachePath(ctx.harnessDir, ctx.sessionId),
+    pidCache: daemonPidCachePath(ctx.sessionId),
     markerTitle: marker,
     target: { url: targetUrl, title: safeTitle(webContents) },
   };
-  writeShimFiles(ctx.harnessDir, ctx.sessionId, config);
+  writeShimFiles(ctx.sessionId, config);
   // Seed the pid cache so the agent's first command takes the shim's fast path.
   try { fs.writeFileSync(config.pidCache, readPidFile(pidFile), 'utf-8'); } catch { /* shim will rebind */ }
 
@@ -213,7 +252,7 @@ function safeTitle(wc: WebContents): string {
  * Returns a disposer; runEngine calls it when the child exits.
  */
 export function watchTargetFingerprint(ctx: BindParams, webContents: WebContents): () => void {
-  const file = configPath(ctx.harnessDir, ctx.sessionId);
+  const file = configPath(ctx.sessionId);
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const refresh = (): void => {

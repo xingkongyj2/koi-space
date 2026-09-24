@@ -60,7 +60,7 @@ function installApis(): void {
         get: vi.fn(async (id: string) => ({
           id,
           status: 'running',
-          engine: 'codex',
+          engine: 'python',
           output: [],
         })),
         cancel: vi.fn(async () => undefined),
@@ -165,7 +165,7 @@ describe('LogsApp focus behavior', () => {
       id: 'session-1',
       prompt: 'paused',
       status: 'paused',
-      engine: 'codex',
+      engine: 'python',
       output: [],
       createdAt: Date.now(),
       canResume: true,
@@ -193,7 +193,7 @@ describe('LogsApp focus behavior', () => {
       id: 'session-1',
       prompt: 'done',
       status: 'stopped',
-      engine: 'codex',
+      engine: 'python',
       output: [],
       createdAt: Date.now(),
     });

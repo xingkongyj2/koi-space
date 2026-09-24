@@ -1,7 +1,7 @@
 /**
  * Streaming `html` / `htmlview` / `options` / `ask` fenced-code-block extractor.
  *
- * Agents (claude-code, codex, browsercode/opencode) stream their output as
+ * Agents (python, claude-code, browsercode/opencode) stream their output as
  * many small text deltas. When the model emits a fenced block like:
  *
  *     ```html
@@ -94,7 +94,7 @@ export interface AskOption {
  * One question inside an `ask` form. Mirrors the shape Claude Code's
  * native AskUserQuestion tool uses — that schema is well-designed and
  * familiar to agents, so we keep it verbatim except that this is OUR
- * channel (works for codex / opencode too via the skill).
+ * channel (works for any engine via the skill).
  */
 export interface AskQuestion {
   question: string;

@@ -37,9 +37,9 @@ afterEach(() => {
 describe('makeLogger — console output', () => {
   it('emits to console with the [namespace] prefix', () => {
     const log = makeLogger('EnginePicker');
-    log.info('refreshStatus.failed', { id: 'codex' });
+    log.info('refreshStatus.failed', { id: 'python' });
     expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(logSpy).toHaveBeenCalledWith('[EnginePicker]', 'refreshStatus.failed', { id: 'codex' });
+    expect(logSpy).toHaveBeenCalledWith('[EnginePicker]', 'refreshStatus.failed', { id: 'python' });
   });
 
   it('omits the extra arg when no extra is given', () => {

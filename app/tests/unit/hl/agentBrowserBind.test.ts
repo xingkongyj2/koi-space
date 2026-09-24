@@ -4,13 +4,16 @@ import path from 'node:path';
 import { afterAll, describe, expect, test } from 'vitest';
 import { selectTab } from '../../../src/main/hl/agent-browser/bind';
 import {
+  SOCKET_PATH_LIMIT,
   agentBrowserSessionName,
   applyAgentBrowserEnv,
   configPath,
+  daemonPidCachePath,
   markerTitleFor,
   shimDir,
   shimEnvPath,
   socketDir,
+  socketPath,
   writeShimFiles,
   type AgentBrowserConfig,
 } from '../../../src/main/hl/agent-browser/env';
@@ -97,9 +100,9 @@ describe('applyAgentBrowserEnv', () => {
     const ctx = spawnContext();
     const env = applyAgentBrowserEnv(ctx, { PATH: '/usr/bin:/bin' });
 
-    expect(env.AGENT_BROWSER_SESSION).toBe('bu-sess-1234');
+    expect(env.AGENT_BROWSER_SESSION).toBe(agentBrowserSessionName('sess-1234'));
     expect(env.AGENT_BROWSER_CDP).toBe('51234');
-    expect(env.AGENT_BROWSER_SOCKET_DIR).toBe(socketDir(ctx.harnessDir, ctx.sessionId));
+    expect(env.AGENT_BROWSER_SOCKET_DIR).toBe(socketDir());
     // A long idle timeout keeps the daemon — and therefore the tab binding —
     // alive across gaps between turns.
     expect(Number(env.AGENT_BROWSER_IDLE_TIMEOUT_MS)).toBeGreaterThan(3_600_000);
@@ -121,31 +124,52 @@ describe('applyAgentBrowserEnv', () => {
     const env = applyAgentBrowserEnv(spawnContext({ agentBrowserBinary: null }), {});
     expect(env.BU_AGENT_BROWSER_MISSING).toBe('1');
   });
+});
 
-  test('sanitises session ids that are not filesystem-safe', () => {
-    expect(agentBrowserSessionName('a/b c:d')).toBe('bu-a-b-c-d');
+describe('session naming and socket path budget', () => {
+  test('derives a stable, filesystem-safe name from any session id', () => {
+    expect(agentBrowserSessionName('a/b c:d')).toBe(agentBrowserSessionName('a/b c:d'));
+    expect(agentBrowserSessionName('a')).not.toBe(agentBrowserSessionName('b'));
+    expect(agentBrowserSessionName('a/b c:d')).toMatch(/^bu[0-9a-f]+$/);
+  });
+
+  /**
+   * Regression: agent-browser refuses to start when `<socketDir>/<session>.sock`
+   * exceeds the platform Unix-socket limit (103 bytes on macOS), and it reports
+   * that on stdout with an empty stderr — so the failure used to surface as a
+   * blank error message. A UUID session id under `<userData>/harness/…` was 174
+   * bytes and broke every run.
+   */
+  test('keeps the socket path under the platform limit for a real UUID session', () => {
+    const sessionId = '62257e30-c753-4153-a8d9-b242cbad2987';
+    const bytes = Buffer.byteLength(socketPath(sessionId));
+    expect(bytes).toBeLessThanOrEqual(SOCKET_PATH_LIMIT);
+  });
+
+  test('does not put the socket under userData, whose path eats the budget', () => {
+    expect(socketDir()).toBe(path.join(os.tmpdir(), 'buab'));
   });
 });
 
 describe('writeShimFiles', () => {
   test('writes a sourceable POSIX env file and a JSON config', () => {
-    const harness = path.join(tmpRoot, 'shim-harness');
+    const sessionId = 'shim-test-1';
     const config: AgentBrowserConfig = {
-      realBinary: "/usr/local/bin/agent-browser",
+      realBinary: '/usr/local/bin/agent-browser',
       electronPath: '/Applications/App.app/Contents/MacOS/App',
-      rebindScript: path.join(harness, 'agent-browser-shim', 'rebind.mjs'),
-      session: 'bu-sess-1',
+      rebindScript: '/tmp/agent-browser-shim/rebind.mjs',
+      session: agentBrowserSessionName(sessionId),
       cdpPort: 51234,
       targetId: 'TARGET-A',
-      pidFile: path.join(socketDir(harness, 'sess-1'), 'bu-sess-1.pid'),
-      pidCache: path.join(socketDir(harness, 'sess-1'), 'daemon.pid'),
-      markerTitle: markerTitleFor('sess-1'),
+      pidFile: path.join(socketDir(), `${agentBrowserSessionName(sessionId)}.pid`),
+      pidCache: daemonPidCachePath(sessionId),
+      markerTitle: markerTitleFor(sessionId),
       target: { url: 'about:blank', title: '' },
     };
 
-    writeShimFiles(harness, 'sess-1', config);
+    writeShimFiles(sessionId, config);
 
-    const sh = fs.readFileSync(shimEnvPath(harness, 'sess-1'), 'utf-8');
+    const sh = fs.readFileSync(shimEnvPath(sessionId), 'utf-8');
     expect(sh).toContain(`AB_BIN='/usr/local/bin/agent-browser'`);
     expect(sh).toContain('AB_PIDFILE=');
     // The shim sources this file, so every line must be a valid assignment.
@@ -153,18 +177,18 @@ describe('writeShimFiles', () => {
       expect(line).toMatch(/^AB_[A-Z]+='.+'$/);
     }
 
-    const onDisk = JSON.parse(fs.readFileSync(configPath(harness, 'sess-1'), 'utf-8')) as AgentBrowserConfig;
+    const onDisk = JSON.parse(fs.readFileSync(configPath(sessionId), 'utf-8')) as AgentBrowserConfig;
     expect(onDisk.targetId).toBe('TARGET-A');
     expect(onDisk.markerTitle).toBe(config.markerTitle);
   });
 
   test('single-quotes a path containing an apostrophe', () => {
-    const harness = path.join(tmpRoot, "apos'trophe");
+    const sessionId = 'shim-test-apos';
     const config: AgentBrowserConfig = {
       realBinary: "/Users/o'brien/bin/agent-browser",
       electronPath: '/bin/true',
       rebindScript: '/tmp/rebind.mjs',
-      session: 'bu-s',
+      session: agentBrowserSessionName(sessionId),
       cdpPort: 1,
       targetId: 'T',
       pidFile: '/tmp/p.pid',
@@ -173,8 +197,8 @@ describe('writeShimFiles', () => {
       target: { url: '', title: '' },
     };
 
-    writeShimFiles(harness, 's', config);
-    const sh = fs.readFileSync(shimEnvPath(harness, 's'), 'utf-8');
+    writeShimFiles(sessionId, config);
+    const sh = fs.readFileSync(shimEnvPath(sessionId), 'utf-8');
     expect(sh).toContain(`AB_BIN='/Users/o'\\''brien/bin/agent-browser'`);
   });
 });

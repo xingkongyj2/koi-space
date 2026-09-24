@@ -15,7 +15,6 @@ import { AttachmentList, type AttachmentItem } from './chat-v2/Attachments';
 const ENGINE_DISPLAY_NAMES: Record<string, string> = {
   python: 'Koi Python Agent',
   'claude-code': 'Claude Code',
-  codex: 'Codex',
   browsercode: 'BrowserCode',
 };
 import {

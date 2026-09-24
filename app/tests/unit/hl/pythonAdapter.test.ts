@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, test, vi } from 'vitest';
 import type { ParseContext, SpawnContext } from '../../../src/main/hl/engines/types';
+import { agentBrowserSessionName } from '../../../src/main/hl/agent-browser/env';
 
 vi.mock('electron', () => ({
   app: { getAppPath: vi.fn(() => path.join(__dirname, '..', '..', '..')) },
@@ -119,7 +120,7 @@ describe('python adapter spawn contract', () => {
       sessionId: 'sess-abc',
       targetId: 'TARGET-1',
       cdpPort: 51234,
-      agentBrowserSession: 'bu-sess-abc',
+      agentBrowserSession: agentBrowserSessionName('sess-abc'),
       outputsDir: '/tmp/harness/outputs/sess-abc',
     });
   });
@@ -130,7 +131,7 @@ describe('python adapter spawn contract', () => {
     expect((env.PYTHONPATH ?? '').split(path.delimiter)).toContain(path.join(REPO_APP, 'python'));
     // The browser binding is what makes `agent-browser` inside Python hit this
     // session's view instead of somebody else's.
-    expect(env.AGENT_BROWSER_SESSION).toBe('bu-sess-abc');
+    expect(env.AGENT_BROWSER_SESSION).toBe(agentBrowserSessionName('sess-abc'));
     expect(env.AGENT_BROWSER_CDP).toBe('51234');
     expect((env.PATH ?? '').split(path.delimiter)[0]).toBe('/tmp/harness/agent-browser-shim');
   });
