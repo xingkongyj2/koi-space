@@ -1,0 +1,579 @@
+/* OptionList — selectable picker emitted by shopping agents.
+ * See OptionList.tsx for the data model + keyboard contract.
+ *
+ * Uses the design-system semantic tokens from theme.shell.css. Those
+ * tokens auto-flip when <html data-mode="light"> is set, so this file
+ * needs no [data-mode="light"] block of its own. */
+
+.chatv2-optlist {
+  /* clear: both forces the picker below any floated screenshot anchor in
+   * the chat turn — without this it'd render in the narrow column beside
+   * a float and the cards look squished. */
+  clear: both;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 4px 0;
+}
+
+/* Post-submit chosen view — collapsed receipt. The product cards below
+ * still carry their own border/background so the picker reads as a
+ * receipt-row in the chat flow, not a boxed container. */
+.chatv2-optlist--chosen {
+  padding: 4px 0;
+}
+
+/* Cancelled state — session ended before pick. */
+.chatv2-optlist--cancelled .chatv2-optlist__grid {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.chatv2-optlist--cancelled .chatv2-optlist__actions {
+  display: none;
+}
+
+.chatv2-optlist__cancelled-banner {
+  font-size: 12.5px;
+  color: var(--color-fg-tertiary);
+  padding: 8px 0 0;
+}
+
+.chatv2-optlist__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chatv2-optlist__prompt {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-fg-primary);
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+}
+
+.chatv2-optlist__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  outline: none;
+}
+
+/* Multi-section picker — one labeled sub-grid per category. */
+.chatv2-optlist__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chatv2-optlist__section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.chatv2-optlist__section-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-fg-primary);
+  letter-spacing: -0.005em;
+}
+
+/* Source attribution line: favicon + "Results from {site}" */
+.chatv2-optlist__source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.chatv2-optlist__source-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  object-fit: contain;
+  display: block;
+}
+.chatv2-optlist__source-label {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-fg-secondary);
+}
+.chatv2-optlist__source-name {
+  color: var(--color-fg-primary);
+  font-weight: 600;
+}
+/* Multi-select subtitle: tells user upfront they can pick more than one
+   ("Pick any", "Pick 1–3", "Pick exactly 2") + running added count. */
+.chatv2-optlist__multi-hint {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-fg-secondary);
+  margin-top: 2px;
+}
+
+/* Streaming hint shown in section head while options are still arriving. */
+.chatv2-optlist__streaming-hint {
+  font-size: 11.5px;
+  color: var(--color-fg-tertiary);
+  margin-left: auto;
+}
+
+/* Card — now a plain div (click propagation handled by inner Choose button) */
+.chatv2-optlist__card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl, 12px);
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition:
+    border-color var(--duration-fast, 120ms) var(--ease-out, ease),
+    transform var(--duration-fast, 120ms) var(--ease-out, ease),
+    box-shadow var(--duration-fast, 120ms) var(--ease-out, ease);
+}
+.chatv2-optlist__card:hover {
+  border-color: var(--color-border-default);
+  transform: translateY(-1px);
+}
+.chatv2-optlist__card[data-focused="true"] {
+  border-color: var(--color-border-strong);
+}
+.chatv2-optlist__card[data-selected="true"] {
+  border-color: var(--color-fg-primary);
+  outline: 1px solid var(--color-fg-primary);
+  outline-offset: -1px;
+}
+.chatv2-optlist__card:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.chatv2-optlist__panel {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: var(--color-bg-sunken);
+  overflow: hidden;
+}
+.chatv2-optlist__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.chatv2-optlist__img--broken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--color-fg-tertiary);
+}
+
+/* Selection check pin — appears on image when selected */
+.chatv2-optlist__pin {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-surface-scrim);
+  backdrop-filter: blur(6px);
+  color: var(--color-fg-inverse);
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transform: scale(0.7);
+  transition:
+    transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 160ms var(--ease-out, ease),
+    background 160ms var(--ease-out, ease),
+    color 160ms var(--ease-out, ease);
+}
+.chatv2-optlist__card[data-selected="true"] .chatv2-optlist__pin {
+  background: var(--color-fg-primary);
+  color: var(--color-bg-base);
+  opacity: 1;
+  transform: scale(1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chatv2-optlist__pin { transition: none; transform: scale(1); }
+}
+
+.chatv2-optlist__body {
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.chatv2-optlist__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chatv2-optlist__card-favicon {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.chatv2-optlist__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-fg-primary);
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+.chatv2-optlist__desc {
+  font-size: 12.5px;
+  color: var(--color-fg-secondary);
+  line-height: 1.45;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Label/value rows at the foot of every card. Missing values are simply
+ * omitted — cards may have different heights. */
+.chatv2-optlist__fields {
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.chatv2-optlist__field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  gap: 12px;
+  align-items: baseline;
+}
+.chatv2-optlist__field-label {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--color-fg-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chatv2-optlist__field-value {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-fg-primary);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Action row (View + Choose) ─────────────────────────────────────────
+ * Bottom-aligned with margin-top: auto so action rows align across cards
+ * of differing content heights. Buttons inside this row are normalized to
+ * the same min-height so the picker reads as a regular product grid. */
+.chatv2-optlist__actions {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+/* ─── Choose button (primary) ────────────────────────────────────────── */
+.chatv2-optlist__choose {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-bg-base);
+  background: var(--color-fg-primary);
+  border: 0;
+  cursor: pointer;
+  padding: 11px 16px;
+  border-radius: 999px;
+  min-height: 42px;
+  transition:
+    background 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 80ms cubic-bezier(0.4, 0, 1, 1);
+}
+/* ─── Source row link ────────────────────────────────────────────────────
+ * "View on {site}" rendered as a value in the field list, peer to Price.
+ * Click opens the source listing in the user's default browser. */
+.chatv2-optlist__source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-fg-primary);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+.chatv2-optlist__source-link:hover {
+  text-decoration: underline;
+  opacity: 0.85;
+}
+.chatv2-optlist__source-link-favicon {
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.chatv2-optlist__source-link-arrow {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  opacity: 0.6;
+}
+.chatv2-optlist__choose:hover:not(:disabled) {
+  filter: brightness(0.93);
+}
+.chatv2-optlist__choose:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.chatv2-optlist__choose:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chatv2-optlist__choose-label,
+.chatv2-optlist__choose-confirm {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition:
+    opacity 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chatv2-optlist__choose-label  { opacity: 1; transform: translateY(0); }
+.chatv2-optlist__choose-confirm { opacity: 0; transform: translateY(6px); pointer-events: none; }
+
+.chatv2-optlist__choose-check {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chatv2-optlist__choose-check path {
+  stroke-dasharray: 28;
+  stroke-dashoffset: 28;
+  transition: stroke-dashoffset 320ms cubic-bezier(0.16, 1, 0.3, 1) 80ms;
+}
+
+/* No pointer-events rule on .is-confirmed — single-select locks via the
+   button's disabled attribute (irreversible pick), multi-select stays
+   clickable so the user can un-toggle "Added ✓" picks. */
+.chatv2-optlist__choose.is-confirmed .chatv2-optlist__choose-label  { opacity: 0; transform: translateY(-6px); }
+.chatv2-optlist__choose.is-confirmed .chatv2-optlist__choose-confirm { opacity: 1; transform: translateY(0); }
+.chatv2-optlist__choose.is-confirmed .chatv2-optlist__choose-check path { stroke-dashoffset: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chatv2-optlist__choose,
+  .chatv2-optlist__choose-label,
+  .chatv2-optlist__choose-confirm,
+  .chatv2-optlist__choose-check path { transition: none !important; }
+}
+
+/* ─── Other affordance — small text link below grid ─────────────────── */
+.chatv2-optlist__other-link {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 2px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--color-fg-tertiary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--duration-fast, 120ms) var(--ease-out, ease);
+}
+.chatv2-optlist__other-link:hover:not(:disabled) {
+  color: var(--color-fg-secondary);
+}
+.chatv2-optlist__other-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Foot Confirm (multi-select only) ─────────────────────────────── */
+.chatv2-optlist__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+.chatv2-optlist__submit {
+  background: var(--color-fg-primary);
+  color: var(--color-bg-base);
+  border: 0;
+  padding: 11px 24px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--duration-fast, 100ms) var(--ease-out, ease);
+}
+.chatv2-optlist__submit:hover:not(:disabled) {
+  filter: brightness(0.93);
+}
+.chatv2-optlist__submit:disabled {
+  background: transparent;
+  color: var(--color-fg-tertiary);
+  border: 1px solid var(--color-border-subtle);
+  cursor: not-allowed;
+}
+.chatv2-optlist__submit-error {
+  font-size: 12px;
+  color: var(--color-status-danger, #ff7a7a);
+}
+
+/* ─── Chosen receipt (post-submit) ─────────────────────────────────── */
+.chatv2-optlist__chosen-receipt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chatv2-optlist__chosen-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--color-bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chatv2-optlist__chosen-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.chatv2-optlist__chosen-thumb--other {
+  color: var(--color-fg-tertiary);
+  font-size: 18px;
+}
+.chatv2-optlist__chosen-thumb-broken {
+  font-size: 18px;
+  color: var(--color-fg-tertiary);
+}
+.chatv2-optlist__chosen-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.chatv2-optlist__chosen-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-fg-primary);
+  min-width: 0;
+}
+.chatv2-optlist__chosen-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatv2-optlist__chosen-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-fg-tertiary);
+}
+.chatv2-optlist__chosen-favicon {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.chatv2-optlist__chosen-site {
+  font-weight: 600;
+  color: var(--color-fg-primary);
+}
+.chatv2-optlist__chosen-sep {
+  color: var(--color-fg-quaternary, var(--color-fg-tertiary));
+}
+.chatv2-optlist__chosen-price {
+  color: var(--color-fg-secondary);
+}
+
+/* ─── Skeleton state ────────────────────────────────────────────────── */
+.chatv2-optlist__skel-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl, 12px);
+  overflow: hidden;
+}
+/* Theme-relative shimmer — works in both light and dark. */
+.chatv2-optlist__skel-panel {
+  aspect-ratio: 4 / 3;
+  background: linear-gradient(110deg,
+    color-mix(in srgb, var(--color-fg-primary) 6%, transparent) 30%,
+    color-mix(in srgb, var(--color-fg-primary) 16%, transparent) 50%,
+    color-mix(in srgb, var(--color-fg-primary) 6%, transparent) 70%);
+  background-size: 200% 100%;
+  animation: chatv2-optlist-sk 1.4s infinite linear;
+}
+.chatv2-optlist__skel-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chatv2-optlist__skel-line {
+  height: 12px;
+  border-radius: var(--radius-xs, 3px);
+  background: linear-gradient(110deg,
+    color-mix(in srgb, var(--color-fg-primary) 6%, transparent) 30%,
+    color-mix(in srgb, var(--color-fg-primary) 16%, transparent) 50%,
+    color-mix(in srgb, var(--color-fg-primary) 6%, transparent) 70%);
+  background-size: 200% 100%;
+  animation: chatv2-optlist-sk 1.4s infinite linear;
+}
+.chatv2-optlist__skel-line--short { width: 40%; }
+.chatv2-optlist__skel-line--med { width: 70%; }
+
+@keyframes chatv2-optlist-sk {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.chatv2-optlist__error {
+  font-size: 12px;
+  color: var(--color-fg-tertiary);
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: var(--radius-md, 6px);
+}

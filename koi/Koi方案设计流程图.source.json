@@ -1,0 +1,289 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Koi 方案设计 · 多 Agent 网页自动化流程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "ui",
+      "label": "交互层"
+    },
+    {
+      "id": "mid",
+      "label": "智能与支撑层"
+    },
+    {
+      "id": "field",
+      "label": "现场层 Observer·Executor·Validator"
+    }
+  ],
+  "phases": [
+    {
+      "id": "intake",
+      "label": "输入与规划",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "run",
+      "label": "单步循环（迭代）",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "close",
+      "label": "核验与交付",
+      "fromCol": 5,
+      "toCol": 5
+    }
+  ],
+  "groups": [
+    {
+      "id": "step-loop",
+      "label": "观察→决策→执行→验证 · 迭代至打勾",
+      "lane": "field",
+      "fromCol": 2,
+      "toCol": 5,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "task",
+    "plan",
+    "observe",
+    "decide",
+    "execute",
+    "validate",
+    "verify",
+    "answer"
+  ],
+  "nodes": [
+    {
+      "id": "task",
+      "lane": "ui",
+      "col": 0,
+      "type": "external",
+      "label": "用户目标",
+      "sublabel": "模糊→补全 · 不明确→追问",
+      "width": 130
+    },
+    {
+      "id": "answer",
+      "lane": "ui",
+      "col": 5,
+      "type": "frontend",
+      "label": "汇报结果",
+      "sublabel": "全程进度/截图实时展示",
+      "width": 130
+    },
+    {
+      "id": "memory",
+      "lane": "mid",
+      "col": 0,
+      "type": "database",
+      "label": "记忆 Memory",
+      "sublabel": "用户 / 任务 / 站点",
+      "width": 130
+    },
+    {
+      "id": "plan",
+      "lane": "mid",
+      "col": 1,
+      "type": "backend",
+      "label": "Planner 首次规划",
+      "sublabel": "子目标清单 + 完成标准",
+      "tag": "大模型 · 第1次",
+      "width": 136
+    },
+    {
+      "id": "skills",
+      "lane": "mid",
+      "col": 2,
+      "type": "database",
+      "label": "技能库 Skills",
+      "sublabel": "轨迹→参数化命令链",
+      "width": 130
+    },
+    {
+      "id": "decide",
+      "lane": "mid",
+      "col": 3,
+      "type": "backend",
+      "label": "Decision 决策",
+      "sublabel": "技能链 / 小模型 / 大模型",
+      "tag": "三路径",
+      "width": 136
+    },
+    {
+      "id": "recover",
+      "lane": "mid",
+      "col": 4,
+      "type": "security",
+      "label": "分级纠错",
+      "sublabel": "L2升级 · L3重规划 · 熔断",
+      "width": 136
+    },
+    {
+      "id": "verify",
+      "lane": "mid",
+      "col": 5,
+      "type": "backend",
+      "label": "Planner 任务级验收",
+      "sublabel": "逐项核对 · 不轻信 DONE",
+      "tag": "大模型 · 最后1次",
+      "width": 136
+    },
+    {
+      "id": "observe",
+      "lane": "field",
+      "col": 2,
+      "type": "backend",
+      "label": "Observer 观察",
+      "sublabel": "snapshot→提炼→diff",
+      "width": 130
+    },
+    {
+      "id": "execute",
+      "lane": "field",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Executor 执行",
+      "sublabel": "CLI 翻译 · 动作后重拍快照",
+      "width": 136
+    },
+    {
+      "id": "validate",
+      "lane": "field",
+      "col": 5,
+      "type": "security",
+      "label": "Validator 验证",
+      "sublabel": "动作级 / 子目标级",
+      "tag": "代码为主 · 打勾",
+      "width": 130
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-task-plan",
+      "from": "task",
+      "to": "plan",
+      "label": "明确后的目标",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e-memory-plan",
+      "from": "memory",
+      "to": "plan",
+      "label": "站点知识注入",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-plan-answer",
+      "from": "plan",
+      "to": "answer",
+      "label": "web_task=false 直接回答",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-plan-observe",
+      "from": "plan",
+      "to": "observe",
+      "label": "下发清单 · 并行分支",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "e-skills-decide",
+      "from": "skills",
+      "to": "decide",
+      "label": "命中→命令链",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-observe-decide",
+      "from": "observe",
+      "to": "decide",
+      "label": "元素表 + diff",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e-decide-execute",
+      "from": "decide",
+      "to": "execute",
+      "label": "结构化动作批次",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "e-execute-validate",
+      "from": "execute",
+      "to": "validate",
+      "label": "动作结果",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e-validate-recover",
+      "from": "validate",
+      "to": "recover",
+      "label": "失败 · 分级路由",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "e-recover-decide",
+      "from": "recover",
+      "to": "decide",
+      "label": "修正后重新决策",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "id": "e-validate-verify",
+      "from": "validate",
+      "to": "verify",
+      "label": "清单全部打勾 · 汇合",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "e-verify-answer",
+      "from": "verify",
+      "to": "answer",
+      "label": "done=true + final_answer",
+      "variant": "emphasis",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "核心思想",
+      "items": [
+        "规划前置成清单，完成标准可机械核验，进度由代码打勾",
+        "决策三路径：技能 0 调用 · 小模型主力 · 大模型兜底",
+        "验证三层代码为主：防 no-op / 防假完成 / 不轻信 DONE",
+        "观察只给 diff 增量，历史 append-only 命中 prompt 缓存"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "效率账（对比旧版）",
+      "items": [
+        "Planner 大模型调用 8~10 次 → 2~3 次",
+        "预计总耗时 3~4 分钟 → 40~60 秒，成本约 1/4",
+        "独立子目标多标签页并行，总耗时 = 最慢分支",
+        "重复任务走技能库重放，0 模型调用"
+      ]
+    }
+  ]
+}

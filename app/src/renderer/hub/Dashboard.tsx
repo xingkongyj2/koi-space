@@ -1,0 +1,225 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Group } from '@visx/group';
+import { scaleLinear } from '@visx/scale';
+import { AreaClosed, LinePath } from '@visx/shape';
+import { curveMonotoneX } from '@visx/curve';
+import { LinearGradient } from '@visx/gradient';
+import { ParentSize } from '@visx/responsive';
+import { TaskInput } from './TaskInput';
+import type { TaskInputHandle } from './TaskInput';
+import { DashboardBackground } from './DashboardBackground';
+import { useUIStore } from './state/uiStore';
+import type { AgentSession } from './types';
+
+const HOUR = 3600 * 1000;
+const DAY = 24 * HOUR;
+
+// Cumulative count of sessions in `status` across sessions created within `windowMs`.
+// X-axis is session-index rank, so points spread evenly across the sparkline width.
+function buildStatusSeries(sessions: AgentSession[], status: string, windowMs: number): number[] {
+  const cutoff = Date.now() - windowMs;
+  const sorted = sessions.filter((s) => s.createdAt >= cutoff).sort((a, b) => a.createdAt - b.createdAt);
+  if (sorted.length === 0) return [0, 0];
+  const out: number[] = [0];
+  let count = 0;
+  for (const s of sorted) {
+    if (s.status === status) count += 1;
+    out.push(count);
+  }
+  return out;
+}
+
+// Strictly monotonic cumulative total of sessions created within `windowMs`.
+function buildTotalSeries(sessions: AgentSession[], windowMs: number): number[] {
+  const cutoff = Date.now() - windowMs;
+  const sorted = sessions.filter((s) => s.createdAt >= cutoff).sort((a, b) => a.createdAt - b.createdAt);
+  if (sorted.length === 0) return [0, 0];
+  return [0, ...sorted.map((_, i) => i + 1)];
+}
+
+interface SparklineProps {
+  values: number[];
+  gradientId: string;
+  width: number;
+  height: number;
+  color: string;
+  fillFrom: string;
+  fillTo: string;
+}
+
+function Sparkline({ values, gradientId, width, height, color, fillFrom, fillTo }: SparklineProps): React.ReactElement | null {
+  const data = values.length > 0 ? values : [0, 0];
+  const xScale = useMemo(
+    () => scaleLinear({ domain: [0, data.length - 1], range: [0, width] }),
+    [data.length, width],
+  );
+  const yScale = useMemo(
+    () => scaleLinear({
+      domain: [Math.min(...data), Math.max(...data, 1) * 1.1],
+      range: [height - 2, 2],
+    }),
+    [data, height],
+  );
+
+  return (
+    <svg width={width} height={height} className="sparkline">
+      <LinearGradient id={gradientId} from={fillFrom} to={fillTo} />
+      <Group>
+        <AreaClosed
+          data={data}
+          x={(_, i) => xScale(i) ?? 0}
+          y={(d) => yScale(d) ?? 0}
+          yScale={yScale}
+          curve={curveMonotoneX}
+          fill={`url(#${gradientId})`}
+        />
+        <LinePath
+          data={data}
+          x={(_, i) => xScale(i) ?? 0}
+          y={(d) => yScale(d) ?? 0}
+          curve={curveMonotoneX}
+          stroke={color}
+          strokeWidth={1.5}
+          strokeOpacity={0.9}
+        />
+      </Group>
+    </svg>
+  );
+}
+
+const SPARK_COLORS = {
+  running:   { line: '#9ECE6A', from: 'rgba(158, 206, 106, 0.30)', to: 'rgba(158, 206, 106, 0)' },
+  completed: { line: '#E0AF68', from: 'rgba(224, 175, 104, 0.32)', to: 'rgba(224, 175, 104, 0)' },
+  today:     { line: '#7AA2F7', from: 'rgba(122, 162, 247, 0.32)', to: 'rgba(122, 162, 247, 0)' },
+};
+
+interface DashboardProps {
+  sessions: AgentSession[];
+  onSubmitTask: (input: import('./TaskInput').TaskInputSubmission) => void;
+}
+
+export function Dashboard({ sessions, onSubmitTask }: DashboardProps): React.ReactElement {
+  const runningCount = sessions.filter((s) => s.status === 'running').length;
+  const idleCount = sessions.filter((s) => s.status === 'idle').length;
+
+  const runningSeries = useMemo(() => buildStatusSeries(sessions, 'running', HOUR), [sessions]);
+  const idleSeries = useMemo(() => buildStatusSeries(sessions, 'idle', DAY), [sessions]);
+  const totalSeries = useMemo(() => buildTotalSeries(sessions, 7 * DAY), [sessions]);
+
+  const taskInputRef = useRef<TaskInputHandle>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
+
+  // Auto-focus the task input whenever the Dashboard mounts, so landing here
+  // (via `g d`, clicking the Dashboard tab, or finishing onboarding with Skip)
+  // drops the caret straight into the chat box.
+  useEffect(() => {
+    const id = window.setTimeout(() => taskInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  // Consume a one-shot pending prompt from the UI store. Set by ChatPane
+  // when the user quotes from a terminal session via "Reference in new
+  // chat" — we drop the quoted block into the input and clear so the
+  // signal doesn't replay on a later mount.
+  useEffect(() => {
+    const pending = useUIStore.getState().pendingDashboardPrompt;
+    if (!pending) return;
+    console.log('[Dashboard] consuming pendingDashboardPrompt', { length: pending.length });
+    const id = window.setTimeout(() => {
+      taskInputRef.current?.setText(pending);
+      useUIStore.getState().setPendingDashboardPrompt(null);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragCounter.current += 1;
+      if (dragCounter.current === 1) setIsDragging(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragCounter.current = Math.max(0, dragCounter.current - 1);
+      if (dragCounter.current === 0) setIsDragging(false);
+    };
+    const onDropHandler = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setIsDragging(false);
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        void taskInputRef.current?.addFiles(files);
+        taskInputRef.current?.focus();
+      }
+    };
+    const onBlurHandler = () => { dragCounter.current = 0; setIsDragging(false); };
+
+    window.addEventListener('dragenter', onEnter);
+    window.addEventListener('dragover', onOver);
+    window.addEventListener('dragleave', onLeave);
+    window.addEventListener('drop', onDropHandler);
+    window.addEventListener('blur', onBlurHandler);
+    return () => {
+      window.removeEventListener('dragenter', onEnter);
+      window.removeEventListener('dragover', onOver);
+      window.removeEventListener('dragleave', onLeave);
+      window.removeEventListener('drop', onDropHandler);
+      window.removeEventListener('blur', onBlurHandler);
+    };
+  }, []);
+
+  return (
+    <div className={`dashboard${isDragging ? ' dashboard--dragging' : ''}`}>
+      <DashboardBackground />
+      <div className="dashboard__hero">
+        <TaskInput ref={taskInputRef} onSubmit={onSubmitTask} />
+      </div>
+      {isDragging && <div className="dashboard__drop-overlay" aria-label="Drop files to attach" />}
+
+      <div className="dashboard__cards">
+        <div className="dashboard__stat-card">
+          <div className="dashboard__stat-card-head">
+            <span className="dashboard__stat-card-label">Running now</span>
+          </div>
+          <span className="dashboard__stat-card-value">{runningCount}</span>
+          <div className="dashboard__stat-card-spark">
+            <ParentSize>{({ width }) => <Sparkline values={runningSeries} gradientId="spark-running" width={width} height={64} color={SPARK_COLORS.running.line} fillFrom={SPARK_COLORS.running.from} fillTo={SPARK_COLORS.running.to} />}</ParentSize>
+          </div>
+        </div>
+
+        <div className="dashboard__stat-card">
+          <div className="dashboard__stat-card-head">
+            <span className="dashboard__stat-card-label">Idle</span>
+          </div>
+          <span className="dashboard__stat-card-value">{idleCount}</span>
+          <div className="dashboard__stat-card-spark">
+            <ParentSize>{({ width }) => <Sparkline values={idleSeries} gradientId="spark-completed" width={width} height={64} color={SPARK_COLORS.completed.line} fillFrom={SPARK_COLORS.completed.from} fillTo={SPARK_COLORS.completed.to} />}</ParentSize>
+          </div>
+        </div>
+
+        <div className="dashboard__stat-card">
+          <div className="dashboard__stat-card-head">
+            <span className="dashboard__stat-card-label">Total sessions</span>
+          </div>
+          <span className="dashboard__stat-card-value">{sessions.length}</span>
+          <div className="dashboard__stat-card-spark">
+            <ParentSize>{({ width }) => <Sparkline values={totalSeries} gradientId="spark-today" width={width} height={64} color={SPARK_COLORS.today.line} fillFrom={SPARK_COLORS.today.from} fillTo={SPARK_COLORS.today.to} />}</ParentSize>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+export default Dashboard;

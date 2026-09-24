@@ -1,0 +1,239 @@
+/* Attachments — see Attachments.tsx for usage. */
+
+.chatv2-attachments {
+  --cva-pad: 8px;
+  --cva-radius: 8px;
+  --cva-bg: var(--color-surface-1, #1a1a1a);
+  --cva-border: var(--color-border-subtle, #2a2a2a);
+}
+
+.chatv2-attachments--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.chatv2-attachments--list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chatv2-attachments--inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Gallery — image-forward square cards with hover-revealed metadata.
+   Matches AI SDK Elements' attachments grid: the image fills the card,
+   filename + size live in an overlay that fades in on hover. */
+.chatv2-attachments--gallery {
+  display: grid;
+  /* Fixed ~120px tile so the gallery feels like an attachment chip-grid
+     above the user bubble rather than a hero image. */
+  grid-template-columns: repeat(auto-fit, 120px);
+  grid-auto-rows: 120px;
+  gap: 8px;
+  /* Right-align inside the user bubble wrap (align-self: flex-end). */
+  justify-content: end;
+}
+
+.chatv2-attachments--gallery .chatv2-attachment {
+  position: relative;
+  display: block;
+  width: 120px;
+  height: 120px;
+  padding: 0;
+  gap: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--cva-bg);
+  border: 1px solid var(--cva-border);
+}
+
+.chatv2-attachments--gallery .chatv2-attachment__preview {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  background: var(--color-surface-0, #111);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Fill the tile, crop to square if needed — the gallery is meant to
+   look like a tight, image-forward grid, not a letterboxed thumbnail
+   list. Small images do get upscaled here; that's the accepted
+   trade-off for the polished full-bleed look. */
+.chatv2-attachments--gallery .chatv2-attachment__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Hide the chip-style info label; surface it as a hover overlay instead. */
+.chatv2-attachments--gallery .chatv2-attachment__info {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 10px 12px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0));
+  color: #fff;
+  gap: 2px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+}
+
+.chatv2-attachments--gallery .chatv2-attachment:hover .chatv2-attachment__info,
+.chatv2-attachments--gallery .chatv2-attachment:focus-visible .chatv2-attachment__info {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chatv2-attachments--gallery .chatv2-attachment__name {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chatv2-attachments--gallery .chatv2-attachment__meta {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.chatv2-attachments--gallery .chatv2-attachment--clickable:hover {
+  /* The card's image is already the focal point; defer to the overlay
+     fade as the hover cue rather than the chip's bg/border shift. */
+  background: var(--cva-bg);
+  border-color: var(--cva-border);
+}
+
+/* File-icon centering inside the square card. */
+.chatv2-attachments--gallery .chatv2-attachment__file-icon {
+  width: 100%;
+  height: 100%;
+}
+
+.chatv2-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--cva-pad);
+  border: 1px solid var(--cva-border);
+  border-radius: var(--cva-radius);
+  background: var(--cva-bg);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  min-width: 0;
+}
+
+.chatv2-attachment--clickable {
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.chatv2-attachment--clickable:hover {
+  background: var(--color-surface-2, #242424);
+  border-color: var(--color-border, #3a3a3a);
+}
+
+.chatv2-attachment__preview {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-surface-0, #111);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary, #a0a0a0);
+}
+
+.chatv2-attachment__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chatv2-attachment__file-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chatv2-attachment__file-ext {
+  position: absolute;
+  bottom: 3px;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.chatv2-attachment__info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.chatv2-attachment__name {
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-primary, #e8e8e8);
+}
+
+.chatv2-attachment__meta {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #808080);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.chatv2-attachment--removable {
+  position: relative;
+}
+
+.chatv2-attachment__remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.chatv2-attachment:hover .chatv2-attachment__remove,
+.chatv2-attachment:focus-within .chatv2-attachment__remove {
+  opacity: 1;
+}
+
+.chatv2-attachment__remove:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+/* Inline variant — pill-shaped chips */
+.chatv2-attachments--inline .chatv2-attachment {
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+}
+.chatv2-attachments--inline .chatv2-attachment__preview {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+}
