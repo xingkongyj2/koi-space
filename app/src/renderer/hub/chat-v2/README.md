@@ -27,15 +27,12 @@ source of truth. This module exists so we can:
 ## Important: what `thinking` means
 
 In this codebase a `thinking` HlEvent is the **assistant's streaming
-output text** (mapped from `content_block_delta.text_delta` in the
-claude-code adapter, etc.) — NOT
-chain-of-thought reasoning. The transform therefore maps `thinking`
-to a `text` part.
+output text** — NOT chain-of-thought reasoning. The transform therefore
+maps `thinking` to a `text` part.
 
-If you later plumb true reasoning blocks through (e.g. by handling
-`thinking_delta` in `claude-code/adapter.ts` and emitting a new
-HlEvent type), map that to a `reasoning` part — the type is already
-defined in `parts.ts` and dormant.
+If you later plumb true reasoning blocks through (e.g. by emitting a new
+HlEvent type from the python agent), map that to a `reasoning` part — the
+type is already defined in `parts.ts` and dormant.
 
 ## Tests
 

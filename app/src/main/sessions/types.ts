@@ -28,4 +28,7 @@ export interface SessionEvents {
   'session-error': (session: AgentSession) => void;
   'session-output': (id: string, event: HlEvent) => void;
   'session-output-term': (id: string, bytes: string) => void;
+  /** The session left the live set — dismissed or deleted. Carries only the id,
+   *  because there is no session left to describe. */
+  'session-removed': (id: string) => void;
 }

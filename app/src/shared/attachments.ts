@@ -1,5 +1,5 @@
-// Anthropic's API enforces size limits on the BASE64-ENCODED payload
-// (~33% larger than raw). Raw caps = floor(api_limit * 3/4) - 1024 safety.
+// Attachments are handed to the agent base64-encoded (~33% larger than raw),
+// so the raw caps are floor(encoded_limit * 3/4) - 1024 for a safety margin.
 export const MAX_IMAGE_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4) - 1024;   // ~3.75MB raw
 export const MAX_PDF_BYTES = Math.floor(32 * 1024 * 1024 * 3 / 4) - 1024;    // ~24MB raw
 export const MAX_TEXT_BYTES = 1 * 1024 * 1024;

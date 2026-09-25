@@ -1,11 +1,9 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type {
   AppPopupAction,
   AppPopupMenuItem,
   AppPopupOpenRequest,
 } from '../../shared/app-popup';
-import { EnginePickerMenuContent } from '../hub/EnginePicker';
-import { BrowserCodeModelMenuContent } from '../hub/BrowserCodeModelPicker';
 import { MemoryIndicatorContent } from '../hub/MemoryIndicator';
 import { EditorIcon, FinderIcon } from '../shared/editorIcons';
 
@@ -136,47 +134,10 @@ export function AppPopup(): React.ReactElement {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [request]);
 
-  const emitEngineSelect = useCallback((engineId: string): void => {
-    if (!request) return;
-    window.popupHostAPI.action({
-      popupId: request.id ?? '',
-      kind: 'engine-select',
-      engineId,
-    });
-  }, [request]);
-
-  const closeFromContent = useCallback((): void => {
-    if (!request) return;
-    window.popupHostAPI.close(request.id ?? '', 'request');
-  }, [request]);
-
-  const emitBrowserCodeChange = useCallback((): void => {
-    if (!request) return;
-    window.popupHostAPI.action({
-      popupId: request.id ?? '',
-      kind: 'browsercode-model-changed',
-    });
-  }, [request]);
-
   const contentKey = request?.id ?? 'empty';
   return (
     <div ref={contentRef} className={`app-popup app-popup--${request?.kind ?? 'empty'}`}>
       {request?.kind === 'menu' && <GenericMenu key={contentKey} request={request} />}
-      {request?.kind === 'engine-picker' && (
-        <EnginePickerMenuContent
-          key={contentKey}
-          value={request.value}
-          onChange={emitEngineSelect}
-          onClose={closeFromContent}
-        />
-      )}
-      {request?.kind === 'browsercode-model-picker' && (
-        <BrowserCodeModelMenuContent
-          key={contentKey}
-          onChanged={emitBrowserCodeChange}
-          onClose={closeFromContent}
-        />
-      )}
       {request?.kind === 'memory-indicator' && <MemoryIndicatorContent key={contentKey} />}
     </div>
   );

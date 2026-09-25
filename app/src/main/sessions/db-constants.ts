@@ -14,11 +14,9 @@ export const VALID_STATUSES = ['draft', 'running', 'stuck', 'paused', 'idle', 's
 
 // -- attachment constraints --------------------------------------------------
 
-// Anthropic enforces size limits on the BASE64-ENCODED payload (~33% bigger
-// than raw). Raw caps = floor(api_limit * 3/4) - 1024 for safety margin.
-// Verified: log shows raw 4,708,304 → base64 6,277,740 (ratio 4:3 exact) →
-// rejected with "exceeds 5MB maximum: 6277740 bytes > 5242880 bytes".
-// Image: 5MB base64 → 3.75MB raw. PDF: 32MB base64 → 24MB raw (same pattern).
+// Attachments are handed to the agent base64-encoded, which is ~33% larger
+// than the raw bytes. The caps below are the encoded budget converted back:
+// floor(limit * 3/4) - 1024 for a safety margin.
 export const MAX_IMAGE_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4) - 1024;   // ~3.75MB raw
 export const MAX_PDF_BYTES = Math.floor(32 * 1024 * 1024 * 3 / 4) - 1024;    // ~24MB raw
 export const MAX_TEXT_BYTES = 1 * 1024 * 1024;                        // 1MB raw (text, no base64)

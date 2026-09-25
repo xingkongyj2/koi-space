@@ -7,12 +7,6 @@ import { TaskInput } from '../../../src/renderer/hub/TaskInput';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('../../../src/renderer/hub/EnginePicker', () => ({
-  EnginePicker: ({ value }: { value: string }): React.ReactElement => (
-    <div data-testid="engine-picker">{value}</div>
-  ),
-}));
-
 function renderTaskInput(): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div');
   document.body.appendChild(container);

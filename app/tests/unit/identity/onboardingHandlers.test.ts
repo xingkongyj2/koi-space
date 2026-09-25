@@ -4,8 +4,6 @@
  * Tests cover:
  *   - registerOnboardingHandlers: registers all IPC channels
  *   - unregisterOnboardingHandlers: removes all channels
- *   - onboarding:save-api-key: stores key via keytar
- *   - onboarding:test-api-key: validates key against Anthropic API
  *   - onboarding:complete: saves onboarding_completed_at, opens shell, closes onboarding window
  */
 
@@ -83,11 +81,6 @@ vi.mock('../../../src/main/hotkeys', () => ({
   setGlobalCmdbarAccelerator: mockSetGlobalCmdbarAccelerator,
 }));
 
-const mockSetPassword = vi.fn(async () => {});
-vi.mock('keytar', () => ({
-  setPassword: mockSetPassword,
-}));
-
 import {
   registerOnboardingHandlers,
   unregisterOnboardingHandlers,
@@ -156,14 +149,6 @@ describe('onboardingHandlers.ts', () => {
   });
 
   describe('registerOnboardingHandlers()', () => {
-    it('registers onboarding:save-api-key', () => {
-      expect(handlers.has('onboarding:save-api-key')).toBe(true);
-    });
-
-    it('registers onboarding:test-api-key', () => {
-      expect(handlers.has('onboarding:test-api-key')).toBe(true);
-    });
-
     it('registers onboarding:complete', () => {
       expect(handlers.has('onboarding:complete')).toBe(true);
     });
@@ -176,8 +161,6 @@ describe('onboardingHandlers.ts', () => {
   describe('unregisterOnboardingHandlers()', () => {
     it('removes all handlers', () => {
       unregisterOnboardingHandlers();
-      expect(handlers.has('onboarding:save-api-key')).toBe(false);
-      expect(handlers.has('onboarding:test-api-key')).toBe(false);
       expect(handlers.has('onboarding:complete')).toBe(false);
       expect(handlers.has('onboarding:trigger-shortcut')).toBe(false);
     });

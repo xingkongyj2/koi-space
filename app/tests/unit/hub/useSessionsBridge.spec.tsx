@@ -12,6 +12,7 @@ import type { AgentSession, HlEvent } from '../../../src/renderer/hub/types';
 type BridgeHandlers = {
   sessionOutput?: (id: string, event: HlEvent) => void;
   sessionUpdated?: (session: AgentSession) => void;
+  sessionRemoved?: (id: string) => void;
   sessionBrowserGone?: (id: string) => void;
   sessionBrowserAttached?: (id: string) => void;
 };
@@ -67,6 +68,10 @@ function installApi(listAll: Promise<AgentSession[]>): BridgeHandlers {
         }),
         sessionUpdated: vi.fn((cb: BridgeHandlers['sessionUpdated']) => {
           handlers.sessionUpdated = cb;
+          return vi.fn();
+        }),
+        sessionRemoved: vi.fn((cb: BridgeHandlers['sessionRemoved']) => {
+          handlers.sessionRemoved = cb;
           return vi.fn();
         }),
         sessionBrowserGone: vi.fn((cb: BridgeHandlers['sessionBrowserGone']) => {
@@ -152,6 +157,46 @@ describe('useSessionsBridge', () => {
     expect(useSessionsStore.getState().byId[id]?.output).toEqual([
       { type: 'thinking', text: 'first live token' },
     ]);
+
+    act(() => root.unmount());
+  });
+
+  it('drops a session from the store when it is closed', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const listAll = deferred<AgentSession[]>();
+    const handlers = installApi(listAll.promise);
+    const { root } = renderBridge();
+
+    await act(async () => {
+      listAll.resolve([session({ id })]);
+      await listAll.promise;
+    });
+    expect(useSessionsStore.getState().byId[id]).toBeDefined();
+
+    act(() => {
+      handlers.sessionRemoved?.(id);
+    });
+
+    expect(useSessionsStore.getState().byId[id]).toBeUndefined();
+
+    act(() => root.unmount());
+  });
+
+  it('applies a close that arrives before hydration completes', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const listAll = deferred<AgentSession[]>();
+    const handlers = installApi(listAll.promise);
+    const { root } = renderBridge();
+
+    act(() => {
+      handlers.sessionRemoved?.(id);
+    });
+    await act(async () => {
+      listAll.resolve([session({ id })]);
+      await listAll.promise;
+    });
+
+    expect(useSessionsStore.getState().byId[id]).toBeUndefined();
 
     act(() => root.unmount());
   });

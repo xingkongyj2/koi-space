@@ -428,6 +428,12 @@ tasks:
     cmds:
       - npm run typecheck
 
+  python:test:
+    desc: Run the Python agent's unit tests (stdlib unittest, no dependencies)
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - PYTHONPATH=python python3 -m unittest discover -s python/tests -p "test_*.py" -v
+
   db:schema:check:
     desc: Verify the tracked SessionDb schema identity manifest
     dir: "{{.APP_DIR}}"

@@ -54,47 +54,8 @@ const onboardingAPI = {
     updated_domain_count?: number;
   }>> => ipcRenderer.invoke('chrome-import:get-syncs'),
 
-  saveApiKey: (key: string): Promise<void> =>
-    ipcRenderer.invoke('onboarding:save-api-key', key),
-
-  detectClaudeCode: (): Promise<{
-    available: boolean;
-    installed: boolean;
-    authed: boolean;
-    version: string | null;
-    subscriptionType?: string | null;
-    hasInference?: boolean;
-    error?: string | null;
-  }> => ipcRenderer.invoke('onboarding:detect-claude-code'),
-
-  useClaudeCode: (): Promise<{ subscriptionType: string | null }> =>
-    ipcRenderer.invoke('onboarding:use-claude-code'),
-
-  runClaudeLogin: (): Promise<{ ok: boolean; error?: string; stdout?: string }> =>
-    ipcRenderer.invoke('onboarding:run-claude-login'),
-
-  openClaudeLoginTerminal: (): Promise<{ opened: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:open-claude-login-terminal'),
-
-  installEngine: (engineId: 'claude-code'): Promise<{
-    opened: boolean;
-    completed?: boolean;
-    exitCode?: number | null;
-    signal?: string | null;
-    error?: string;
-    command?: string;
-    displayName?: string;
-    stdout?: string;
-    stderr?: string;
-    installed?: { installed: boolean; version?: string; error?: string };
-  }> =>
-    ipcRenderer.invoke('sessions:engine-install', engineId),
-
   openExternal: (url: string): Promise<{ opened: boolean }> =>
     ipcRenderer.invoke('onboarding:open-external', url),
-
-  testApiKey: (key: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:test-api-key', key),
 
   getPlatform: (): Promise<string> => ipcRenderer.invoke('shell:get-platform'),
 

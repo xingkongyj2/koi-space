@@ -10,8 +10,6 @@ import { useTextSelection } from './useTextSelection';
 import { QuoteSelectionButton } from './QuoteSelectionButton';
 import { formatUserMessageWithQuote } from './parseUserMessage';
 import { useToast } from '@/renderer/components/base/Toast';
-import claudeCodeLogo from '../claude-code-logo.svg';
-import opencodeLogo from '../opencode-logo-light.svg';
 import './chat.css';
 
 interface ChatPaneProps {
@@ -48,10 +46,6 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps
     useShallow((s): {
       prompt: string;
       status: string;
-      engine: string | undefined;
-      model: string | undefined;
-      authMode: 'apiKey' | 'subscription' | undefined;
-      subscriptionType: string | undefined;
       costUsd: number | undefined;
       costSource: 'exact' | 'estimated' | undefined;
       inputTokens: number | undefined;
@@ -63,10 +57,6 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps
       return {
         prompt: sess.prompt,
         status: sess.status,
-        engine: sess.engine,
-        model: sess.model,
-        authMode: sess.authMode,
-        subscriptionType: sess.subscriptionType,
         costUsd: sess.costUsd,
         costSource: sess.costSource,
         inputTokens: sess.inputTokens,
@@ -269,7 +259,6 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps
         <TaskInput
           ref={taskInputRef}
           onSubmit={onSubmit}
-          lockedEngine={header.engine}
           topSlot={quotedText ? (
             <div className="chat-quote-preview" role="region" aria-label="Quoted text">
               <div className="chat-quote-preview__bar" aria-hidden />
@@ -302,30 +291,7 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps
       <div className="chat-pane__header">
         <div className="chat-pane__title" aria-hidden="true" />
         <div className="chat-pane__meta">
-          {header.engine === 'browsercode' && (
-            <img className="pane__engine-icon" src={opencodeLogo} alt="BrowserCode" title="BrowserCode" />
-          )}
-          {header.engine === 'claude-code' && (
-            <img className="pane__engine-icon" src={claudeCodeLogo} alt="Claude Code" title="Claude Code" />
-          )}
-          {header.model && header.engine === 'browsercode' && (
-            <span className="pane__model-badge" title={`Model: ${header.model}`}>
-              {header.model.includes('/') ? header.model.split('/').pop() : header.model}
-            </span>
-          )}
-          {header.authMode && (
-            <span
-              className={`pane__auth-badge pane__auth-badge--${header.authMode}`}
-              title={
-                header.authMode === 'subscription'
-                  ? `Ran under ${header.subscriptionType ?? 'subscription'} OAuth`
-                  : 'Ran under saved API key'
-              }
-            >
-              {header.authMode === 'subscription' ? 'SUBSCRIPTION' : 'KEY'}
-            </span>
-          )}
-          {typeof header.costUsd === 'number' && header.costUsd > 0 && header.authMode !== 'subscription' && (
+          {typeof header.costUsd === 'number' && header.costUsd > 0 && (
             <span
               className="pane__cost"
               title={

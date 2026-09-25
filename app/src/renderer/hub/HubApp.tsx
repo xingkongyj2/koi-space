@@ -20,7 +20,6 @@ import { useSessionsBridge } from './state/useSessionsBridge';
 type ViewMode = 'dashboard' | 'grid' | 'chat' | 'settings';
 type SettingsOpenPayload = {
   sectionId?: SettingsSectionId;
-  focusBrowserCodeProvider?: string;
 };
 
 let sessionCounter = MOCK_SESSIONS.length + 1;
@@ -151,8 +150,7 @@ export function HubApp(): React.ReactElement {
     settingsRequestIdRef.current += 1;
     setSettingsIntent({
       requestId: settingsRequestIdRef.current,
-      sectionId: payload?.sectionId ?? (payload?.focusBrowserCodeProvider ? 'settings-model-providers' : undefined),
-      focusBrowserCodeProvider: payload?.focusBrowserCodeProvider,
+      sectionId: payload?.sectionId,
     });
     setViewMode('settings');
   }, [setViewMode]);
@@ -205,11 +203,11 @@ export function HubApp(): React.ReactElement {
     'search.open': () => { window.electronAPI?.pill.toggle(); },
     'action.create': () => { window.electronAPI?.pill.toggle(); },
     'action.createPane': () => { window.electronAPI?.pill.toggle(); },
-    'action.dismiss': () => {
+    'action.close': () => {
       const s = sessions[focusIndex];
       if (!s) return;
-      console.log('[VimKeys] dismiss session', s.id);
-      window.electronAPI?.sessions.dismiss(s.id).catch((err) => console.error('[VimKeys] dismiss failed', err));
+      console.log('[VimKeys] close session', s.id);
+      window.electronAPI?.sessions.delete(s.id).catch((err) => console.error('[VimKeys] close failed', err));
       setFocusIndex((i) => Math.min(i, sessions.length - 2));
     },
     // grid.nextPage / grid.prevPage removed — single-pane layout, no paging.
@@ -261,8 +259,8 @@ export function HubApp(): React.ReactElement {
 
 
   useEffect(() => {
-    const unsub = window.electronAPI?.on?.openSettings?.((payload) => {
-      openSettingsPage(payload);
+    const unsub = window.electronAPI?.on?.openSettings?.(() => {
+      openSettingsPage();
     });
     return unsub;
   }, [openSettingsPage]);
@@ -309,6 +307,18 @@ export function HubApp(): React.ReactElement {
     window.electronAPI?.logs?.close?.().catch(() => {});
   }, [viewMode]);
 
+  // chatSessionId is persisted, so it can outlive the session it points at —
+  // either because the user just closed it or because it was closed in an
+  // earlier run. Drop back to the dashboard instead of rendering a transcript
+  // for a session that is no longer in the live set.
+  useEffect(() => {
+    if (!chatSessionId) return;
+    if (!isMock && !sessionsQuery.isSuccess) return;
+    if (sessions.some((s) => s.id === chatSessionId)) return;
+    setChatSession(null);
+    setViewMode('dashboard');
+  }, [chatSessionId, sessions, sessionsQuery.isSuccess, isMock, setChatSession, setViewMode]);
+
   const pendingFocusIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -353,10 +363,9 @@ export function HubApp(): React.ReactElement {
     }
   }, [focusIndex, sessions, gridColumns, gridPage]);
 
-  const handleCreateSession = useCallback(async (input: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>; engine?: string }) => {
+  const handleCreateSession = useCallback(async (input: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }> }) => {
     const prompt = typeof input === 'string' ? input : input.prompt;
     const attachments = typeof input === 'string' ? [] : (input.attachments ?? []);
-    const engine = typeof input === 'string' ? undefined : input.engine;
     if (isMock) {
       const id = `session-${++sessionCounter}`;
       const now = Date.now();
@@ -394,8 +403,8 @@ export function HubApp(): React.ReactElement {
     try {
       console.log('[HubApp] createSession (live)', { prompt, attachmentCount: attachments.length });
       const id = await api.sessions.create(
-        attachments.length > 0 || engine
-          ? { prompt, attachments, engine }
+        attachments.length > 0
+          ? { prompt, attachments }
           : prompt,
       );
       console.log('[HubApp] session created', { id });
@@ -579,13 +588,14 @@ export function HubApp(): React.ReactElement {
                       onResume={handleResume}
                       onPause={handlePause}
                       onFollowUp={handleFollowUp}
-                      onDismiss={(id) => {
-                        // Real dismiss: flips session status to 'stopped' AND tears down the
-                        // pool entry. The previous viewDetach-only path left the WebContents
-                        // alive (so rerun talked to a stale browser) and only hid the card
-                        // locally — status stayed 'idle'.
-                        window.electronAPI?.sessions.dismiss(id).catch((err) =>
-                          console.error('[HubApp] dismiss failed', err),
+                      onClose={(id) => {
+                        // Close = remove. Cancels a live run, tears down the
+                        // browser view, drops the DB row and emits
+                        // `session-removed` so the card leaves the hub. The old
+                        // `sessions:dismiss` path only flipped status to
+                        // 'stopped', which left the card in place forever.
+                        window.electronAPI?.sessions.delete(id).catch((err) =>
+                          console.error('[HubApp] close failed', err),
                         );
                       }}
                       onCancel={(id) => {
@@ -594,9 +604,6 @@ export function HubApp(): React.ReactElement {
                       onSelect={handleSelectSession}
                       onOpenFollowUp={() => {
                         window.electronAPI?.logs.focusFollowUp(session.id);
-                      }}
-                      onOpenSettings={() => {
-                        openSettingsPage();
                       }}
                       onOpenChat={enterChat}
                       shouldDetachBrowserOnUnmount={shouldDetachBrowserOnPaneUnmount}

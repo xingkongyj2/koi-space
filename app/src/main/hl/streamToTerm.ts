@@ -221,8 +221,8 @@ export function hlEventToTermBytes(event: HlEvent, state: TermTranslatorState): 
     case 'done': {
       out.push(`${DIM}${FG.green}● done${RESET}`);
       // Print the summary below the done marker when it's a real message
-      // (not the "(done)" placeholder used when an engine like Claude
-      // already streamed its final text via `thinking` deltas). Plain
+      // (not the "(done)" placeholder used when the agent already
+      // streamed its final text via `thinking` deltas). Plain
       // white (no color code) so long-form summaries read as body copy.
       const summary = event.summary?.trim();
       if (summary && summary !== '(done)') {

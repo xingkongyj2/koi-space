@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { OnboardingCookieList } from './OnboardingCookieList';
 import introImage from './intro.png';
-import claudeCodeLogo from './claude-code-logo.svg';
 import { BrowserLogoAvatar } from '../shared/BrowserLogoAvatar';
 import { userFacingIpcError } from '../shared/ipcErrors';
 import {
@@ -11,7 +10,6 @@ import {
   normalizeShortcutPlatform,
   rendererToAccelerator,
 } from '../../shared/hotkeys';
-import { pollInstalledStatus } from '../shared/installStatus';
 
 interface ChromeProfile {
   id: string;
@@ -61,32 +59,6 @@ declare global {
         new_domain_count?: number;
         updated_domain_count?: number;
       }>>;
-      saveApiKey: (key: string) => Promise<void>;
-      testApiKey: (key: string) => Promise<{ success: boolean; error?: string }>;
-      detectClaudeCode: () => Promise<{
-        available: boolean;
-        installed: boolean;
-        authed: boolean;
-        version: string | null;
-        subscriptionType?: string | null;
-        hasInference?: boolean;
-        error?: string | null;
-      }>;
-      useClaudeCode: () => Promise<{ subscriptionType: string | null }>;
-      runClaudeLogin: () => Promise<{ ok: boolean; error?: string; stdout?: string }>;
-      openClaudeLoginTerminal: () => Promise<{ opened: boolean; error?: string }>;
-      installEngine: (engineId: 'claude-code') => Promise<{
-        opened: boolean;
-        completed?: boolean;
-        exitCode?: number | null;
-        signal?: string | null;
-        error?: string;
-        command?: string;
-        displayName?: string;
-        stdout?: string;
-        stderr?: string;
-        installed?: { installed: boolean; version?: string; error?: string };
-      }>;
       openExternal: (url: string) => Promise<{ opened: boolean }>;
       requestNotifications: () => Promise<{ supported: boolean }>;
       platform: string;
@@ -115,9 +87,7 @@ declare global {
   }
 }
 
-type Step = 'intro' | 'profile' | 'apikey' | 'notifications' | 'shortcut';
-type InstallableOnboardingEngine = 'claude-code';
-type InstallingEngines = Record<InstallableOnboardingEngine, boolean>;
+type Step = 'intro' | 'profile' | 'notifications' | 'shortcut';
 
 function buildAccelerator(e: KeyboardEvent, platform: string): string | null {
   const shortcut = keyboardEventToShortcut(e, platform);
@@ -238,7 +208,7 @@ function PreferencesStep({
   );
 }
 
-const VALID_STEPS: readonly Step[] = ['intro', 'profile', 'apikey', 'notifications', 'shortcut'];
+const VALID_STEPS: readonly Step[] = ['intro', 'profile', 'notifications', 'shortcut'];
 
 // Cookie sync is unsupported on Windows: Chromium 127+ uses App-Bound
 // Encryption (v20) keyed to the original user-data-dir, so a temp-copy
@@ -250,24 +220,14 @@ const VALID_STEPS: readonly Step[] = ['intro', 'profile', 'apikey', 'notificatio
 const COOKIE_SYNC_SUPPORTED = typeof window !== 'undefined'
   && window.onboardingAPI?.platform !== 'win32';
 
-const IS_WINDOWS = typeof window !== 'undefined'
-  && window.onboardingAPI?.platform === 'win32';
-
-// On Windows we don't run the engine installers ourselves: the npm-install
-// scripts shell out through cmd.exe in ways that have been unreliable on
-// real user machines, so we instead copy the command to the user's
-// clipboard and poll detect-IPC until they finish running it manually.
-const ENGINE_INSTALL_COMMANDS: Record<InstallableOnboardingEngine, string> = {
-  'claude-code': 'npm install -g @anthropic-ai/claude-code',
-};
-
 export function OnboardingApp() {
   const [step, setStep] = useState<Step>('intro');
   const [hydrated, setHydrated] = useState(false);
 
   // Restore the user's last step on mount — onboarding can be closed mid-flow
   // (e.g. user accidentally dismisses the window) and reopened later. We
-  // resume where they left off instead of starting over from intro.
+  // resume where they left off instead of starting over from intro. Steps
+  // persisted by older builds that no longer exist fall through to intro.
   useEffect(() => {
     let cancelled = false;
     window.onboardingAPI.getState?.().then((state) => {
@@ -278,7 +238,7 @@ export function OnboardingApp() {
         // different platform, or before cookie sync was disabled here),
         // skip past it on win32 so the user doesn't land on a hidden step.
         if (candidate === 'profile' && !COOKIE_SYNC_SUPPORTED) {
-          setStep('apikey');
+          setStep('notifications');
         } else {
           setStep(candidate as Step);
         }
@@ -311,166 +271,6 @@ export function OnboardingApp() {
   const [importedProfile, setImportedProfile] = useState<ChromeProfile | null>(null);
   const [importResult, setImportResult] = useState<CookieImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
-
-  const [apiKey, setApiKey] = useState('');
-  const [showKey, setShowKey] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; error?: string } | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  // Per-provider API key fallback — expanded via the "Use X API key instead"
-  // links beneath each provider's card cluster.
-  const [showAnthropicInput, setShowAnthropicInput] = useState(false);
-
-  const [claudeCode, setClaudeCode] = useState<{
-    available: boolean;
-    installed: boolean;
-    authed: boolean;
-    version: string | null;
-    subscriptionType?: string | null;
-    error?: string | null;
-  } | null>(null);
-  const [usingClaudeCode, setUsingClaudeCode] = useState(false);
-  const [waitingForLogin, setWaitingForLogin] = useState(false);
-
-  const [installingEngines, setInstallingEngines] = useState<InstallingEngines>({
-    'claude-code': false,
-  });
-  const installingEnginesRef = useRef<InstallingEngines>({
-    'claude-code': false,
-  });
-
-  const refreshClaudeStatus = useCallback(async () => {
-    try {
-      const res = await window.onboardingAPI.detectClaudeCode();
-      setClaudeCode({
-        available: res.available,
-        installed: res.installed,
-        authed: res.authed,
-        version: res.version,
-        subscriptionType: res.subscriptionType ?? null,
-        error: res.error ?? null,
-      });
-      return res;
-    } catch {
-      setClaudeCode({ available: false, installed: false, authed: false, version: null });
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshClaudeStatus();
-  }, [refreshClaudeStatus]);
-
-  // Poll while waiting for Claude Code to finish browser-based login.
-  // Stops when authed becomes true or after a cap.
-  useEffect(() => {
-    if (!waitingForLogin) return;
-    let cancelled = false;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 60; // ~3 minutes at 3s interval
-    const tick = async () => {
-      if (cancelled) return;
-      attempts++;
-      const res = await refreshClaudeStatus();
-      if (res?.authed) { setWaitingForLogin(false); return; }
-      if (attempts >= MAX_ATTEMPTS) { setWaitingForLogin(false); return; }
-      setTimeout(tick, 3000);
-    };
-    const id = setTimeout(tick, 3000);
-    return () => { cancelled = true; clearTimeout(id); };
-  }, [waitingForLogin, refreshClaudeStatus]);
-
-  const handleUseClaudeCode = useCallback(async () => {
-    console.log('[onboarding] handleUseClaudeCode: invoking useClaudeCode');
-    try {
-      await window.onboardingAPI.useClaudeCode();
-      console.log('[onboarding] handleUseClaudeCode: ok');
-      setUsingClaudeCode(true);
-      window.onboardingAPI.capture?.('onboarding_provider_selected', { provider: 'claude-code' });
-    } catch (err) {
-      console.error('[onboarding] handleUseClaudeCode: threw', err);
-    }
-  }, []);
-
-  const handleStartClaudeLogin = useCallback(async () => {
-    setWaitingForLogin(true);
-    try {
-      const res = await window.onboardingAPI.runClaudeLogin();
-      if (!res.ok) {
-        console.warn('[onboarding] runClaudeLogin failed', res.error);
-        setWaitingForLogin(false);
-      } else {
-        void refreshClaudeStatus();
-      }
-    } catch (err) {
-      console.error('[onboarding] runClaudeLogin threw', err);
-      setWaitingForLogin(false);
-    }
-  }, [refreshClaudeStatus]);
-
-  const waitForInstalledStatus = useCallback(async (
-    initialInstalled?: { installed: boolean; version?: string; error?: string },
-  ) => {
-    return pollInstalledStatus(refreshClaudeStatus, { initialInstalled });
-  }, [refreshClaudeStatus]);
-
-  const setEngineInstalling = useCallback((engineId: InstallableOnboardingEngine, installing: boolean) => {
-    const current = installingEnginesRef.current;
-    if (current[engineId] === installing) return;
-    const next = { ...current, [engineId]: installing };
-    installingEnginesRef.current = next;
-    setInstallingEngines(next);
-  }, []);
-
-  const handleInstallEngine = useCallback(async (engineId: InstallableOnboardingEngine) => {
-    if (installingEnginesRef.current[engineId]) return;
-    setEngineInstalling(engineId, true);
-    try {
-      const res = await window.onboardingAPI.installEngine(engineId);
-      const status = res.opened
-        ? await waitForInstalledStatus(res.installed)
-        : await refreshClaudeStatus();
-      if (!res.opened || !status?.installed) {
-        console.warn('[onboarding] installEngine failed', engineId, res.error);
-        return;
-      }
-    } catch (err) {
-      console.error('[onboarding] installEngine threw', engineId, err);
-    } finally {
-      setEngineInstalling(engineId, false);
-    }
-  }, [refreshClaudeStatus, setEngineInstalling, waitForInstalledStatus]);
-
-  const handleInstallClaudeCode = useCallback(() => {
-    void handleInstallEngine('claude-code');
-  }, [handleInstallEngine]);
-
-  // Windows-only: copy the npm install command to the clipboard, then poll
-  // the detect-IPC until the user has run it themselves. We don't spawn the
-  // installer ourselves on win32 because the cmd.exe path-out has been
-  // unreliable. The polling reuses `waitForInstalledStatus` (~2 min window).
-  const handleManualInstallEngine = useCallback(async (engineId: InstallableOnboardingEngine) => {
-    if (installingEnginesRef.current[engineId]) return;
-    try {
-      await navigator.clipboard.writeText(ENGINE_INSTALL_COMMANDS[engineId]);
-    } catch (err) {
-      console.warn('[onboarding] manual install: clipboard write failed', err);
-    }
-    setEngineInstalling(engineId, true);
-    try {
-      await waitForInstalledStatus();
-    } finally {
-      setEngineInstalling(engineId, false);
-    }
-  }, [setEngineInstalling, waitForInstalledStatus]);
-
-  const handleManualInstallClaudeCode = useCallback(() => {
-    void handleManualInstallEngine('claude-code');
-  }, [handleManualInstallEngine]);
-
-  const claudeCodeReady = Boolean(claudeCode?.installed && claudeCode.authed);
-  const installingClaudeCode = installingEngines['claude-code'];
 
   const [accelerator, setAccelerator] = useState<string>(() => defaultGlobalCmdbarAccelerator(window.onboardingAPI.platform));
   const [recording, setRecording] = useState(false);
@@ -516,66 +316,7 @@ export function OnboardingApp() {
     }
   }, [profiles]);
 
-  const handleSkipProfile = useCallback(() => setStep('apikey'), []);
-
-  const handleTestKey = useCallback(async () => {
-    if (!apiKey.trim()) return;
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = await window.onboardingAPI.testApiKey(apiKey.trim());
-      setTestResult(result);
-    } catch (err) {
-      setTestResult({ success: false, error: (err as Error).message });
-    } finally {
-      setTesting(false);
-    }
-  }, [apiKey]);
-
-  useEffect(() => {
-    if (!testResult) return;
-    const t = setTimeout(() => setTestResult(null), 3500);
-    return () => clearTimeout(t);
-  }, [testResult]);
-
-  const handleSaveKeyAndContinue = useCallback(async () => {
-    if (!apiKey.trim()) return;
-    setSaving(true);
-    try {
-      await window.onboardingAPI.saveApiKey(apiKey.trim());
-      setStep('notifications');
-    } catch (err) {
-      console.error('[onboarding] save key failed', err);
-    } finally {
-      setSaving(false);
-    }
-  }, [apiKey]);
-
-  // Single bottom-of-step handler — saves the Anthropic key if one was filled
-  // and advances. Provider setup is optional: the default engine is the app's
-  // own Python backend, which needs no provider credentials, and Claude Code
-  // is an optional connection the user may set up here or later in Settings.
-  const [stepSaving, setStepSaving] = useState(false);
-  const handleStepSaveAndContinue = useCallback(async () => {
-    console.log('[onboarding] handleStepSaveAndContinue', {
-      claudeAuthed: claudeCodeReady,
-      hasAnthropicKey: apiKey.trim().length > 0,
-    });
-    setStepSaving(true);
-    try {
-      if (claudeCode?.installed && apiKey.trim()) {
-        console.log('[onboarding] handleStepSaveAndContinue: saving anthropic key');
-        await window.onboardingAPI.saveApiKey(apiKey.trim());
-        window.onboardingAPI.capture?.('onboarding_provider_selected', { provider: 'anthropic-key' });
-      }
-      console.log('[onboarding] handleStepSaveAndContinue: advancing to notifications step');
-      setStep('notifications');
-    } catch (err) {
-      console.error('[onboarding] handleStepSaveAndContinue threw', err);
-    } finally {
-      setStepSaving(false);
-    }
-  }, [apiKey, claudeCode?.installed, claudeCodeReady]);
+  const handleSkipProfile = useCallback(() => setStep('notifications'), []);
 
   const handleFinish = useCallback(async () => {
     window.onboardingAPI.capture?.('onboarding_completed');
@@ -689,8 +430,8 @@ export function OnboardingApp() {
       <div className={`onboarding-content ${step === 'intro' ? 'onboarding-content-wide' : ''}`}>
         <div className="step-indicator">
           {((COOKIE_SYNC_SUPPORTED
-            ? ['intro', 'profile', 'apikey', 'notifications', 'shortcut']
-            : ['intro', 'apikey', 'notifications', 'shortcut']) as Step[]).map((s, i, all) => {
+            ? ['intro', 'profile', 'notifications', 'shortcut']
+            : ['intro', 'notifications', 'shortcut']) as Step[]).map((s, i, all) => {
             const currentIdx = all.indexOf(step);
             const thisIdx = i;
             const cls = thisIdx < currentIdx ? 'done' : thisIdx === currentIdx ? 'active' : '';
@@ -713,7 +454,7 @@ export function OnboardingApp() {
                 </p>
                 <button
                   className="btn btn-primary intro-cta"
-                  onClick={() => setStep(COOKIE_SYNC_SUPPORTED ? 'profile' : 'apikey')}
+                  onClick={() => setStep(COOKIE_SYNC_SUPPORTED ? 'profile' : 'notifications')}
                 >
                   Get started
                 </button>
@@ -833,7 +574,7 @@ export function OnboardingApp() {
                 <div className="apikey-actions">
                   <button
                     className="btn btn-primary"
-                    onClick={() => setStep('apikey')}
+                    onClick={() => setStep('notifications')}
                   >
                     Continue
                   </button>
@@ -866,156 +607,6 @@ export function OnboardingApp() {
             )}
           </div>
         )}
-
-        {step === 'apikey' && (
-          <div className="step-panel">
-            <h1 className="step-title">Vendor setup</h1>
-            <p className="step-subtitle">
-              Install each provider CLI once, then sign in or add that provider&rsquo;s API key. Credentials are stored locally in the system keychain.
-            </p>
-
-            {/* Installed + authed → selectable card. Click flips to configured state. */}
-            {claudeCodeReady && (
-              <div className="claude-code-card claude-code-card--selected">
-                <div className="claude-code-card__icon">
-                  <img src={claudeCodeLogo} alt="" />
-                </div>
-                <div className="claude-code-card__text">
-                  <div className="claude-code-card__title">Claude successfully configured</div>
-                  <div className="claude-code-card__sub">
-                    {`Signed in via Claude Code${claudeCode.version ? ` (v${claudeCode.version})` : ''}. No API key needed.`}
-                  </div>
-                </div>
-                <div className="claude-code-card__check">✓</div>
-              </div>
-            )}
-
-            {/* Not authed → one card with two interior options: subscription or API key.
-                Switching once configured happens in Settings. */}
-            {claudeCode && !claudeCodeReady && !usingClaudeCode && (
-              <div className="provider-card">
-                {claudeCode.installed && (
-                  <div className="provider-card__tabs" role="tablist">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={!showAnthropicInput}
-                      className={`provider-card__tab${!showAnthropicInput ? ' is-active' : ''}`}
-                      onClick={() => setShowAnthropicInput(false)}
-                    >
-                      Connect subscription
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={showAnthropicInput}
-                      className={`provider-card__tab${showAnthropicInput ? ' is-active' : ''}`}
-                      onClick={() => setShowAnthropicInput(true)}
-                    >
-                      Use API key
-                    </button>
-                  </div>
-                )}
-
-                <div className="provider-card__body">
-                  {!showAnthropicInput && claudeCode.installed && (
-                    <button
-                      type="button"
-                      className="provider-card__action"
-                      onClick={handleStartClaudeLogin}
-                      disabled={waitingForLogin}
-                    >
-                      <div className="claude-code-card__icon">
-                        <img src={claudeCodeLogo} alt="" />
-                      </div>
-                      <div className="claude-code-card__text">
-                        <div className="claude-code-card__title">
-                          {waitingForLogin ? 'Waiting for login…' : 'Click to log in'}
-                        </div>
-                        <div className="claude-code-card__sub">
-                          {waitingForLogin
-                            ? 'Finish the browser sign-in. We’ll detect it automatically.'
-                            : 'Opens the Claude sign-in flow in your browser. Sign in once and we’ll detect it.'}
-                        </div>
-                      </div>
-                      <div className="claude-code-card__chevron">{waitingForLogin ? '\u2026' : '\u203A'}</div>
-                    </button>
-                  )}
-
-                  {!claudeCode.installed && (
-                    <button
-                      type="button"
-                      className="provider-card__action"
-                      onClick={IS_WINDOWS ? handleManualInstallClaudeCode : handleInstallClaudeCode}
-                      disabled={installingClaudeCode}
-                    >
-                      <div className="claude-code-card__icon">
-                        <img src={claudeCodeLogo} alt="" />
-                      </div>
-                      <div className="claude-code-card__text">
-                        <div className="claude-code-card__title">
-                          {installingClaudeCode
-                            ? (IS_WINDOWS ? 'Waiting for Claude Code…' : 'Installing Claude Code…')
-                            : (IS_WINDOWS ? 'Copy install command' : 'Install Claude Code')}
-                        </div>
-                        <div className="claude-code-card__sub">
-                          {IS_WINDOWS
-                            ? (installingClaudeCode
-                              ? `Run ${ENGINE_INSTALL_COMMANDS['claude-code']} in your terminal — we’ll detect it when it finishes.`
-                              : `Click to copy ${ENGINE_INSTALL_COMMANDS['claude-code']}. Paste it into PowerShell, and we’ll detect when it finishes.`)
-                            : 'Runs the installer in the background. We’ll detect it when it finishes.'}
-                        </div>
-                      </div>
-                      <div className="claude-code-card__chevron">{installingClaudeCode ? '\u2026' : '\u203A'}</div>
-                    </button>
-                  )}
-
-                  {claudeCode.installed && showAnthropicInput && (
-                    <div className="provider-card__keyform">
-                      <div className="apikey-input-wrap">
-                        <input
-                          type={showKey ? 'text' : 'password'}
-                          className="apikey-input"
-                          placeholder="sk-ant-..."
-                          value={apiKey}
-                          onChange={(e) => { setApiKey(e.target.value); setTestResult(null); }}
-                          spellCheck={false}
-                        />
-                        <button className="apikey-toggle" onClick={() => setShowKey(!showKey)} tabIndex={-1}>
-                          {showKey ? 'Hide' : 'Show'}
-                        </button>
-                      </div>
-                      <div className="apikey-actions">
-                        <button className="btn btn-secondary" onClick={handleTestKey} disabled={!apiKey.trim() || testing}>
-                          {testing ? 'Testing...' : 'Test Key'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div className="apikey-actions apikey-actions--footer">
-              <button
-                type="button"
-                className="btn btn-primary apikey-continue-btn"
-                onClick={handleStepSaveAndContinue}
-                disabled={stepSaving}
-              >
-                {stepSaving ? 'Saving...' : 'Save & Continue'}
-              </button>
-            </div>
-
-            <button
-              className="back-btn"
-              onClick={() => setStep(COOKIE_SYNC_SUPPORTED ? 'profile' : 'intro')}
-            >
-              Back
-            </button>
-          </div>
-        )}
-
 
         {step === 'shortcut' && pillOpen && (
           <div className="step-panel pill-takeover">
@@ -1101,25 +692,10 @@ export function OnboardingApp() {
         {step === 'notifications' && (
           <PreferencesStep
             onContinue={() => setStep('shortcut')}
-            onBack={() => setStep('notifications')}
+            onBack={() => setStep(COOKIE_SYNC_SUPPORTED ? 'profile' : 'intro')}
           />
         )}
       </div>
-
-      {testResult && (
-        <div className={`toast ${testResult.success ? 'toast-success' : 'toast-error'}`}>
-          {testResult.success ? (
-            <svg className="toast-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          ) : (
-            <svg className="toast-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-          <span>{testResult.success ? 'API key is valid' : testResult.error || 'Invalid key'}</span>
-        </div>
-      )}
     </div>
   );
 }

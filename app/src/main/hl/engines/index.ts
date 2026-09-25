@@ -5,14 +5,11 @@
 
 // Adapters (side-effect register()):
 import './python/adapter';
-import './claude-code/adapter';
-import './browsercode/adapter';
 
 export { runEngine } from './runEngine';
-export { get as getAdapter, list as listAdapters, DEFAULT_ENGINE_ID } from './registry';
+export { get as getAdapter, DEFAULT_ENGINE_ID } from './registry';
 export type {
   EngineAdapter,
   InstallProbe,
-  AuthProbe,
   RunEngineOptions,
 } from './types';

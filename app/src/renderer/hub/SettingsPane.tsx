@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectionsPane, type SettingsProviderFocusRequest } from './ConnectionsPane';
+import { ConnectionsPane } from './ConnectionsPane';
 import type { ActionId, KeyBinding } from './keybindings';
 import { fallbackShortcutPlatform, keyboardEventToShortcut } from '../../shared/hotkeys';
 import { useThemeMode } from '../design/useThemeMode';
@@ -541,7 +541,6 @@ function PrivacySection(): React.ReactElement {
 }
 
 export type SettingsSectionId =
-  | 'settings-model-providers'
   | 'settings-connections'
   | 'settings-browser-sync'
   | 'settings-shortcuts'
@@ -552,13 +551,11 @@ export type SettingsSectionId =
 export interface SettingsOpenIntent {
   requestId: number;
   sectionId?: SettingsSectionId;
-  focusBrowserCodeProvider?: string;
 }
 
 const SETTINGS_TABS: Array<{ id: SettingsSectionId; label: string }> = [
   { id: 'settings-application', label: 'Application' },
   { id: 'settings-appearance', label: 'Appearance' },
-  { id: 'settings-model-providers', label: 'Model providers' },
   { id: 'settings-connections', label: 'Connections' },
   { id: 'settings-browser-sync', label: 'Browser Sync' },
   { id: 'settings-shortcuts', label: 'Shortcuts' },
@@ -733,16 +730,10 @@ export function SettingsPane({ intent, keybindings, overrides, onUpdateBinding, 
   }, [tabs]);
 
   useEffect(() => {
-    const sectionId = intent?.sectionId ?? (
-      intent?.focusBrowserCodeProvider ? 'settings-model-providers' : undefined
-    );
+    const sectionId = intent?.sectionId;
     if (!sectionId) return;
     requestAnimationFrame(() => scrollToSection(sectionId, 'auto'));
-  }, [intent?.requestId, intent?.sectionId, intent?.focusBrowserCodeProvider, scrollToSection]);
-
-  const providerFocus: SettingsProviderFocusRequest | null = intent?.focusBrowserCodeProvider
-    ? { providerId: intent.focusBrowserCodeProvider, requestId: intent.requestId }
-    : null;
+  }, [intent?.requestId, intent?.sectionId, scrollToSection]);
 
   return (
     <div className="settings-page">
@@ -787,10 +778,8 @@ export function SettingsPane({ intent, keybindings, overrides, onUpdateBinding, 
 
           <ConnectionsPane
             embedded
-            providerSectionId="settings-model-providers"
             connectionsSectionId="settings-connections"
             browserSyncSectionId="settings-browser-sync"
-            focusBrowserCodeProvider={providerFocus}
           />
 
           <section id="settings-shortcuts" className="settings-page__section">

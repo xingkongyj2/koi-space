@@ -35,8 +35,6 @@ export interface AgentSession {
   lastActivityAt?: number;
   engine?: string;
   model?: string;
-  authMode?: 'apiKey' | 'subscription';
-  subscriptionType?: string;
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;

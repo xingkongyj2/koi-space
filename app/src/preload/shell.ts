@@ -9,17 +9,6 @@ import {
 import type { AgentSession, HlEvent, TabInfo, BrowserPoolStats } from '../shared/session-schemas';
 import { createPopupBridge } from './popupBridge';
 
-type SettingsOpenPayload = { focusBrowserCodeProvider?: string };
-
-function normalizeSettingsOpenPayload(raw: unknown): SettingsOpenPayload | undefined {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const rawProvider = (raw as { focusBrowserCodeProvider?: unknown }).focusBrowserCodeProvider;
-  const providerId = typeof rawProvider === 'string' ? rawProvider.trim() : '';
-  return providerId.length > 0 && providerId.length <= 80
-    ? { focusBrowserCodeProvider: providerId }
-    : undefined;
-}
-
 contextBridge.exposeInMainWorld('electronAPI', {
   // Structured renderer log bridge — see renderer/shared/logger.ts and
   // main/rendererLogIpc.ts. Fire-and-forget; never blocks the caller.
@@ -78,49 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     hide: (sessionId: string): Promise<void> => ipcRenderer.invoke('takeover:hide', sessionId),
   },
   settings: {
-    open: (payload?: { focusBrowserCodeProvider?: string }): Promise<void> => ipcRenderer.invoke('settings:open', payload),
-    apiKey: {
-      getMasked: (): Promise<{ present: boolean; masked: string | null }> =>
-        ipcRenderer.invoke('settings:api-key:get-masked'),
-      getStatus: (): Promise<{ type: 'oauth' | 'apiKey' | 'none'; masked?: string; subscriptionType?: string | null; expiresAt?: number }> =>
-        ipcRenderer.invoke('settings:api-key:get-status'),
-      save: (key: string): Promise<void> =>
-        ipcRenderer.invoke('settings:api-key:save', key),
-      test: (key: string): Promise<{ success: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:api-key:test', key),
-      delete: (): Promise<void> => ipcRenderer.invoke('settings:api-key:delete'),
-    },
-    claudeCode: {
-      available: (): Promise<{ available: boolean; subscriptionType?: string | null }> =>
-        ipcRenderer.invoke('settings:claude-code:available'),
-      use: (): Promise<{ subscriptionType: string | null }> =>
-        ipcRenderer.invoke('settings:claude-code:use'),
-      login: (): Promise<{ ok: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:claude-code:login'),
-      logout: (): Promise<{ opened: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:claude-code:logout'),
-    },
-    browserCode: {
-      getStatus: (): Promise<{
-        keys: Record<string, { masked: string; lastModel?: string }>;
-        active: string | null;
-        installed?: { installed: boolean; version?: string; error?: string };
-        providers: Array<{
-          id: string;
-          name: string;
-          defaultModel: string;
-          models: Array<{ id: string; label: string }>;
-        }>;
-      }> => ipcRenderer.invoke('settings:browsercode:get-status'),
-      save: (payload: { providerId: string; apiKey: string; lastModel?: string }): Promise<void> =>
-        ipcRenderer.invoke('settings:browsercode:save', payload),
-      test: (payload: { providerId: string; apiKey: string; model?: string }): Promise<{ success: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:browsercode:test', payload),
-      delete: (payload?: { providerId?: string }): Promise<void> =>
-        ipcRenderer.invoke('settings:browsercode:delete', payload),
-      setActive: (payload: { providerId: string }): Promise<void> =>
-        ipcRenderer.invoke('settings:browsercode:set-active', payload),
-    },
+    open: (): Promise<void> => ipcRenderer.invoke('settings:open'),
     privacy: {
       get: (): Promise<{ telemetry: boolean; telemetryUpdatedAt: string | null; version: number }> =>
         ipcRenderer.invoke('consent:get'),
@@ -209,7 +156,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   sessions: {
     create: (
-      promptOrPayload: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>; engine?: string },
+      promptOrPayload: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }> },
     ): Promise<string> => ipcRenderer.invoke('sessions:create', promptOrPayload),
     start: (id: string): Promise<void> => ipcRenderer.invoke('sessions:start', id),
     cancel: (id: string): Promise<void> => ipcRenderer.invoke('sessions:cancel', id),
@@ -217,7 +164,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     halt: (id: string): Promise<void> => ipcRenderer.invoke('sessions:halt', id),
     steer: (id: string, message: string): Promise<{ queued?: boolean; error?: string }> =>
       ipcRenderer.invoke('sessions:steer', { id, message }),
-    dismiss: (id: string): Promise<void> => ipcRenderer.invoke('sessions:dismiss', id),
     delete: (id: string): Promise<void> => ipcRenderer.invoke('sessions:delete', id),
     downloadOutput: (filePath: string): Promise<{ opened: boolean }> =>
       ipcRenderer.invoke('sessions:download-output', filePath),
@@ -236,29 +182,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('sessions:list-editors'),
     openInEditor: (editorId: string, filePath: string): Promise<{ opened: boolean }> =>
       ipcRenderer.invoke('sessions:open-in-editor', { editorId, filePath }),
-    listEngines: (): Promise<Array<{ id: string; displayName: string; binaryName: string }>> =>
-      ipcRenderer.invoke('sessions:list-engines'),
-    engineStatus: (engineId: string): Promise<{
-      id: string;
-      displayName: string;
-      installed: { installed: boolean; version?: string; error?: string };
-      authed: { authed: boolean; error?: string };
-    }> => ipcRenderer.invoke('sessions:engine-status', engineId),
-    engineLogin: (engineId: string): Promise<{ opened: boolean; error?: string }> =>
-      ipcRenderer.invoke('sessions:engine-login', engineId),
-    engineInstall: (engineId: string): Promise<{
-      opened: boolean;
-      completed?: boolean;
-      exitCode?: number | null;
-      signal?: string | null;
-      error?: string;
-      command?: string;
-      displayName?: string;
-      stdout?: string;
-      stderr?: string;
-      installed?: { installed: boolean; version?: string; error?: string };
-    }> =>
-      ipcRenderer.invoke('sessions:engine-install', engineId),
     resume: (
       id: string,
       prompt: string,
@@ -396,6 +319,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('session-updated', handler);
       return () => ipcRenderer.removeListener('session-updated', handler);
     },
+    sessionRemoved: (cb: (id: string) => void): (() => void) => {
+      const handler = (_event: unknown, id: string) => {
+        if (typeof id === 'string') cb(id);
+      };
+      ipcRenderer.on('session-removed', handler);
+      return () => ipcRenderer.removeListener('session-removed', handler);
+    },
     sessionBrowserGone: (cb: (id: string) => void): (() => void) => {
       const handler = (_event: unknown, id: string) => {
         if (typeof id === 'string') cb(id);
@@ -435,8 +365,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('session-preview-frame', handler);
       return () => ipcRenderer.removeListener('session-preview-frame', handler);
     },
-    openSettings: (cb: (payload?: SettingsOpenPayload) => void): (() => void) => {
-      const handler = (_event: unknown, rawPayload?: unknown) => cb(normalizeSettingsOpenPayload(rawPayload));
+    openSettings: (cb: () => void): (() => void) => {
+      const handler = () => cb();
       ipcRenderer.on('open-settings', handler);
       return () => ipcRenderer.removeListener('open-settings', handler);
     },

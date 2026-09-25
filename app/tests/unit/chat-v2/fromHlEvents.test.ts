@@ -72,8 +72,8 @@ describe('fromHlEvents — empty / trivial', () => {
 
 describe('fromHlEvents — text streaming (thinking events ARE the assistant text)', () => {
   // Note: in this codebase a `thinking` HlEvent is the assistant's streaming
-  // output text (`content_block_delta.text_delta` from claude-code, etc.) —
-  // NOT chain-of-thought. The transform maps it to a `text` part.
+  // output text — NOT chain-of-thought. The transform maps it to a `text`
+  // part.
   it('concatenates consecutive thinking events into a single text part', () => {
     const out = run([
       userText('q', 100),

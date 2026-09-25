@@ -34,14 +34,13 @@ declare module '*.webp' {
 
 interface ElectronSessionAPI {
   create: (
-    promptOrPayload: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>; engine?: string },
+    promptOrPayload: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }> },
   ) => Promise<string>;
   start: (id: string) => Promise<void>;
   cancel: (id: string) => Promise<void>;
   pause: (id: string) => Promise<{ paused?: boolean; error?: string }>;
   halt: (id: string) => Promise<void>;
   steer: (id: string, message: string) => Promise<{ queued?: boolean; error?: string }>;
-  dismiss: (id: string) => Promise<void>;
   delete: (id: string) => Promise<void>;
   downloadOutput: (filePath: string) => Promise<{ opened: boolean }>;
   revealOutput: (filePath: string) => Promise<{ revealed: boolean }>;
@@ -55,26 +54,6 @@ interface ElectronSessionAPI {
   >;
   listEditors: () => Promise<Array<{ id: string; name: string }>>;
   openInEditor: (editorId: string, filePath: string) => Promise<{ opened: boolean }>;
-  listEngines: () => Promise<Array<{ id: string; displayName: string; binaryName: string }>>;
-  engineStatus: (engineId: string) => Promise<{
-    id: string;
-    displayName: string;
-    installed: { installed: boolean; version?: string; error?: string };
-    authed: { authed: boolean; error?: string };
-  }>;
-  engineLogin: (engineId: string) => Promise<{ opened: boolean; error?: string }>;
-  engineInstall: (engineId: string) => Promise<{
-    opened: boolean;
-    completed?: boolean;
-    exitCode?: number | null;
-    signal?: string | null;
-    error?: string;
-    command?: string;
-    displayName?: string;
-    stdout?: string;
-    stderr?: string;
-    installed?: { installed: boolean; version?: string; error?: string };
-  }>;
   resume: (
     id: string,
     prompt: string,
@@ -181,12 +160,13 @@ interface ElectronChromeImportAPI {
 
 interface ElectronOnAPI {
   sessionUpdated: (cb: (session: import('./hub/types').AgentSession) => void) => () => void;
+  sessionRemoved?: (cb: (id: string) => void) => () => void;
   sessionBrowserGone: (cb: (id: string) => void) => () => void;
   sessionBrowserAttached: (cb: (id: string) => void) => () => void;
   sessionOutput: (cb: (id: string, event: import('./hub/types').HlEvent) => void) => () => void;
   sessionOutputTerm: (cb: (id: string, bytes: string) => void) => () => void;
   sessionPreviewFrame: (cb: (id: string, dataB64: string) => void) => () => void;
-  openSettings?: (cb: (payload?: { focusBrowserCodeProvider?: string }) => void) => () => void;
+  openSettings?: (cb: () => void) => () => void;
   zoomChanged?: (cb: (factor: number) => void) => () => void;
   whatsappQr?: (cb: (dataUrl: string) => void) => () => void;
   channelStatus?: (cb: (channelId: string, status: string, detail?: string) => void) => () => void;
@@ -246,44 +226,6 @@ interface ElectronPopupAPI {
   onClosed: (cb: (event: import('../shared/app-popup').AppPopupClosed) => void) => () => void;
 }
 
-interface ElectronSettingsApiKeyAPI {
-  getMasked: () => Promise<{ present: boolean; masked: string | null }>;
-  getStatus: () => Promise<{
-    type: 'oauth' | 'apiKey' | 'none';
-    masked?: string;
-    subscriptionType?: string | null;
-    expiresAt?: number;
-  }>;
-  save: (key: string) => Promise<void>;
-  test: (key: string) => Promise<{ success: boolean; error?: string }>;
-  delete: () => Promise<void>;
-}
-
-interface ElectronSettingsClaudeCodeAPI {
-  available: () => Promise<{ available: boolean; subscriptionType?: string | null }>;
-  use: () => Promise<{ subscriptionType: string | null }>;
-  login: () => Promise<{ ok: boolean; error?: string }>;
-  logout: () => Promise<{ opened: boolean; error?: string }>;
-}
-
-interface ElectronSettingsBrowserCodeAPI {
-  getStatus: () => Promise<{
-    keys: Record<string, { masked: string; lastModel?: string }>;
-    active: string | null;
-    installed?: { installed: boolean; version?: string; error?: string };
-    providers: Array<{
-      id: string;
-      name: string;
-      defaultModel: string;
-      models: Array<{ id: string; label: string }>;
-    }>;
-  }>;
-  save: (payload: { providerId: string; apiKey: string; lastModel?: string }) => Promise<void>;
-  test: (payload: { providerId: string; apiKey: string; model?: string }) => Promise<{ success: boolean; error?: string }>;
-  delete: (payload?: { providerId?: string }) => Promise<void>;
-  setActive: (payload: { providerId: string }) => Promise<void>;
-}
-
 interface ElectronSettingsAppAPI {
   getUpdateStatus: () => Promise<{
     status: 'idle' | 'checking' | 'downloading' | 'ready' | 'error' | 'unavailable';
@@ -332,10 +274,7 @@ interface ElectronSettingsAppAPI {
 }
 
 interface ElectronSettingsAPI {
-  open?: (payload?: { focusBrowserCodeProvider?: string }) => Promise<void>;
-  apiKey: ElectronSettingsApiKeyAPI;
-  claudeCode?: ElectronSettingsClaudeCodeAPI;
-  browserCode?: ElectronSettingsBrowserCodeAPI;
+  open?: () => Promise<void>;
   app?: ElectronSettingsAppAPI;
 }
 

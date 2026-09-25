@@ -243,8 +243,8 @@ export function createTray(sessionManager: SessionManager): Tray | null {
     tray.setContextMenu(buildTrayMenu(sessionManager));
     mainLogger.info('main.tray.menuRebuilt');
   };
-  const scheduleRebuild = (session: AgentSession): void => {
-    mainLogger.debug('main.tray.scheduleMenuRebuild', { id: session.id, status: session.status });
+  const scheduleRebuildFor = (id: string, detail: string): void => {
+    mainLogger.debug('main.tray.scheduleMenuRebuild', { id, detail });
     if (rebuildTimer) clearTimeout(rebuildTimer);
     rebuildTimer = setTimeout(() => {
       rebuildTimer = null;
@@ -252,11 +252,14 @@ export function createTray(sessionManager: SessionManager): Tray | null {
     }, MENU_REBUILD_DEBOUNCE_MS);
     rebuildTimer.unref?.();
   };
+  const scheduleRebuild = (session: AgentSession): void => scheduleRebuildFor(session.id, session.status);
+  const scheduleRebuildRemoved = (id: string): void => scheduleRebuildFor(id, 'removed');
 
   sessionManager.onEvent('session-created', scheduleRebuild);
   sessionManager.onEvent('session-updated', scheduleRebuild);
   sessionManager.onEvent('session-completed', scheduleRebuild);
   sessionManager.onEvent('session-error', scheduleRebuild);
+  sessionManager.onEvent('session-removed', scheduleRebuildRemoved);
   scheduleCurrentRebuild = rebuildMenu;
 
   const dispose = (): void => {
@@ -268,6 +271,7 @@ export function createTray(sessionManager: SessionManager): Tray | null {
     sessionManager.off('session-updated', scheduleRebuild);
     sessionManager.off('session-completed', scheduleRebuild);
     sessionManager.off('session-error', scheduleRebuild);
+    sessionManager.off('session-removed', scheduleRebuildRemoved);
     app.off('before-quit', dispose);
     if (!tray.isDestroyed()) tray.destroy();
     if (currentTray === tray) currentTray = null;

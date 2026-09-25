@@ -10,11 +10,11 @@ disk instead of evaporating with DevTools.
 ```ts
 import { makeLogger } from '@/renderer/shared/logger';
 
-const log = makeLogger('EnginePicker');
+const log = makeLogger('hub');
 
-log.info('refreshStatus.request', { ids });
-log.warn('refreshStatus.failed', { id, error: (err as Error).message });
-log.error('engineInstall failed', err);          // Errors expand to {error, stack, name}
+log.info('sessions.refresh.request', { ids });
+log.warn('sessions.refresh.failed', { id, error: (err as Error).message });
+log.error('submit failed', err);                 // Errors expand to {error, stack, name}
 ```
 
 Levels: `debug | info | warn | error`. Second arg is a structured
@@ -23,8 +23,8 @@ extras object — pass an `Error` and it expands into `{error, stack, name}`.
 ## Console formatting
 
 ```
-[EnginePicker] refreshStatus.request {ids: ['claude-code', 'python']}
-[EnginePicker] engineInstall failed {error: '...', stack: '...', name: 'Error'}
+[hub] sessions.refresh.request {ids: ['abc123', 'def456']}
+[hub] submit failed {error: '...', stack: '...', name: 'Error'}
 ```
 
 Same `[Module]` prefix the renderer already uses across the codebase.
@@ -37,7 +37,7 @@ Same `[Module]` prefix the renderer already uses across the codebase.
 ```
 Each line looks like:
 ```json
-{"ts":"2026-05-18T20:11:33.421Z","level":"error","channel":"renderer","msg":"engineInstall failed","ns":"EnginePicker","error":"...","stack":"..."}
+{"ts":"2026-05-18T20:11:33.421Z","level":"error","channel":"renderer","msg":"submit failed","ns":"hub","error":"...","stack":"..."}
 ```
 
 ## Modes (per-renderer-window, via localStorage)

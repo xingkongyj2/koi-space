@@ -25,7 +25,7 @@ function assertSafeExecutable(value: string, label: string): void {
   if (/[\r\n\0]/.test(trimmed)) throw new Error(`spawn_failed: unsafe ${label}`);
 
   // Adapter binary names are expected to be simple command names like
-  // `claude`, `bcode`, or `python3`. Tests may pass an absolute Node path.
+  // `python3`. Tests may pass an absolute Node path.
   if (/^[A-Za-z0-9._-]+$/.test(trimmed)) return;
   if (path.isAbsolute(trimmed) && !/["']/.test(trimmed)) return;
 

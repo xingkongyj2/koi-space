@@ -41,7 +41,6 @@ export class SessionDb {
     updateEngine: Database.Statement;
     updateEngineSessionId: Database.Statement;
     updateModel: Database.Statement;
-    updateAuth: Database.Statement;
     updateUsage: Database.Statement;
     getSession: Database.Statement;
     getSessionOrigin: Database.Statement;
@@ -122,9 +121,6 @@ export class SessionDb {
       ),
       updateModel: this.db.prepare(
         'UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?'
-      ),
-      updateAuth: this.db.prepare(
-        'UPDATE sessions SET auth_mode = ?, subscription_type = ?, updated_at = ? WHERE id = ?'
       ),
       updateUsage: this.db.prepare(
         'UPDATE sessions SET cost_usd = ?, input_tokens = ?, output_tokens = ?, cached_input_tokens = ?, cost_source = ?, updated_at = ? WHERE id = ?'
@@ -530,19 +526,6 @@ export class SessionDb {
     }
   }
 
-  updateAuth(id: string, authMode: string | null, subscriptionType: string | null): void {
-    if (this.closed) return;
-    const now = Date.now();
-    try {
-      const result = this.stmts.updateAuth.run(authMode, subscriptionType, now, id);
-      if (result.changes === 0) {
-        mainLogger.warn('SessionDb.updateAuth.notFound', { id, authMode, subscriptionType });
-      }
-    } catch (err) {
-      mainLogger.error('SessionDb.updateAuth.failed', { id, authMode, subscriptionType, error: (err as Error).message });
-      throw err;
-    }
-  }
 
   updateSessionPrompt(id: string, prompt: string): void {
     const now = Date.now();

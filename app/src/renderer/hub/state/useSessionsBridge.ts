@@ -120,6 +120,13 @@ export function useSessionsBridge(): void {
       enqueueOrRun(() => applyBrowserState(id, true));
     });
 
+    const unsubRemoved = api.on.sessionRemoved?.((id) => {
+      enqueueOrRun(() => {
+        pendingOutputBySession.delete(id);
+        useSessionsStore.getState().removeSession(id);
+      });
+    });
+
     return () => {
       cancelled = true;
       pendingOutputBySession.clear();
@@ -127,6 +134,7 @@ export function useSessionsBridge(): void {
       unsubUpdated();
       unsubBrowserGone();
       unsubBrowserAttached();
+      unsubRemoved?.();
     };
   }, []);
 }

@@ -12,9 +12,9 @@
  *
  * Usage:
  *
- *   const log = makeLogger('EnginePicker');
- *   log.info('refreshStatus.failed', { id, error });
- *   log.error('engineInstall failed', err);
+ *   const log = makeLogger('hub');
+ *   log.info('sessions.refresh.failed', { id, error });
+ *   log.error('submit failed', err);
  *
  * The console output stays human-readable; the IPC forward sends a
  * structured `{level, ns, msg, extra}` payload to main, which the

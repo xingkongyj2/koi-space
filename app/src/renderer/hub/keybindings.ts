@@ -2,7 +2,7 @@ export type ActionId =
   | 'nav.down' | 'nav.up' | 'nav.top' | 'nav.bottom' | 'nav.open'
   | 'goto.dashboard' | 'goto.agents' | 'goto.settings'
   | 'search.open'
-  | 'action.create' | 'action.createPane' | 'action.dismiss' | 'action.cancel' | 'action.followUp'
+  | 'action.create' | 'action.createPane' | 'action.close' | 'action.cancel' | 'action.followUp'
   | 'scroll.halfDown' | 'scroll.halfUp'
   | 'meta.help' | 'meta.commandPalette' | 'meta.escape';
 
@@ -25,7 +25,7 @@ export const DEFAULT_KEYBINDINGS: KeyBinding[] = [
   { id: 'search.open', label: 'Search', keys: ['/'], category: 'Actions' },
   { id: 'action.create', label: 'New agent', keys: [], category: 'Actions' },
   { id: 'action.createPane', label: 'New pane', keys: [], category: 'Actions' },
-  { id: 'action.dismiss', label: 'Dismiss session', keys: ['x'], category: 'Actions' },
+  { id: 'action.close', label: 'Close session', keys: ['x'], category: 'Actions' },
   { id: 'action.cancel', label: 'Cancel session', keys: ['Ctrl+c'], category: 'Actions' },
   { id: 'action.followUp', label: 'Follow up', keys: ['f'], category: 'Actions' },
   { id: 'scroll.halfDown', label: 'Scroll down', keys: ['Ctrl+d'], category: 'Scroll' },
@@ -48,7 +48,7 @@ export const SCREEN_COMMANDS: Record<ScreenId, ActionId[]> = {
     'nav.up',
     'action.createPane',
     'action.followUp',
-    'action.dismiss',
+    'action.close',
     'goto.dashboard',
     'goto.settings',
   ],

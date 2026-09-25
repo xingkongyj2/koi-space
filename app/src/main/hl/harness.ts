@@ -1,9 +1,11 @@
 /**
  * Harness directory bootstrap: seeds `<userData>/harness/` with the
- * agent-browser PATH shim, provider-neutral agent-skill CLI, and app-specific
- * AGENTS.md. Agents drive the assigned browser view through `agent-browser`,
- * an external native CLI resolved at run time (see `hl/agent-browser/`).
- * Skills are discovered/created through `agent-skill`.
+ * provider-neutral agent-skill CLI, domain skills, and the app-specific
+ * AGENTS.md.
+ *
+ * Browser control is not bootstrapped here: the Python agent owns agent-browser
+ * end to end (see `app/python/koi_agent/browser.py`) and the app only hands it a
+ * CDP port and target id.
  *
  * Stock content is bundled via Vite's `?raw` import modifier.
  *
@@ -31,12 +33,6 @@ const STOCK_DOMAIN_SKILLS = import.meta.glob('./stock/domain-skills/**/*', {
   import: 'default',
   eager: true,
 }) as Record<string, string>;
-const AGENT_BROWSER_SHIM_PREFIX = './stock/agent-browser-shim/';
-const STOCK_AGENT_BROWSER_SHIM = import.meta.glob('./stock/agent-browser-shim/**/*', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
 const AGENT_SKILL_PREFIX = './stock/agent-skill/';
 const STOCK_AGENT_SKILL = import.meta.glob('./stock/agent-skill/**/*', {
   query: '?raw',
@@ -51,7 +47,6 @@ export function harnessDir(): string {
 export function toolsPath(): string { return path.join(harnessDir(), 'TOOLS.json'); }
 export function skillPath(): string { return path.join(harnessDir(), 'AGENTS.md'); }
 export function domainSkillsDir(): string { return path.join(harnessDir(), 'domain-skills'); }
-export function agentBrowserShimDir(): string { return path.join(harnessDir(), 'agent-browser-shim'); }
 export function agentSkillDir(): string { return path.join(harnessDir(), 'agent-skill'); }
 export function userSkillsDir(): string { return path.join(harnessDir(), 'skills'); }
 
@@ -112,8 +107,7 @@ export function skillIdToPath(skillId: string, rootDir: string = harnessDir()): 
  * - Removes stale TOOLS.json from the legacy dispatcher path, and the legacy
  *   helpers.js / browser-harness-js / interaction-skills trees that agent-browser
  *   replaced.
- * - Fully replaces the agent-browser shim, agent-skill CLI, and domain skills
- *   from the bundle.
+ * - Fully replaces the agent-skill CLI and domain skills from the bundle.
  * Manual edits to an up-to-date AGENTS.md are preserved as an escape hatch.
  */
 export function bootstrapHarness(): void {
@@ -130,7 +124,7 @@ export function bootstrapHarness(): void {
   // existing users. AGENTS.md is the harness manual, not agent-editable
   // state — safe to overwrite so new sections (domain-skills, etc.) land
   // without the user deleting their userData.
-  const sentinel = 'agent-skill search';
+  const sentinel = 'koi_agent/browser.py';
   const needsSkill = !fs.existsSync(sp) || (() => {
     try { return !fs.readFileSync(sp, 'utf-8').includes(sentinel); }
     catch { return true; }
@@ -145,7 +139,6 @@ export function bootstrapHarness(): void {
 
   ensureUserSkillsDir();
   materializeAgentSkill();
-  materializeAgentBrowserShim();
   materializeDomainSkills();
 }
 
@@ -162,16 +155,6 @@ function materializeDomainSkills(): void {
     entries: Object.entries(STOCK_DOMAIN_SKILLS),
     logName: 'domainSkills',
     emptyHint: 'run `yarn sync-domain-skills` to populate stock/',
-  });
-}
-
-function materializeAgentBrowserShim(): void {
-  materializeRawTree({
-    target: agentBrowserShimDir(),
-    prefix: AGENT_BROWSER_SHIM_PREFIX,
-    entries: Object.entries(STOCK_AGENT_BROWSER_SHIM),
-    logName: 'agentBrowserShim',
-    executableBasenames: new Set(['agent-browser']),
   });
 }
 
@@ -207,10 +190,11 @@ function removeLegacyToolsJson(): void {
 }
 
 /**
- * Existing users have the browser-harness-js runtime materialized in userData
- * from every previous launch. Nothing rewrites those paths now, so without this
- * the stale CLI would stay on disk and — worse — stay reachable if an old
- * AGENTS.md or a user-created skill still names it.
+ * Existing users have two generations of browser runtime materialized in
+ * userData from previous launches: the vendored browser-harness-js tree, and the
+ * agent-browser PATH shim that briefly replaced it. Nothing rewrites those paths
+ * now, so without this the stale files would stay on disk and — worse — stay
+ * reachable if an old AGENTS.md or a user-created skill still names them.
  */
 function removeLegacyBrowserHarness(): void {
   const dir = harnessDir();
@@ -218,6 +202,8 @@ function removeLegacyBrowserHarness(): void {
     path.join(dir, 'helpers.js'),
     path.join(dir, 'browser-harness-js'),
     path.join(dir, 'interaction-skills'),
+    path.join(dir, 'agent-browser-shim'),
+    path.join(dir, 'agent-browser'),
   ];
   for (const target of stale) {
     if (!fs.existsSync(target)) continue;

@@ -22,9 +22,5 @@ export function get(id: string): EngineAdapter | undefined {
   return adapters.get(id);
 }
 
-export function list(): EngineAdapter[] {
-  return Array.from(adapters.values());
-}
-
 /** Preferred default when a session has no engine set. */
 export const DEFAULT_ENGINE_ID = 'python';

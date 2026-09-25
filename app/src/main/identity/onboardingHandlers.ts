@@ -1,18 +1,10 @@
 import { ipcMain, BrowserWindow, Notification, shell } from 'electron';
-import { spawn } from 'node:child_process';
 import { mainLogger } from '../logger';
 import { AccountStore } from './AccountStore';
 import { assertString } from '../ipc-validators';
 import { createPillWindow, togglePill, onPillVisibilityChange } from '../pill';
-import { saveApiKey as authSaveApiKey, setAuthMode as authSetMode } from './authStore';
-import { runCliCapture, spawnCli } from '../hl/engines/cliSpawn';
 import { normalizeAccelerator } from '../../shared/hotkeys';
 import { getGlobalCmdbarAccelerator, registerHotkeys, setGlobalCmdbarAccelerator } from '../hotkeys';
-
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VERSION = '2023-06-01';
-const API_TEST_MODEL = 'claude-haiku-4-5-20251001';
-const API_TEST_TIMEOUT_MS = 8000;
 
 export interface OnboardingHandlerDeps {
   accountStore: AccountStore;
@@ -45,179 +37,11 @@ export function registerOnboardingHandlers(deps: OnboardingHandlerDeps): void {
     mainLogger.debug('onboardingHandlers.setStep', { step: validatedStep });
   });
 
-  ipcMain.handle('onboarding:save-api-key', async (_event, key: string) => {
-    const validatedKey = assertString(key, 'key', 500);
-    mainLogger.info('onboardingHandlers.saveApiKey', {
-      keyLength: validatedKey.length,
-    });
-    try {
-      await authSaveApiKey(validatedKey);
-    } catch (err) {
-      mainLogger.error('onboardingHandlers.saveApiKey.failed', {
-        error: (err as Error).message,
-      });
-      throw new Error('Failed to save API key to the OS credential store', { cause: err });
-    }
-  });
-
-  /**
-   * Probe the Claude Code CLI: is it on PATH, and is it logged in?
-   * Returns { installed, authed, version? }.
-   */
-  ipcMain.handle('onboarding:detect-claude-code', async () => {
-    const probe = await probeClaudeCli();
-    mainLogger.info('onboardingHandlers.detectClaudeCode', { ...probe });
-    // Back-compat shape: `available` = installed AND logged in. Extra fields
-    // expose the richer state so the renderer can show a direct login prompt
-    // when installed but not authed.
-    return {
-      available: probe.installed && probe.authed,
-      installed: probe.installed,
-      authed: probe.authed,
-      version: probe.version ?? null,
-      subscriptionType: null,
-      hasInference: probe.authed,
-      error: probe.error ?? null,
-    };
-  });
-
-  /**
-   * Open the user's Terminal with the Claude subscription login pre-typed.
-   * Kept as a fallback when the background browser flow isn't sufficient.
-   */
   ipcMain.handle('onboarding:open-external', async (_event, url: string) => {
     const validated = assertString(url, 'url', 500);
     if (!/^https?:\/\//.test(validated)) throw new Error('onboarding:open-external only accepts http(s) URLs');
     await shell.openExternal(validated);
     return { opened: true };
-  });
-
-  /**
-   * Run Claude's subscription OAuth flow as a background subprocess. This
-   * skips the interactive auth-type chooser and lets the CLI open the browser
-   * directly without needing Terminal in the common case.
-   */
-  ipcMain.handle('onboarding:run-claude-login', async () => {
-    const child = spawnCli('claude', ['auth', 'login', '--claudeai']);
-    let stderrBuf = '';
-    let stdoutBuf = '';
-    child.stdout?.on('data', (d) => { stdoutBuf += String(d); if (stdoutBuf.length > 4096) stdoutBuf = stdoutBuf.slice(-4096); });
-    child.stderr?.on('data', (d) => { stderrBuf += String(d); if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-4096); });
-    mainLogger.info('onboardingHandlers.runClaudeLogin.spawn');
-
-    return new Promise<{ ok: boolean; error?: string; stdout?: string }>((resolve) => {
-      const timer = setTimeout(() => {
-        mainLogger.warn('onboardingHandlers.runClaudeLogin.timeout');
-        try { child.kill('SIGTERM'); } catch { /* already dead */ }
-      }, 5 * 60 * 1000);
-
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: err.message });
-      });
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        mainLogger.info('onboardingHandlers.runClaudeLogin.close', { code, stderr: stderrBuf.slice(-400) });
-        if (code === 0) resolve({ ok: true, stdout: stdoutBuf });
-        else resolve({ ok: false, error: stderrBuf.trim() || stdoutBuf.trim() || `claude auth login exit ${code}` });
-      });
-    });
-  });
-
-  ipcMain.handle('onboarding:open-claude-login-terminal', async () => {
-    const script = `tell application "Terminal"\nactivate\ndo script "claude auth login --claudeai"\nend tell`;
-    return new Promise<{ opened: boolean; error?: string }>((resolve) => {
-      if (process.platform !== 'darwin') {
-        // Non-macOS fallback: just open the docs URL.
-        shell.openExternal('https://code.claude.com/docs/en/authentication').catch(() => {});
-        resolve({ opened: false, error: 'macOS only — follow docs to run `claude auth login --claudeai`' });
-        return;
-      }
-      const osa = spawn('osascript', ['-e', script]);
-      let stderrBuf = '';
-      osa.stderr.on('data', (d) => (stderrBuf += String(d)));
-      osa.on('close', (code) => {
-        if (code === 0) {
-          mainLogger.info('onboardingHandlers.openClaudeLoginTerminal.ok');
-          resolve({ opened: true });
-        } else {
-          mainLogger.warn('onboardingHandlers.openClaudeLoginTerminal.failed', { code, stderr: stderrBuf });
-          resolve({ opened: false, error: stderrBuf.trim() || `osascript exit ${code}` });
-        }
-      });
-    });
-  });
-
-  /**
-   * DEPRECATED but kept for back-compat with older onboarding UI bundles:
-   * previously extracted a Claude CLI token and saved it for our own use.
-   * The new flow just confirms the user is logged into Claude CLI — our
-   * spawned `claude -p` subprocess reads the CLI's own credentials on each run.
-   */
-  ipcMain.handle('onboarding:use-claude-code', async () => {
-    const result = await probeClaudeCli();
-    if (!result.authed) throw new Error('Claude CLI is not logged in. Run `claude login` first.');
-    // Flip the auth mode so resolveAuth() skips any stored API key and lets the
-    // spawned `claude` subprocess use its own OAuth credentials. Stored key is
-    // preserved — saving a new API key later flips the mode back to 'apiKey'.
-    await authSetMode('claudeCode').catch((err) => {
-      mainLogger.warn('onboardingHandlers.useClaudeCode.setModeFailed', { error: (err as Error).message });
-    });
-    mainLogger.info('onboardingHandlers.useClaudeCode.ok', { cliVersion: result.version });
-    return { subscriptionType: null };
-  });
-
-  ipcMain.handle('onboarding:test-api-key', async (_event, key: string) => {
-    const validatedKey = assertString(key, 'key', 500);
-    mainLogger.info('onboardingHandlers.testApiKey', {
-      keyLength: validatedKey.length,
-    });
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_TEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(ANTHROPIC_API_URL, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': validatedKey,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify({
-          model: API_TEST_MODEL,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'hi' }],
-        }),
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        mainLogger.info('onboardingHandlers.testApiKey.ok');
-        return { success: true };
-      }
-
-      let errorMsg = `HTTP ${response.status}`;
-      try {
-        const body = (await response.json()) as { error?: { message?: string } };
-        if (body?.error?.message) errorMsg = body.error.message;
-      } catch {
-        // ignore parse error
-      }
-
-      mainLogger.warn('onboardingHandlers.testApiKey.failed', {
-        status: response.status,
-        error: errorMsg,
-      });
-      return { success: false, error: errorMsg };
-    } catch (err) {
-      clearTimeout(timeoutId);
-      const msg = (err as Error).message ?? 'Network error';
-      mainLogger.warn('onboardingHandlers.testApiKey.exception', { error: msg });
-      return { success: false, error: msg };
-    }
   });
 
   let pillCreated = false;
@@ -333,11 +157,8 @@ export function registerOnboardingHandlers(deps: OnboardingHandlerDeps): void {
 }
 
 export function unregisterOnboardingHandlers(): void {
-  ipcMain.removeHandler('onboarding:save-api-key');
-  ipcMain.removeHandler('onboarding:test-api-key');
-  ipcMain.removeHandler('onboarding:detect-claude-code');
-  ipcMain.removeHandler('onboarding:use-claude-code');
-  ipcMain.removeHandler('onboarding:open-claude-login-terminal');
+  ipcMain.removeHandler('onboarding:get-state');
+  ipcMain.removeHandler('onboarding:set-step');
   ipcMain.removeHandler('onboarding:open-external');
   ipcMain.removeHandler('onboarding:listen-shortcut');
   ipcMain.removeHandler('onboarding:set-shortcut');
@@ -345,40 +166,4 @@ export function unregisterOnboardingHandlers(): void {
   ipcMain.removeHandler('onboarding:request-notifications');
   ipcMain.removeHandler('onboarding:complete');
   mainLogger.info('onboardingHandlers.unregistered');
-}
-
-interface ClaudeCliProbe {
-  installed: boolean;
-  authed: boolean;
-  version?: string;
-  error?: string;
-}
-
-/**
- * Probe `claude` CLI: verify it's on PATH and check auth status.
- * Runs two subprocesses: `claude --version` and `claude auth status`.
- */
-async function probeClaudeCli(): Promise<ClaudeCliProbe> {
-  const version = await runCli('claude', ['--version']);
-  if (!version.ok) {
-    return { installed: false, authed: false, error: version.stderr || version.error || 'claude not found on PATH' };
-  }
-
-  const auth = await runCli('claude', ['auth', 'status']);
-  // `claude auth status` exits 0 when logged in, non-zero otherwise.
-  return {
-    installed: true,
-    authed: auth.ok,
-    version: extractVersion(version.stdout),
-    ...(auth.ok ? {} : { error: auth.stderr || auth.stdout || 'not logged in' }),
-  };
-}
-
-function extractVersion(stdout: string): string | undefined {
-  const m = stdout.match(/(\d+\.\d+\.\d+)/);
-  return m ? m[1] : undefined;
-}
-
-function runCli(bin: string, args: string[], timeoutMs = 5000): Promise<{ ok: boolean; stdout: string; stderr: string; error?: string }> {
-  return runCliCapture(bin, args, timeoutMs);
 }

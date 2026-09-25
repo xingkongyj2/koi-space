@@ -1,10 +1,10 @@
 /**
  * Verbose chat-v2 logger.
  *
- * Per CLAUDE.md: agents need clear log trails. Every part transition, tool
- * lifecycle event, and reasoning toggle goes through here with descriptive
- * context. Silent unless `localStorage.chatv2_debug === '1'` (or NODE_ENV
- * === 'test' so vitest output stays useful).
+ * Agents need clear log trails. Every part transition, tool lifecycle
+ * event, and reasoning toggle goes through here with descriptive context.
+ * Silent unless `localStorage.chatv2_debug === '1'` (or NODE_ENV === 'test'
+ * so vitest output stays useful).
  */
 
 import type { MessagePart, UIMessageV2 } from './parts';

@@ -12,9 +12,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { engineLogger } from '../../logger';
-import { resolveAuth, loadClaudeSubscriptionType, loadBrowserCodeConfig } from '../../identity/authStore';
 import { skillPath, skillMetaFromPath as resolveSkillMetaFromPath } from '../harness';
-import { bindAgentBrowser, watchTargetFingerprint } from '../agent-browser/bind';
 import { get as getAdapter } from './registry';
 import { spawnCli } from './cliSpawn';
 import { registerResourceOwner, unregisterResourceOwner } from '../../resourceMonitor';
@@ -89,7 +87,10 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     return;
   }
 
-  // 1. Resolve CDP target for the session's browser view.
+  // 1. Resolve the CDP target for the session's browser view. This and the port
+  //    are the only browser facts the app hands to the agent — everything about
+  //    driving the browser (agent-browser, tab binding, rebinding) lives in the
+  //    agent itself, see app/python/koi_agent/browser.py.
   let targetId: string;
   try {
     targetId = await resolveTargetIdForWebContents(opts.webContents);
@@ -100,21 +101,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     return;
   }
 
-  // 2. Point agent-browser at this session's view before the agent starts.
-  //    agent-browser has no notion of a CDP targetId, so this is where
-  //    targetId gets translated into one of its tab ids. Doing it here rather
-  //    than lazily inside the agent means a missing binary or an ambiguous tab
-  //    becomes a user-visible error instead of the agent quietly driving
-  //    whichever page agent-browser happened to pick.
-  const bindParams = { harnessDir: opts.harnessDir, sessionId: opts.sessionId, targetId, cdpPort: opts.cdpPort };
-  const bound = await bindAgentBrowser(bindParams, opts.webContents);
-  if (!bound.ok) {
-    engineLogger.error('agentBrowser.bind.failed', { engineId: opts.engineId, sessionId: opts.sessionId, error: bound.error });
-    opts.onEvent({ type: 'error', message: bound.error ?? 'Failed to bind agent-browser to this session\'s browser view.' });
-    return;
-  }
-
-  // 3. Prepare uploads/ + outputs/ dirs, write attachments to disk.
+  // 2. Prepare uploads/ + outputs/ dirs, write attachments to disk.
   const uploadsDir = path.join(opts.harnessDir, 'uploads', opts.sessionId);
   const outputsDir = path.join(opts.harnessDir, 'outputs', opts.sessionId);
   try {
@@ -141,106 +128,16 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     }
   }
 
-  // 4. Resolve auth. Per-engine keychain slots: Claude reads the Anthropic
-  //    key via resolveAuth(), BrowserCode reads its per-provider key store.
-  //    Each adapter gets the key appropriate to its provider so we can't
-  //    accidentally cross provider credentials.
-  let savedApiKey: string | undefined;
-  let providerId: string | undefined;
-  let model: string | undefined;
-  let cliAuthed = false;
-  try {
-    if (adapter.id === 'python') {
-      // The app's own backend. Any model access it grows is configured inside
-      // app/python, so there is no provider key to inject and no CLI OAuth to
-      // detect — sessions on this engine simply carry no provider auth.
-      cliAuthed = false;
-    } else if (adapter.id === 'browsercode') {
-      const cfg = await loadBrowserCodeConfig();
-      if (cfg?.apiKey) savedApiKey = cfg.apiKey;
-      if (cfg?.providerId) providerId = cfg.providerId;
-      if (cfg?.model) model = cfg.model;
-      // BrowserCode is configured exclusively through provider API keys in
-      // Settings. Do not classify a saved provider key as CLI-managed OAuth.
-      cliAuthed = false;
-    } else {
-      const auth = await resolveAuth();
-      if (auth?.type === 'apiKey') savedApiKey = auth.value;
-      cliAuthed = (await adapter.probeAuthed()).authed;
-    }
-  } catch (err) {
-    engineLogger.warn('engines.run.auth.resolveFailed', { error: (err as Error).message });
-  }
-  // Headline auth-path log — greppable: `session.auth.path`. Tells you
-  // which of the three cases this session falls into:
-  //   - 'apiKey'       → using saved API key (ANTHROPIC env var)
-  //   - 'subscription' → using the CLI's own OAuth (Claude Keychain)
-  //   - 'both'         → both are available; we chose `chosen` (apiKey wins
-  //                      because the adapter's buildEnv sets the env var when
-  //                      savedApiKey is present)
-  const authPath: 'apiKey' | 'subscription' | 'both' | 'none' =
-    savedApiKey && cliAuthed ? 'both'
-    : savedApiKey ? 'apiKey'
-    : cliAuthed ? 'subscription'
-    : 'none';
-  const chosen: 'apiKey' | 'subscription' | 'none' =
-    savedApiKey ? 'apiKey' : cliAuthed ? 'subscription' : 'none';
-  engineLogger.info('session.auth.path', {
-    sessionId: opts.sessionId,
-    engineId: adapter.id,
-    path: authPath,
-    chosen,
-    hasSavedKey: Boolean(savedApiKey),
-    cliAuthed,
-  });
-
-  // Resolve the (authMode, subscriptionType) snapshot for this session. Fires
-  // onAuthResolved so SessionManager can stamp the session row. This is the
-  // source of truth for per-session auth attribution — the global authStore
-  // mode can change later without rewriting history.
-  const resolvedAuthMode: 'apiKey' | 'subscription' | null = chosen === 'none' ? null : chosen;
-  let resolvedSubType: string | null = null;
-  if (resolvedAuthMode === 'subscription') {
-    try {
-      resolvedSubType = await loadClaudeSubscriptionType();
-    } catch (err) {
-      engineLogger.warn('engines.run.subType.loadFailed', { error: (err as Error).message });
-    }
-  }
-  engineLogger.info('session.auth.resolved', {
-    sessionId: opts.sessionId,
-    engineId: adapter.id,
-    authMode: resolvedAuthMode,
-    subscriptionType: resolvedSubType,
-  });
-  if (opts.onAuthResolved) {
-    try { opts.onAuthResolved({ authMode: resolvedAuthMode, subscriptionType: resolvedSubType }); }
-    catch (err) { engineLogger.warn('engines.run.onAuthResolved.threw', { error: (err as Error).message }); }
-  }
-  if (model && opts.onModelResolved) {
-    engineLogger.info('session.model.resolved', {
-      sessionId: opts.sessionId,
-      engineId: adapter.id,
-      model,
-      source: 'config',
-      providerId,
-    });
-    try { opts.onModelResolved({ model, source: 'config' }); }
-    catch (err) { engineLogger.warn('engines.run.onModelResolved.threw', { source: 'config', error: (err as Error).message }); }
-  }
-
-  // 5. Build spawn context + let adapter compose args/env/prompt.
+  // 3. Build the spawn context and let the adapter compose args/env/prompt.
+  //    The agent is the app's own backend and carries its own model
+  //    configuration, so there is no provider credential to inject here.
   const spawnCtx: SpawnContext = {
     prompt: opts.prompt,
     harnessDir: opts.harnessDir,
     sessionId: opts.sessionId,
     targetId,
     cdpPort: opts.cdpPort,
-    agentBrowserBinary: bound.binaryPath,
     resumeSessionId: opts.resumeSessionId,
-    savedApiKey,
-    providerId,
-    model,
     attachmentRefs,
   };
   const wrappedPrompt = adapter.wrapPrompt(spawnCtx);
@@ -255,16 +152,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     cdpPort: opts.cdpPort,
     hasResume: !!opts.resumeSessionId,
     attachmentCount: attachmentRefs.length,
-    providerId,
-    model,
-    authSource: savedApiKey ? 'savedApiKey' : 'cliManaged',
     args: args.map((a) => (a.length > 120 ? `${a.slice(0, 100)}…<${a.length}ch>` : a)),
-    envAuthFlags: {
-      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ? `set(${env.ANTHROPIC_API_KEY.length}ch)` : 'unset',
-      ANTHROPIC_AUTH_TOKEN: env.ANTHROPIC_AUTH_TOKEN ? 'set' : 'unset',
-      CLAUDE_CODE_USE_BEDROCK: env.CLAUDE_CODE_USE_BEDROCK ?? 'unset',
-      CLAUDE_CODE_USE_VERTEX: env.CLAUDE_CODE_USE_VERTEX ?? 'unset',
-    },
   });
 
   // If the adapter wants to feed the prompt via stdin (Windows-safe path —
@@ -280,7 +168,6 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   ];
 
   const useProcessGroup = process.platform !== 'win32';
-  let stopFingerprintWatch: (() => void) | null = null;
   let child: ChildProcessWithoutNullStreams;
   try {
     child = spawnCli(adapter.binaryName, args, {
@@ -296,9 +183,6 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
       engineId: adapter.id,
       label: `${adapter.id}:${opts.sessionId.slice(0, 8)}`,
     });
-    // Keeps shim-config.json's url/title fingerprint current so the shim can
-    // re-resolve the tab if agent-browser's daemon dies mid-run.
-    stopFingerprintWatch = watchTargetFingerprint(bindParams, opts.webContents);
   } catch (err) {
     opts.onEvent({ type: 'error', message: `spawn_failed: ${(err as Error).message}` });
     return;
@@ -395,7 +279,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   };
   opts.signal?.addEventListener('abort', onAbort);
 
-  // 6. Outputs watcher — emits one file_output event per completed file write.
+  // 5. Outputs watcher — emits one file_output event per completed file write.
   //    `fs.watch` fires repeatedly while a file is being written; if we emit
   //    on every change we get multiple events per file (one per intermediate
   //    size during the write). Debounce per filename and emit only after the
@@ -462,8 +346,6 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   const closeWatchers = (): void => {
     try { outputsWatcher?.close(); } catch { /* already closed */ }
     try { harnessWatcher?.close(); } catch { /* already closed */ }
-    stopFingerprintWatch?.();
-    stopFingerprintWatch = null;
     for (const timer of harnessCheckTimers.values()) clearTimeout(timer);
     harnessCheckTimers.clear();
     for (const timer of outputsTimers.values()) clearTimeout(timer);
@@ -537,7 +419,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
     engineLogger.warn('engines.run.harnessWatch.watchFailed', { harnessDir: opts.harnessDir, error: (err as Error).message });
   }
 
-  // 7. Generic post-processor over tool_call events: detect skill edits and
+  // 6. Generic post-processor over tool_call events: detect skill edits and
   //    reads. Harness edits are emitted by the file watcher above, using actual
   //    file content as the source of truth instead of provider-specific tool
   //    metadata.
@@ -638,10 +520,10 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   let buf = '';
   let stderrBuf = '';
   let stdoutBuf = ''; // tail of raw stdout for diagnostics on early exit
-  let lastResolvedModel = model;
-  // Engines (esp. Claude CLI) have been observed to exit non-zero even after
-  // emitting a successful `done`. Track whether we already saw one so the
-  // close handler doesn't overwrite the completed session with an error.
+  let lastResolvedModel: string | undefined;
+  // Engines have been observed to exit non-zero even after emitting a
+  // successful `done`. Track whether we already saw one so the close handler
+  // doesn't overwrite the completed session with an error.
   let doneEmitted = false;
   const emit = (ev: Parameters<typeof opts.onEvent>[0]): void => {
     if (ev.type === 'done' || ev.type === 'error') flushHarnessChanges();
@@ -676,11 +558,9 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
             sessionId: opts.sessionId,
             engineId: adapter.id,
             model: parseCtx.currentModel,
-            source: 'engine',
-            providerId,
           });
-          try { opts.onModelResolved({ model: parseCtx.currentModel, source: 'engine' }); }
-          catch (err) { engineLogger.warn('engines.run.onModelResolved.threw', { source: 'engine', error: (err as Error).message }); }
+          try { opts.onModelResolved({ model: parseCtx.currentModel }); }
+          catch (err) { engineLogger.warn('engines.run.onModelResolved.threw', { error: (err as Error).message }); }
         }
       } catch (err) {
         engineLogger.warn('engines.run.parse.failed', {

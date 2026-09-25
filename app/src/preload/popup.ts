@@ -49,53 +49,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       processCount: number;
       errors?: string[];
     }> => ipcRenderer.invoke('sessions:memory'),
-    listEngines: (): Promise<Array<{ id: string; displayName: string; binaryName: string }>> =>
-      ipcRenderer.invoke('sessions:list-engines'),
-    engineStatus: (engineId: string): Promise<{
-      id: string;
-      displayName: string;
-      installed: { installed: boolean; version?: string; error?: string };
-      authed: { authed: boolean; error?: string };
-    }> => ipcRenderer.invoke('sessions:engine-status', engineId),
-    engineLogin: (engineId: string): Promise<{ opened: boolean; error?: string }> =>
-      ipcRenderer.invoke('sessions:engine-login', engineId),
-    engineInstall: (engineId: string): Promise<{
-      opened: boolean;
-      completed?: boolean;
-      exitCode?: number | null;
-      signal?: string | null;
-      error?: string;
-      command?: string;
-      displayName?: string;
-      stdout?: string;
-      stderr?: string;
-      installed?: { installed: boolean; version?: string; error?: string };
-    }> => ipcRenderer.invoke('sessions:engine-install', engineId),
   },
   settings: {
-    open: (payload?: { focusBrowserCodeProvider?: string }): Promise<void> =>
-      ipcRenderer.invoke('settings:open', payload),
-    browserCode: {
-      getStatus: (): Promise<{
-        keys: Record<string, { masked: string; lastModel?: string }>;
-        active: string | null;
-        installed?: { installed: boolean; version?: string; error?: string };
-        providers: Array<{
-          id: string;
-          name: string;
-          defaultModel: string;
-          models: Array<{ id: string; label: string }>;
-        }>;
-      }> => ipcRenderer.invoke('settings:browsercode:get-status'),
-      save: (payload: { providerId: string; apiKey: string; lastModel?: string }): Promise<void> =>
-        ipcRenderer.invoke('settings:browsercode:save', payload),
-      test: (payload: { providerId: string; apiKey: string; model?: string }): Promise<{ success: boolean; error?: string }> =>
-        ipcRenderer.invoke('settings:browsercode:test', payload),
-      delete: (payload?: { providerId?: string }): Promise<void> =>
-        ipcRenderer.invoke('settings:browsercode:delete', payload),
-      setActive: (payload: { providerId: string }): Promise<void> =>
-        ipcRenderer.invoke('settings:browsercode:set-active', payload),
-    },
+    open: (): Promise<void> => ipcRenderer.invoke('settings:open'),
     theme: {
       get: (): Promise<{ mode: 'light' | 'dark' | 'system'; resolved: 'light' | 'dark' }> =>
         ipcRenderer.invoke('theme:get'),

@@ -322,13 +322,21 @@ export class BrowserPool {
     wc.on('destroyed', () => {
       browserLogger.info('BrowserPool.wc.destroyed', { sessionId, msSinceCreate: startupMs() });
       const entry = this.entries.get(sessionId);
-      if (entry) this.clearIdleFreezeTimer(entry);
-      this.entries.delete(sessionId);
-      this.notifyGone(sessionId);
+      // destroy() drops the map entry before the webContents actually dies, so
+      // a create() that lands in that window puts a NEWER view under this
+      // sessionId. Evicting unconditionally here would delete the replacement's
+      // entry and orphan a live renderer tab that no later destroy() can reach.
+      if (entry && entry.view.webContents === wc) {
+        this.clearIdleFreezeTimer(entry);
+        this.entries.delete(sessionId);
+        this.notifyGone(sessionId);
+      }
     });
     wc.on('render-process-gone', (_event, details) => {
       browserLogger.warn('BrowserPool.wc.renderProcessGone', { sessionId, reason: details.reason, msSinceCreate: startupMs() });
-      this.notifyGone(sessionId);
+      if (this.entries.get(sessionId)?.view.webContents === wc) {
+        this.notifyGone(sessionId);
+      }
     });
     wc.on('did-start-navigation', (_event, url, isInPlace, isMainFrame, frameProcessId, frameRoutingId) => {
       if (!isMainFrame) return;

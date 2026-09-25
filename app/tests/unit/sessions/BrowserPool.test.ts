@@ -478,6 +478,32 @@ describe('BrowserPool — destroy', () => {
     expect(pool.getWebContents('s1')).toBeNull();
   });
 
+  it('keeps a replacement view when the previous webContents reports destroyed late', () => {
+    const gone: string[] = [];
+    pool.setOnGone((id) => gone.push(id));
+
+    const first = pool.create('s1')!;
+    const staleWc = first.webContents as unknown as { emit: (event: string) => boolean };
+
+    pool.destroy('s1');
+    expect(gone).toEqual(['s1']);
+
+    // A rerun creates the next view before Chromium reports the old
+    // webContents as destroyed; that late event must not evict the new entry.
+    const second = pool.create('s1')!;
+    expect(second).not.toBe(first);
+
+    staleWc.emit('destroyed');
+
+    expect(pool.getView('s1')).toBe(second);
+    expect(pool.activeCount).toBe(1);
+    expect(gone).toEqual(['s1']);
+
+    (second.webContents as unknown as { emit: (event: string) => boolean }).emit('destroyed');
+    expect(pool.activeCount).toBe(0);
+    expect(gone).toEqual(['s1', 's1']);
+  });
+
   it('destroy is idempotent', () => {
     pool.create('s1');
     pool.destroy('s1');

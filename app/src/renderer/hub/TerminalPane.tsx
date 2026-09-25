@@ -30,12 +30,7 @@ const SPINNER_FRAMES = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
 const SPINNER_INTERVAL_MS = 80;
 const SPINNER_IDLE_MS = 250;
 const SPINNER_IDLE_CHECK_MS = 250;
-
-function spinnerColorAnsi(engine: string | null | undefined): string {
-  if (engine === 'python') return '\x1b[38;2;255;214;102m';
-  if (engine === 'claude-code') return '\x1b[38;2;204;120;92m';
-  return '\x1b[38;2;214;216;220m';
-}
+const SPINNER_COLOR_ANSI = '\x1b[38;2;255;214;102m';
 
 function readCssVar(name: string, fallback: string): string {
   try {
@@ -111,11 +106,11 @@ interface TerminalPaneProps {
   isActive?: boolean;
 }
 
-export function TerminalPane({ sessionId, engine, isActive }: TerminalPaneProps): React.ReactElement {
+export function TerminalPane({ sessionId, isActive }: TerminalPaneProps): React.ReactElement {
   const hostRef = useRef<HTMLDivElement>(null);
   // Mutable spinner state — refs (not React state) so the byte-stream callback
   // doesn't churn renders. The mount effect wires up the timers; the
-  // engine/isActive effect just updates these fields.
+  // isActive effect just updates these fields.
   const spin = useRef<{
     frame: number;
     timer: number | null;
@@ -123,7 +118,6 @@ export function TerminalPane({ sessionId, engine, isActive }: TerminalPaneProps)
     visible: boolean;
     cursorAtLineStart: boolean;
     lastByteAt: number;
-    engine: string | null | undefined;
     active: boolean;
     term: Terminal | null;
   }>({
@@ -133,7 +127,6 @@ export function TerminalPane({ sessionId, engine, isActive }: TerminalPaneProps)
     visible: false,
     cursorAtLineStart: true,
     lastByteAt: 0,
-    engine: null,
     active: false,
     term: null,
   });
@@ -245,10 +238,9 @@ export function TerminalPane({ sessionId, engine, isActive }: TerminalPaneProps)
 
     const paintSpinner = (): void => {
       const s = spin.current;
-      const color = spinnerColorAnsi(s.engine);
       const glyph = SPINNER_FRAMES[s.frame % SPINNER_FRAMES.length];
       try {
-        term.write(`\r\x1b[2K${color}${glyph} thinking…\x1b[0m`);
+        term.write(`\r\x1b[2K${SPINNER_COLOR_ANSI}${glyph} thinking…\x1b[0m`);
       } catch { /* term disposed */ }
       s.frame = (s.frame + 1) % SPINNER_FRAMES.length;
     };
@@ -357,12 +349,11 @@ export function TerminalPane({ sessionId, engine, isActive }: TerminalPaneProps)
     };
   }, [sessionId]);
 
-  // Sync engine + active gating into the mutable spinner state. When isActive
-  // flips false, also wipe any visible spinner immediately so we don't leave
-  // a stale row.
+  // Sync active gating into the mutable spinner state. When isActive flips
+  // false, also wipe any visible spinner immediately so we don't leave a
+  // stale row.
   useEffect(() => {
     const s = spin.current;
-    s.engine = engine ?? null;
     s.active = !!isActive;
     if (!s.active && s.visible) {
       if (s.timer != null) {
@@ -372,7 +363,7 @@ export function TerminalPane({ sessionId, engine, isActive }: TerminalPaneProps)
       try { s.term?.write('\r\x1b[2K'); } catch { /* term disposed */ }
       s.visible = false;
     }
-  }, [engine, isActive]);
+  }, [isActive]);
 
   return <div className="pane__terminal" ref={hostRef} />;
 }

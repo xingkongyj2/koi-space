@@ -42,47 +42,24 @@ export interface AppPopupMenuRequest extends AppPopupOpenBase {
   items: AppPopupMenuItem[];
 }
 
-export interface AppPopupEnginePickerRequest extends AppPopupOpenBase {
-  kind: 'engine-picker';
-  value: string;
-}
-
-export interface AppPopupBrowserCodeModelPickerRequest extends AppPopupOpenBase {
-  kind: 'browsercode-model-picker';
-}
-
 export interface AppPopupMemoryIndicatorRequest extends AppPopupOpenBase {
   kind: 'memory-indicator';
 }
 
 export type AppPopupOpenRequest =
   | AppPopupMenuRequest
-  | AppPopupEnginePickerRequest
-  | AppPopupBrowserCodeModelPickerRequest
   | AppPopupMemoryIndicatorRequest;
 
 export interface AppPopupOpenResult {
   id: string;
 }
 
-export type AppPopupAction =
-  | {
-      popupId: string;
-      kind: 'menu-select';
-      itemId: string;
-      close?: boolean;
-    }
-  | {
-      popupId: string;
-      kind: 'engine-select';
-      engineId: string;
-      close?: boolean;
-    }
-  | {
-      popupId: string;
-      kind: 'browsercode-model-changed';
-      close?: boolean;
-    };
+export interface AppPopupAction {
+  popupId: string;
+  kind: 'menu-select';
+  itemId: string;
+  close?: boolean;
+}
 
 export interface AppPopupClosed {
   popupId: string;

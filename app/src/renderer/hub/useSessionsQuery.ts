@@ -42,8 +42,13 @@ export function useSessionsQuery() {
       });
     });
 
+    const unsubRemoved = api.on.sessionRemoved?.((id) => {
+      qc.setQueryData<AgentSession[]>(SESSIONS_KEY, (prev = []) => prev.filter((s) => s.id !== id));
+    });
+
     return () => {
       unsubUpdate();
+      unsubRemoved?.();
     };
   }, [qc]);
 

@@ -209,7 +209,8 @@ describe('SessionManager persistence', () => {
     const manager = new SessionManager(dbPath);
     const id = manager.createSession('Open example.com');
 
-    manager.dismissSession(id);
+    manager.startSession(id);
+    manager.cancelSession(id);
     const abortController = manager.resumeSession(id, 'Continue from here');
     const session = manager.getSession(id);
     const row = mockState.stores.get(dbPath)?.rows.get(id);
@@ -225,11 +226,41 @@ describe('SessionManager persistence', () => {
     manager.destroy();
   });
 
+  it('removes a closed session from the live set and the database', () => {
+    const dbPath = tempDbPath();
+    const manager = new SessionManager(dbPath);
+    const id = manager.createSession('Open example.com');
+    const removed: string[] = [];
+    manager.onEvent('session-removed', (removedId) => { removed.push(removedId); });
+
+    manager.deleteSession(id);
+
+    expect(removed).toEqual([id]);
+    expect(manager.getSession(id)).toBeUndefined();
+    expect(manager.listSessions()).toEqual([]);
+    expect(mockState.stores.get(dbPath)?.rows.has(id)).toBe(false);
+
+    manager.destroy();
+  });
+
+  it('does not reload a closed session after restart', () => {
+    const dbPath = tempDbPath();
+    const first = new SessionManager(dbPath);
+    const id = first.createSession('Open example.com');
+    first.deleteSession(id);
+    first.destroy();
+
+    const second = new SessionManager(dbPath);
+    expect(second.getSession(id)).toBeUndefined();
+    second.destroy();
+  });
+
   it('reruns a session with the original kickoff from the event log', () => {
     const manager = new SessionManager(tempDbPath());
     const id = manager.createSession('Open example.com');
 
-    manager.dismissSession(id);
+    manager.startSession(id);
+    manager.cancelSession(id);
     manager.resumeSession(id, 'Continue from here');
     manager.setEngineSessionId(id, 'thread-123');
     const abortController = manager.rerunSession(id);

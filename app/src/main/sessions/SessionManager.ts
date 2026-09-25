@@ -34,9 +34,8 @@ export class SessionManager extends EventEmitter {
   private abortControllers: Map<string, AbortController> = new Map();
   private stuckTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   /**
-   * Per-session provider conversation id (Claude `session_id`, BrowserCode
-   * `sessionID`). Passed to the adapter on
-   * follow-up so the provider continues its own local transcript.
+   * Per-session agent conversation id. Passed back to the adapter on follow-up
+   * so the agent continues its own transcript instead of starting fresh.
    */
   private engineSessionIds: Map<string, string> = new Map();
   /**
@@ -91,12 +90,6 @@ export class SessionManager extends EventEmitter {
       }
       if (row.model) {
         session.model = row.model;
-      }
-      if (row.auth_mode === 'apiKey' || row.auth_mode === 'subscription') {
-        session.authMode = row.auth_mode;
-      }
-      if (row.subscription_type) {
-        session.subscriptionType = row.subscription_type;
       }
       if (typeof row.cost_usd === 'number') session.costUsd = row.cost_usd;
       if (typeof row.input_tokens === 'number') session.inputTokens = row.input_tokens;
@@ -484,7 +477,6 @@ export class SessionManager extends EventEmitter {
       outputLines: session.output.length,
       engine: session.engine ?? this.getSessionEngine(id),
       model: session.model ?? null,
-      authMode: session.authMode ?? null,
       costUsd: session.costUsd ?? null,
     });
     this.emitEvent('session-completed', { ...session });
@@ -520,18 +512,6 @@ export class SessionManager extends EventEmitter {
     return abortController;
   }
 
-  dismissSession(id: string): void {
-    const session = this.sessions.get(id);
-    if (!session) {
-      mainLogger.warn('SessionManager.dismissSession', { id, reason: 'not_found' });
-      return;
-    }
-    session.status = 'stopped';
-    this.db.updateSessionStatus(id, 'stopped');
-    mainLogger.info('SessionManager.dismissSession', { id });
-    this.emitEvent('session-updated', { ...session });
-  }
-
   deleteSession(id: string): void {
     const session = this.sessions.get(id);
     if (session && (session.status === 'running' || session.status === 'stuck' || session.status === 'paused')) {
@@ -543,6 +523,7 @@ export class SessionManager extends EventEmitter {
     this.termStates.delete(id);
     this.db.deleteSession(id);
     mainLogger.info('SessionManager.deleteSession', { id });
+    this.emitEvent('session-removed', id);
   }
 
   rerunSession(id: string, kickoffOverride?: string): AbortController {
@@ -691,18 +672,9 @@ export class SessionManager extends EventEmitter {
     mainLogger.info('SessionManager.setEngineSessionId', { id, engineSessionId });
   }
 
-  /** Retrieve a previously-captured provider conversation id, if any. */
+  /** Retrieve a previously-captured agent conversation id, if any. */
   getEngineSessionId(id: string): string | undefined {
     return this.engineSessionIds.get(id);
-  }
-
-  /** Back-compat wrappers for older call sites. */
-  setClaudeSessionId(id: string, claudeSessionId: string): void {
-    this.setEngineSessionId(id, claudeSessionId);
-  }
-
-  getClaudeSessionId(id: string): string | undefined {
-    return this.getEngineSessionId(id);
   }
 
   /** Record the engine id chosen for this session. Also stamps
@@ -737,23 +709,6 @@ export class SessionManager extends EventEmitter {
       engine: session.engine ?? this.getSessionEngine(id),
       model,
     });
-    this.emitEvent('session-updated', { ...session });
-  }
-
-  /** Snapshot the auth mode + subscription type that actually ran this session.
-   *  Called once at spawn by runEngine via the onAuthResolved callback. Frozen
-   *  for the life of the session — later global auth-mode changes do not
-   *  retroactively rewrite historical sessions. */
-  setSessionAuth(id: string, authMode: 'apiKey' | 'subscription' | null, subscriptionType: string | null): void {
-    const session = this.sessions.get(id);
-    if (!session) {
-      mainLogger.warn('SessionManager.setSessionAuth.notFound', { id });
-      return;
-    }
-    session.authMode = authMode ?? undefined;
-    session.subscriptionType = subscriptionType ?? undefined;
-    this.db.updateAuth(id, authMode, subscriptionType);
-    mainLogger.info('SessionManager.setSessionAuth', { id, authMode, subscriptionType });
     this.emitEvent('session-updated', { ...session });
   }
 

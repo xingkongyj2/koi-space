@@ -106,10 +106,9 @@ export function fromHlEvents(
 
       case 'thinking': {
         // NB: the legacy `thinking` HlEvent carries the assistant's streaming
-        // *output text* (claude-code `content_block_delta.text_delta`, codex
-        // `agent_message`, etc.) — not chain-of-thought. Map it to a `text`
-        // part so it renders as the answer, not a collapsible reasoning
-        // block. Real reasoning blocks would need a separate HlEvent type.
+        // *output text* — not chain-of-thought. Map it to a `text` part so it
+        // renders as the answer, not a collapsible reasoning block. Real
+        // reasoning blocks would need a separate HlEvent type.
         const msg = ensureAssistant(ts);
         const streamingIdx = findStreamingTextIdx(msg);
         if (streamingIdx >= 0) {

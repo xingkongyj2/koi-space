@@ -1,18 +1,17 @@
 /**
  * Hard benchmark for the streaming html-block extractor.
  *
- * Goal: regardless of *how* an engine chunks its text deltas, the
+ * Goal: regardless of *how* the agent chunks its text deltas, the
  * extractor must produce the same logical sequence of (text, html_block,
- * text, …) events. This file pins down the contract with both
- * synthetic stress tests and engine-flavored fixtures derived from how
- * claude-code and browsercode/opencode actually emit deltas.
+ * text, …) events. This file pins down the contract with both synthetic
+ * stress tests and fixtures derived from realistic streaming shapes.
  *
  * Conventions:
  *   - "stream(s, n)" = split `s` into n-character chunks (worst-case
  *      uniform chunking, including splitting mid-fence)
  *   - "stream1(s)"   = split into 1-character chunks (pathological)
- *   - "engineChunks" helpers mimic the realistic shape each engine
- *      emits — see the comments above each fixture for the rationale.
+ *   - the fixture helpers mimic realistic delta shapes — see the
+ *      comments above each fixture for the rationale.
  *
  * If a test fails, the bug is in `htmlBlocks.ts`, NOT the test. Update
  * the spec only if you can explain the new behavior in the comments
@@ -240,19 +239,18 @@ describe('htmlBlocks — non-html fences must not match', () => {
 });
 
 // =============================================================================
-// Section 6 — engine-flavored fixtures
+// Section 6 — streaming-shape fixtures
 //
-// These mimic how each adapter actually pushes thinking deltas. The
-// shapes come from the adapter source — see comments above each fixture.
+// These mimic realistic thinking-delta chunking shapes. See the comments
+// above each fixture for the rationale.
 // =============================================================================
 
-describe('htmlBlocks — engine fixtures', () => {
-  // claude-code (src/main/hl/engines/claude-code/adapter.ts:202)
-  // Emits one `thinking` HlEvent per Anthropic `text_delta`. Real deltas
-  // are usually 1-50 chars, sometimes a single token like "<" or
+describe('htmlBlocks — streaming-shape fixtures', () => {
+  // Some agents emit one `thinking` HlEvent per token-level delta. Real
+  // deltas are usually 1-50 chars, sometimes a single token like "<" or
   // "</div>".
-  describe('claude-code: many tiny deltas', () => {
-    const claudeChunks = [
+  describe('many tiny deltas', () => {
+    const tinyChunks = [
       'Here is the ', 'plan ', 'I propose:', '\n\n',
       '```', 'html', '\n',
       '<div ', 'class=', '"plan">\n',
@@ -269,14 +267,14 @@ describe('htmlBlocks — engine fixtures', () => {
       ['text', '\n\nLet me know if that looks right.'],
     ];
     it('produces the expected sequence', () => {
-      expect(summary(run(claudeChunks))).toEqual(expected);
+      expect(summary(run(tinyChunks))).toEqual(expected);
     });
   });
 
-  // Engines that report a whole agent message at once emit a single
-  // `thinking` per message — chunks tend to be whole paragraphs rather
-  // than tokens. Fences therefore arrive mostly-intact, but the opener
-  // and closer can sit at the very edge of a chunk.
+  // Agents that report a whole message at once emit a single `thinking`
+  // per message — chunks tend to be whole paragraphs rather than tokens.
+  // Fences therefore arrive mostly-intact, but the opener and closer can
+  // sit at the very edge of a chunk.
   describe('paragraph-sized chunks', () => {
     const paragraphChunks = [
       'I will lay out the steps as an HTML plan so you can read it at a glance.\n\n',
@@ -297,19 +295,17 @@ describe('htmlBlocks — engine fixtures', () => {
     });
   });
 
-  // browsercode / opencode (src/main/hl/engines/browsercode/adapter.ts:212)
-  // Chunks via `textFromPart` reading the `text` field of each part —
-  // usually one part = one logical sentence/line. Worst case: a single
+  // Agents that chunk per logical sentence/line. Worst case: a single
   // line that contains both the opener AND closer in the same chunk
   // (because the model emitted a short single-line HTML block).
-  describe('browsercode: single-chunk one-liner', () => {
-    const bcodeChunks = [
+  describe('single-chunk one-liner', () => {
+    const singleLineChunks = [
       'Quick comparison:\n',
       '```html\n<table><tr><th>A</th><th>B</th></tr><tr><td>fast</td><td>safe</td></tr></table>\n```\n',
       'Pick safe unless latency is critical.',
     ];
     it('extracts the table cleanly', () => {
-      const events = run(bcodeChunks);
+      const events = run(singleLineChunks);
       expect(events.map((e) => e.kind)).toEqual(['text', 'html_block', 'text']);
       const blk = events.find((e) => e.kind === 'html_block');
       if (blk?.kind !== 'html_block') throw new Error('expected html_block');

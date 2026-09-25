@@ -7,22 +7,23 @@
  * already in the shape `shared/session-schemas.ts` expects, so `parseLine` is a
  * validation pass rather than a dialect translation.
  *
- * Browser control is not this adapter's business. runEngine binds agent-browser
- * to the session's view before spawning and puts its shim first on PATH, so the
- * Python side runs plain `agent-browser <cmd>` and inherits the binding.
+ * The app's only browser responsibility is naming the view: it resolves the CDP
+ * targetId and passes it with the port in the envelope. agent-browser, tab
+ * binding, and rebinding all live in `app/python/koi_agent/browser.py`. The one
+ * thing this adapter must still do for that is hand the child an enriched PATH —
+ * a GUI-launched Electron process has no nvm/Homebrew directories on it, and
+ * that is where `npm install -g agent-browser` puts the binary.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { mainLogger } from '../../../logger';
-import { agentBrowserSessionName, applyAgentBrowserEnv } from '../../agent-browser/env';
 import { enrichedEnv } from '../pathEnrich';
 import { runCliCapture } from '../cliSpawn';
 import { register } from '../registry';
 import { HlEventSchema } from '../../../../shared/session-schemas';
 import type {
-  AuthProbe,
   EngineAdapter,
   InstallProbe,
   ParseContext,
@@ -113,30 +114,19 @@ const pythonAdapter: EngineAdapter = {
     return { installed: true, version: (r.stdout || r.stderr).trim().replace(/^Python\s*/i, '') };
   },
 
-  async probeAuthed(): Promise<AuthProbe> {
-    // The Python agent is the app's own backend. Whatever model access it grows
-    // into is configured inside app/python, not through a provider login here.
-    return { authed: true };
-  },
-
-  async openLoginInTerminal(): Promise<{ opened: boolean; error?: string }> {
-    return { opened: false, error: 'The Python agent needs no provider login.' };
-  },
-
   buildSpawnArgs(): string[] {
     // -u: the protocol is line-based NDJSON, so stdout must not be block-buffered.
     return ['-u', '-m', MODULE];
   },
 
   /** The whole task travels over stdin — argv would need shell quoting for
-   *  multi-line prompts and buys nothing here. */
+   *  multi-line prompts and buys nothing here. `browser` is the complete extent
+   *  of what the app tells the agent about the browser. */
   getStdinPayload(ctx: SpawnContext): string {
     return JSON.stringify({
       prompt: ctx.prompt,
       sessionId: ctx.sessionId,
-      targetId: ctx.targetId,
-      cdpPort: ctx.cdpPort,
-      agentBrowserSession: agentBrowserSessionName(ctx.sessionId, ctx.cdpPort),
+      browser: { cdpPort: ctx.cdpPort, targetId: ctx.targetId },
       outputsDir: path.join(ctx.harnessDir, 'outputs', ctx.sessionId),
       harnessDir: ctx.harnessDir,
       resumeSessionId: ctx.resumeSessionId ?? null,
@@ -148,7 +138,7 @@ const pythonAdapter: EngineAdapter = {
   },
 
   buildEnv(ctx: SpawnContext, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    const env = applyAgentBrowserEnv(ctx, enrichedEnv(baseEnv));
+    const env = enrichedEnv(baseEnv);
     const agentDir = resolveAgentDir();
     if (agentDir) {
       env.PYTHONPATH = env.PYTHONPATH ? `${agentDir}${path.delimiter}${env.PYTHONPATH}` : agentDir;

@@ -110,8 +110,6 @@ import type { HlEvent } from '../shared/session-schemas';
 import { AccountStore } from './identity/AccountStore';
 import { createOnboardingWindow } from './identity/onboardingWindow';
 import { registerOnboardingHandlers } from './identity/onboardingHandlers';
-import { loadBrowserCodeConfig } from './identity/authStore';
-import { registerApiKeyHandlers } from './settings/apiKeyIpc';
 import { registerConsentHandlers } from './consentIpc';
 import { registerTelemetryHandlers } from './telemetryIpc';
 import { registerThemeHandlers } from './themeIpc';
@@ -129,10 +127,10 @@ import {
   verifyCdpOwnership,
 } from './startup/cli';
 import { assertString, assertAttachments, type ValidatedAttachment } from './ipc-validators';
-// Agent loop: engine subprocess driving the browser via agent-browser. Engine is
-// pluggable (python, claude-code, …) — see src/main/hl/engines/.
+// Agent loop: the Python agent subprocess drives the browser via agent-browser.
+// The engine slot is pluggable — see src/main/hl/engines/.
 import { bootstrapHarness, harnessDir, skillIdToPath, skillMetaFromPath } from './hl/harness';
-import { runEngine, DEFAULT_ENGINE_ID } from './hl/engines';
+import { runEngine, getAdapter, DEFAULT_ENGINE_ID } from './hl/engines';
 import type { EngineRunControl } from './hl/engines/types';
 import { getEngine, setEngine, type EngineId } from './hl/engine';
 import { forwardAgentEvent } from './pill';
@@ -248,24 +246,11 @@ const accountStore = new AccountStore();
 const whatsAppAdapter = new WhatsAppAdapter();
 const channelRouter = new ChannelRouter(sessionManager, whatsAppAdapter);
 
-type SettingsOpenPayload = {
-  focusBrowserCodeProvider?: string;
-};
-
-function normalizeSettingsOpenPayload(payload: unknown): SettingsOpenPayload | undefined {
-  if (!payload || typeof payload !== 'object') return undefined;
-  const rawProvider = (payload as { focusBrowserCodeProvider?: unknown }).focusBrowserCodeProvider;
-  if (typeof rawProvider !== 'string') return undefined;
-  const providerId = rawProvider.trim();
-  if (!providerId || providerId.length > 80) return undefined;
-  return { focusBrowserCodeProvider: providerId };
-}
-
-function openSettingsInShell(payload?: SettingsOpenPayload): void {
+function openSettingsInShell(): void {
   if (!shellWindow || shellWindow.isDestroyed()) return;
   shellWindow.show();
   shellWindow.focus();
-  shellWindow.webContents.send('open-settings', payload);
+  shellWindow.webContents.send('open-settings');
 }
 
 function restorableResumeUrl(lastUrl: string | null | undefined): string {
@@ -368,7 +353,6 @@ function openShellAndWire(): BrowserWindow {
     mainLogger.warn('main.hotkey', { msg: 'Global hotkey registration failed — another app may own it' });
   }
 
-  registerApiKeyHandlers();
   captureEvent('app_launched');
 
   ipcMain.handle('hotkeys:get-global', () => getGlobalCmdbarAccelerator());
@@ -501,39 +485,6 @@ app.whenReady().then(async () => {
       target.webContents.send('whatsapp-qr', dataUrl);
     }
   });
-
-  async function stampConfiguredSessionModel(id: string, engineId: string, source: string): Promise<void> {
-    if (engineId !== 'browsercode') return;
-    try {
-      const cfg = await loadBrowserCodeConfig();
-      const model = cfg?.model?.trim();
-      if (!model) {
-        mainLogger.warn('main.sessionModel.missing', {
-          id,
-          engineId,
-          source,
-          providerId: cfg?.providerId ?? null,
-          hasBrowserCodeConfig: Boolean(cfg),
-        });
-        return;
-      }
-      sessionManager.setSessionModel(id, model);
-      mainLogger.info('main.sessionModel.stamped', {
-        id,
-        engineId,
-        source,
-        providerId: cfg?.providerId ?? null,
-        model,
-      });
-    } catch (err) {
-      mainLogger.warn('main.sessionModel.stampFailed', {
-        id,
-        engineId,
-        source,
-        error: (err as Error).message,
-      });
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // Pill IPC handlers
@@ -745,6 +696,12 @@ app.whenReady().then(async () => {
     }
     if (session.status !== 'stuck') notifiedStuck.delete(session.id);
   });
+  sessionManager.onEvent('session-removed', (id) => {
+    shellWindow?.webContents.send('session-removed', id);
+    sendToPill('session-removed', id);
+    notifiedStuck.delete(id);
+    notifiedStarted.delete(id);
+  });
   sessionManager.onEvent('session-completed', (session) => {
     shellWindow?.webContents.send('session-updated', session);
     sendToPill('session-updated', session);
@@ -801,13 +758,28 @@ app.whenReady().then(async () => {
     return sessionManager.getTermReplay(id);
   });
 
+  /**
+   * Historical rows can name an engine this build no longer ships (the fork
+   * dropped claude-code and browsercode). Run those on the default engine and
+   * stamp the correction onto the row instead of failing every run with
+   * unknown_engine.
+   */
+  function resolveSessionEngine(id: string): string {
+    const stored = sessionManager.getSessionEngine(id);
+    if (stored && getAdapter(stored)) return stored;
+    if (stored) {
+      mainLogger.warn('main.session.engine.fallback', { id, stored, fallback: DEFAULT_ENGINE_ID });
+      sessionManager.setSessionEngine(id, DEFAULT_ENGINE_ID);
+    }
+    return DEFAULT_ENGINE_ID;
+  }
+
   async function assertSessionEngineReady(id: string): Promise<string> {
-    const engineId = sessionManager.getSessionEngine(id) ?? DEFAULT_ENGINE_ID;
-    const { getAdapter } = await import('./hl/engines');
+    const engineId = resolveSessionEngine(id);
     const adapter = getAdapter(engineId);
     if (!adapter) throw new Error(`unknown engine: ${engineId}`);
 
-    const [installed, authed] = await Promise.all([adapter.probeInstalled(), adapter.probeAuthed()]);
+    const installed = await adapter.probeInstalled();
     mainLogger.info('main.session.engine.preflight', {
       id,
       engineId,
@@ -815,14 +787,9 @@ app.whenReady().then(async () => {
       installed: installed.installed,
       installedVersion: installed.version ?? null,
       installedError: installed.error ?? null,
-      authed: authed.authed,
-      authError: authed.error ?? null,
     });
     if (!installed.installed) {
-      throw new Error(`${adapter.displayName} is not installed. Install ${adapter.displayName} and try again.`);
-    }
-    if (!authed.authed) {
-      throw new Error(`You aren't authenticated into ${adapter.displayName}. Please re-authenticate to ${adapter.displayName} and try again.`);
+      throw new Error(installed.error ?? `${adapter.displayName} is not available. Check its runtime and try again.`);
     }
 
     return engineId;
@@ -1058,8 +1025,7 @@ app.whenReady().then(async () => {
       webContents = view.webContents;
     }
 
-    const engineId = sessionManager.getSessionEngine(validatedId) ?? DEFAULT_ENGINE_ID;
-    await stampConfiguredSessionModel(validatedId, engineId, source);
+    const engineId = resolveSessionEngine(validatedId);
     const abortController = sessionManager.resumeSession(validatedId, validatedPrompt, { attachmentTurnIndex });
     if (resumeAttachments.length > 0) {
       mainLogger.info('main.sessions:resume.attachments', { id: validatedId, count: resumeAttachments.length, source });
@@ -1084,7 +1050,6 @@ app.whenReady().then(async () => {
       onRunControl: bindRunControl(validatedId, runId),
       onSessionId: (sid) => sessionManager.setEngineSessionId(validatedId, sid),
       onModelResolved: ({ model }) => sessionManager.setSessionModel(validatedId, model),
-      onAuthResolved: ({ authMode, subscriptionType }) => sessionManager.setSessionAuth(validatedId, authMode, subscriptionType),
       onEvent: (event) => handleEngineEvent(validatedId, event, runId),
     }).catch((err: Error) => {
       handleEngineRunError(validatedId, err, `main.sessions:${source}.agentError`, runId);
@@ -1148,8 +1113,6 @@ app.whenReady().then(async () => {
     try {
       const engineId = await assertSessionEngineReady(id);
       mainLogger.info('main.startSessionWithAgent.timing', { id, step: 'enginePreflight', ms: Date.now() - t0, engineId });
-      await stampConfiguredSessionModel(id, engineId, 'start');
-
       const abortController = sessionManager.startSession(id);
       mainLogger.info('main.startSessionWithAgent.timing', { id, step: 'startSession', ms: Date.now() - t0 });
 
@@ -1193,7 +1156,6 @@ app.whenReady().then(async () => {
         onRunControl: bindRunControl(id, runId),
         onSessionId: (sid) => sessionManager.setEngineSessionId(id, sid),
         onModelResolved: ({ model }) => sessionManager.setSessionModel(id, model),
-        onAuthResolved: ({ authMode, subscriptionType }) => sessionManager.setSessionAuth(id, authMode, subscriptionType),
         onEvent: (event) => handleEngineEvent(id, event, runId),
       }).catch((err: Error) => {
         handleEngineRunError(id, err, 'main.startSessionWithAgent.agentError', runId);
@@ -1384,8 +1346,7 @@ app.whenReady().then(async () => {
     terminateActiveRunControl(validatedId);
     browserPool.destroy(validatedId, shellWindow ?? undefined);
 
-    const engineId = sessionManager.getSessionEngine(validatedId) ?? DEFAULT_ENGINE_ID;
-    await stampConfiguredSessionModel(validatedId, engineId, 'rerun');
+    const engineId = resolveSessionEngine(validatedId);
     const abortController = sessionManager.rerunSession(validatedId, kickoffOverride);
     const kickoffPrompt = sessionManager.getInitialPrompt(validatedId) ?? session.prompt;
     captureEvent('session_rerun', {
@@ -1431,7 +1392,6 @@ app.whenReady().then(async () => {
       onRunControl: bindRunControl(validatedId, runId),
       onSessionId: (sid) => sessionManager.setEngineSessionId(validatedId, sid),
       onModelResolved: ({ model }) => sessionManager.setSessionModel(validatedId, model),
-      onAuthResolved: ({ authMode, subscriptionType }) => sessionManager.setSessionAuth(validatedId, authMode, subscriptionType),
       onEvent: (event) => handleEngineEvent(validatedId, event, runId),
     }).catch((err: Error) => {
       handleEngineRunError(validatedId, err, 'main.sessions:rerun.agentError', runId);
@@ -1477,16 +1437,6 @@ app.whenReady().then(async () => {
     return queueFollowUpAfterNextTool(validatedId, validatedMsg, []);
   });
 
-  ipcMain.handle('sessions:dismiss', (_event, id: string) => {
-    const validatedId = assertString(id, 'id', 100);
-    mainLogger.info('main.sessions:dismiss', { id: validatedId });
-    queuedFollowUps.delete(validatedId);
-    drainingQueuedFollowUps.delete(validatedId);
-    terminateActiveRunControl(validatedId);
-    sessionManager.dismissSession(validatedId);
-    browserPool.destroy(validatedId, shellWindow ?? undefined);
-  });
-
   ipcMain.handle('sessions:delete', (_event, id: string) => {
     const validatedId = assertString(id, 'id', 100);
     mainLogger.info('main.sessions:delete', { id: validatedId });
@@ -1505,7 +1455,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('sessions:download-output', async (_event, filePath: string) => {
     const validated = assertString(filePath, 'filePath', 2000);
     // Accept either an absolute path or a harness-relative path like
-    // `outputs/<session>/<file>` (what Claude's narration uses).
+    // `outputs/<session>/<file>` (what the agent's narration uses).
     const resolvedPath = path.isAbsolute(validated)
       ? path.resolve(validated)
       : path.resolve(harnessDir(), validated);
@@ -1526,70 +1476,6 @@ app.whenReady().then(async () => {
   ipcMain.handle('sessions:list-editors', async () => {
     const { detectEditors } = await import('./editors');
     return detectEditors();
-  });
-
-  ipcMain.handle('sessions:list-engines', async () => {
-    const { listAdapters } = await import('./hl/engines');
-    return listAdapters().map((a) => ({ id: a.id, displayName: a.displayName, binaryName: a.binaryName }));
-  });
-
-  ipcMain.handle('sessions:engine-status', async (_event, engineId: string) => {
-    const validated = assertString(engineId, 'engineId', 50);
-    mainLogger.info('sessions.engine-status.request', { engineId: validated });
-    const { getAdapter } = await import('./hl/engines');
-    const adapter = getAdapter(validated);
-    if (!adapter) throw new Error(`unknown engine: ${validated}`);
-    const [installed, authed] = await Promise.all([adapter.probeInstalled(), adapter.probeAuthed()]);
-    mainLogger.info('sessions.engine-status.result', {
-      engineId: adapter.id,
-      installed: installed.installed,
-      installedError: installed.error,
-      authed: authed.authed,
-      authError: authed.error,
-    });
-    return { id: adapter.id, displayName: adapter.displayName, installed, authed };
-  });
-
-  ipcMain.handle('sessions:engine-login', async (_event, engineId: string, opts?: { deviceAuth?: boolean }) => {
-    const validated = assertString(engineId, 'engineId', 50);
-    mainLogger.info('sessions.engine-login.request', { engineId: validated, deviceAuth: !!opts?.deviceAuth });
-    const { getAdapter } = await import('./hl/engines');
-    const adapter = getAdapter(validated);
-    if (!adapter) throw new Error(`unknown engine: ${validated}`);
-    const result = await adapter.openLoginInTerminal(opts);
-    mainLogger.info('sessions.engine-login.result', {
-      engineId: adapter.id,
-      opened: result.opened,
-      hasError: !!result.error,
-      hasVerificationUrl: !!result.verificationUrl,
-      hasDeviceCode: !!result.deviceCode,
-    });
-    return result;
-  });
-
-  ipcMain.handle('sessions:engine-install', async (_event, engineId: string) => {
-    const validated = assertString(engineId, 'engineId', 50);
-    mainLogger.info('sessions.engine-install.request', { engineId: validated });
-    const { getAdapter } = await import('./hl/engines');
-    const adapter = getAdapter(validated);
-    if (!adapter) throw new Error(`unknown engine: ${validated}`);
-    const { runEngineInstall } = await import('./hl/engines/installer');
-    const result = await runEngineInstall(adapter.id);
-    const installed = await adapter.probeInstalled().catch((err) => ({
-      installed: false,
-      error: (err as Error).message,
-    }));
-    mainLogger.info('sessions.engine-install.result', {
-      engineId: adapter.id,
-      opened: result.opened,
-      completed: result.completed,
-      exitCode: result.exitCode,
-      hasError: !!result.error,
-      installed: installed.installed,
-      installedError: installed.error,
-      command: result.command,
-    });
-    return { ...result, installed };
   });
 
   // Read a skill file by domain/topic (e.g. "user/fun/page-word-count") OR by
@@ -1951,10 +1837,9 @@ app.whenReady().then(async () => {
   // ---------------------------------------------------------------------------
   // Settings page IPC
   // ---------------------------------------------------------------------------
-  ipcMain.handle('settings:open', (_e, rawPayload?: unknown) => {
-    const payload = normalizeSettingsOpenPayload(rawPayload);
-    mainLogger.info('main.settings:open', { focusBrowserCodeProvider: payload?.focusBrowserCodeProvider });
-    openSettingsInShell(payload);
+  ipcMain.handle('settings:open', () => {
+    mainLogger.info('main.settings:open');
+    openSettingsInShell();
   });
 
   ipcMain.handle('settings:app:get-info', () => {
@@ -1999,10 +1884,9 @@ app.whenReady().then(async () => {
     hidePill();
   });
 
-  ipcMain.handle('pill:open-settings', (_e, rawPayload?: unknown) => {
-    const payload = normalizeSettingsOpenPayload(rawPayload);
-    mainLogger.info('main.pill:open-settings', { focusBrowserCodeProvider: payload?.focusBrowserCodeProvider });
-    openSettingsInShell(payload);
+  ipcMain.handle('pill:open-settings', () => {
+    mainLogger.info('main.pill:open-settings');
+    openSettingsInShell();
     hidePill();
   });
 

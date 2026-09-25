@@ -63,14 +63,8 @@ function estimateMenuHeight(request: AppPopupOpenRequest): number {
 }
 
 function requestedSize(request: AppPopupOpenRequest): { width: number; height: number } {
-  const fallbackWidth = request.kind === 'engine-picker'
-    ? 266
-    : request.kind === 'browsercode-model-picker'
-      ? 292
-      : request.kind === 'memory-indicator'
-        ? 360
-        : DEFAULT_WIDTH;
-  const fallbackHeight = request.kind === 'engine-picker' || request.kind === 'browsercode-model-picker' || request.kind === 'memory-indicator'
+  const fallbackWidth = request.kind === 'memory-indicator' ? 360 : DEFAULT_WIDTH;
+  const fallbackHeight = request.kind === 'memory-indicator'
     ? MAX_DEFAULT_HEIGHT
     : estimateMenuHeight(request);
   return {

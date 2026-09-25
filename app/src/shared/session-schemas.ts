@@ -89,8 +89,7 @@ export const HlEventFileOutputSchema = z.object({
 });
 
 // Emitted by adapters at turn end. Carries cumulative-for-this-turn tokens
-// and the dollar cost. For Claude Code, costUsd is the CLI's own total_cost_usd
-// (authoritative).
+// and the dollar cost.
 export const HlEventTurnUsageSchema = z.object({
   type: z.literal('turn_usage'),
   inputTokens: z.number(),
@@ -98,8 +97,8 @@ export const HlEventTurnUsageSchema = z.object({
   cachedInputTokens: z.number(),
   costUsd: z.number(),
   model: z.string().optional(),
-  // 'exact' for Claude's CLI-reported number; 'estimated' when an engine
-  // multiplied token counts itself (only seen on historical rows now).
+  // 'exact' when the agent reports its own billed number; 'estimated' when
+  // it multiplied token counts itself.
   // Drives the `~` prefix on the UI.
   source: z.enum(['exact', 'estimated']),
 });
@@ -147,17 +146,12 @@ export const AgentSessionSchema = z.object({
   // predate this field). Distinct from the live auth mode in authStore because
   // users may flip between modes, but historical sessions should still reflect
   // the mode that actually ran them (for cost attribution).
-  // Cumulative usage totals, updated on each turn_usage event. For Claude Code
-  // these reflect the CLI's own figures.
+  // Cumulative usage totals, updated on each turn_usage event.
   costUsd: z.number().optional(),
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   cachedInputTokens: z.number().optional(),
   costSource: z.enum(['exact', 'estimated']).optional(),
-  authMode: z.enum(['apiKey', 'subscription']).optional(),
-  // Subscription tier label when authMode === 'subscription'. For Claude Code
-  // this is the OAuth credential's subscriptionType ("max" | "pro").
-  subscriptionType: z.string().optional(),
 });
 
 export type AgentSession = z.infer<typeof AgentSessionSchema>;

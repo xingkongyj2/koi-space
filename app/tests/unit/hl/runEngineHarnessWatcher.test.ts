@@ -14,12 +14,6 @@ const mockState = vi.hoisted(() => {
   };
 });
 
-const authMocks = vi.hoisted(() => ({
-  resolveAuth: vi.fn(async (): Promise<unknown> => null),
-  loadClaudeSubscriptionType: vi.fn(async (): Promise<string | null> => null),
-  loadBrowserCodeConfig: vi.fn(async (): Promise<unknown> => null),
-}));
-
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn((name: string) => {
@@ -27,16 +21,6 @@ vi.mock('electron', () => ({
       return mockState.userData;
     }),
   },
-}));
-
-vi.mock('../../../src/main/identity/authStore', () => authMocks);
-
-// runEngine binds agent-browser to the session's CDP target before spawning.
-// These tests have no real browser behind port 9222, and binding is orthogonal
-// to what they exercise, so stub it out as an already-successful bind.
-vi.mock('../../../src/main/hl/agent-browser/bind', () => ({
-  bindAgentBrowser: vi.fn(async () => ({ ok: true, binaryPath: '/usr/local/bin/agent-browser', tabId: 't1' })),
-  watchTargetFingerprint: vi.fn(() => () => undefined),
 }));
 
 const { register } = await import('../../../src/main/hl/engines/registry');
@@ -73,8 +57,6 @@ function registerFakeEngine(script: string, parseLine: (line: string, ctx: Parse
     displayName: 'Harness Watch Test',
     binaryName: process.execPath,
     async probeInstalled() { return { installed: true }; },
-    async probeAuthed() { return { authed: true }; },
-    async openLoginInTerminal() { return { opened: false }; },
     buildSpawnArgs() { return ['-e', script]; },
     buildEnv(_ctx: SpawnContext, baseEnv: NodeJS.ProcessEnv) { return baseEnv; },
     wrapPrompt(ctx: SpawnContext) { return ctx.prompt; },
@@ -117,9 +99,6 @@ describe('runEngine harness watcher', () => {
 
   beforeEach(() => {
     harnessDir = prepareHarness();
-    authMocks.resolveAuth.mockResolvedValue(null);
-    authMocks.loadClaudeSubscriptionType.mockResolvedValue(null);
-    authMocks.loadBrowserCodeConfig.mockResolvedValue(null);
   });
 
   afterAll(() => {
@@ -375,53 +354,5 @@ describe('runEngine harness watcher', () => {
     expect(runControl.resume()).toEqual({ resumed: true });
     await run;
     expect(events.some((event) => event.type === 'done')).toBe(true);
-  });
-
-  test('passes BrowserCode provider/model config through the generic spawn context', async () => {
-    authMocks.loadBrowserCodeConfig.mockResolvedValue({
-      providerId: 'alibaba',
-      model: 'alibaba/qwen3-coder-plus',
-      apiKey: 'test-browsercode-key',
-    });
-    const seenContexts: SpawnContext[] = [];
-    const adapter: EngineAdapter = {
-      id: 'browsercode',
-      displayName: 'BrowserCode Test',
-      binaryName: process.execPath,
-      async probeInstalled() { return { installed: true }; },
-      async probeAuthed() { return { authed: false }; },
-      async openLoginInTerminal() { return { opened: false }; },
-      buildSpawnArgs(ctx: SpawnContext) {
-        seenContexts.push(ctx);
-        return ['-e', "console.log(JSON.stringify({ type: 'done' }));"];
-      },
-      buildEnv(_ctx: SpawnContext, baseEnv: NodeJS.ProcessEnv) { return baseEnv; },
-      wrapPrompt(ctx: SpawnContext) { return ctx.prompt; },
-      parseLine(line) {
-        const event = JSON.parse(line) as { type?: string };
-        if (event.type === 'done') return { events: [{ type: 'done', summary: 'ok', iterations: 1 }] };
-        return { events: [] };
-      },
-    };
-    register(adapter);
-    const resolvedModels: Array<{ model: string; source: 'config' | 'engine' }> = [];
-
-    await runEngine({
-      engineId: 'browsercode',
-      prompt: 'test',
-      sessionId: 'test-session',
-      webContents: createWebContents() as unknown as WebContents,
-      cdpPort: 9222,
-      harnessDir,
-      onEvent: () => undefined,
-      onModelResolved: (info) => resolvedModels.push(info),
-    });
-
-    expect(seenContexts[0]).toMatchObject({
-      providerId: 'alibaba',
-      model: 'alibaba/qwen3-coder-plus',
-      savedApiKey: 'test-browsercode-key',
-    });
-    expect(resolvedModels).toEqual([{ model: 'alibaba/qwen3-coder-plus', source: 'config' }]);
   });
 });

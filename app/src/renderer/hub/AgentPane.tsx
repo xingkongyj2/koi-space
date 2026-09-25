@@ -3,10 +3,6 @@ import { STATUS_LABEL } from './constants';
 import { ContentRenderer, getPreview } from './ContentRenderer';
 import { Markdown, linkifyOutputPaths } from './Markdown';
 import { TerminalPane } from './TerminalPane';
-import claudeCodeLogo from './claude-code-logo.svg';
-import opencodeLogoDark from './opencode-logo-dark.svg';
-import opencodeLogoLight from './opencode-logo-light.svg';
-import { useThemedAsset } from '../design/useThemedAsset';
 import { closeAppPopup, openAnchoredAppPopup } from '../shared/appPopup';
 import type { AgentSession, OutputEntry } from './types';
 
@@ -19,25 +15,8 @@ function formatElapsed(createdAt: number): string {
   return `${hours}h`;
 }
 
-function isApiKeyError(raw: string): boolean {
-  const lower = raw.toLowerCase();
-  return (
-    lower.includes('invalid_api_key') ||
-    lower.includes('invalid api key') ||
-    lower.includes('no api key') ||
-    lower.includes('authentication_error') ||
-    lower.includes('x-api-key') ||
-    lower.includes('401')
-  );
-}
-
 function friendlyError(raw: string): string {
   const lower = raw.toLowerCase();
-  if (lower.includes('browsercode') || lower.includes('moonshot') || lower.includes('minimax') || lower.includes('qwen') || lower.includes('alibaba')) {
-    if (isApiKeyError(raw)) return 'BrowserCode provider API key is missing or invalid. Update it in Settings.';
-  }
-  if (lower.includes('credit balance is too low') || lower.includes('insufficient_quota')) return 'API credits exhausted. Please add credits to your Anthropic account.';
-  if (isApiKeyError(raw)) return 'Anthropic API key is missing or invalid. Update it in Settings.';
   if (lower.includes('rate_limit') || lower.includes('rate limit')) return 'Rate limited. Too many requests — try again in a moment.';
   if (lower.includes('overloaded') || lower.includes('529')) return 'API is overloaded. Try again shortly.';
   if (lower.includes('cancelled')) return 'Task was cancelled.';
@@ -692,19 +671,17 @@ interface AgentPaneProps {
   onResume?: (sessionId: string) => void;
   onPause?: (sessionId: string) => void;
   onFollowUp?: (sessionId: string, prompt: string, attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>) => void;
-  onDismiss?: (sessionId: string) => void;
+  onClose?: (sessionId: string) => void;
   onCancel?: (sessionId: string) => void;
   onSelect?: (sessionId: string) => void;
   onOpenFollowUp?: () => void;
-  onOpenSettings?: () => void;
   onOpenChat?: (sessionId: string) => void;
   shouldDetachBrowserOnUnmount?: () => boolean;
   followUpShortcut?: string;
   cycleShortcut?: string;
 }
 
-export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onDismiss, onCancel, onSelect, onOpenFollowUp, onOpenSettings, onOpenChat, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
-  const opencodeLogo = useThemedAsset(opencodeLogoDark, opencodeLogoLight);
+export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onClose, onCancel, onSelect, onOpenFollowUp, onOpenChat, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
   const paneRef = useRef<HTMLDivElement>(null);
   const pendingUnmountDetachRef = useRef<number | null>(null);
   const [browserDead, setBrowserDead] = useState(false);
@@ -1011,34 +988,7 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
         <span className={`pane__dot pane__dot--${session.status}`} />
         <div className="pane__title-group">
           <span className="pane__prompt">{session.prompt}</span>
-          {session.engine === 'browsercode' && (
-            <img className="pane__engine-icon" src={opencodeLogo} alt="BrowserCode" title="BrowserCode" />
-          )}
-          {session.engine === 'claude-code' && (
-            <img className="pane__engine-icon" src={claudeCodeLogo} alt="Claude Code" title="Claude Code" />
-          )}
-          {session.model && session.engine === 'browsercode' && (
-            <span className="pane__model-badge" title={`Model: ${session.model}`}>
-              {session.model.includes('/') ? session.model.split('/').pop() : session.model}
-            </span>
-          )}
-          {session.authMode && (
-            <span
-              className={`pane__auth-badge pane__auth-badge--${session.authMode}`}
-              title={
-                session.authMode === 'subscription'
-                  ? `Ran under ${session.subscriptionType ?? 'subscription'} OAuth`
-                  : 'Ran under saved API key'
-              }
-            >
-              {session.authMode === 'subscription' ? 'SUBSCRIPTION' : 'KEY'}
-            </span>
-          )}
-          {/* Cost chip is hidden under subscription auth (Claude Code / Codex
-              OAuth) — billing is covered by the subscription, so the
-              API-equivalent figure is noise. Only show for direct API-key
-              auth where the user is actually paying per-token. */}
-          {typeof session.costUsd === 'number' && session.costUsd > 0 && session.authMode !== 'subscription' && (
+          {typeof session.costUsd === 'number' && session.costUsd > 0 && (
             <span
               className="pane__cost"
               title={
@@ -1121,10 +1071,10 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
               <CloseIcon />
             </button>
           )}
-          {!isRunningLike && !isPaused && onDismiss && (
+          {!isRunningLike && !isPaused && onClose && (
             <button
               className="pane__action-btn pane__action-btn--icon pane__action-btn--danger"
-              onClick={(e) => { e.stopPropagation(); onDismiss(session.id); }}
+              onClick={(e) => { e.stopPropagation(); onClose(session.id); }}
               aria-label="Close"
               data-tip="Close"
             >
@@ -1162,7 +1112,7 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
             ? 'Task was cancelled.'
             : browserLine;
         const subLine = (showErrorUi || isCancellation) ? browserLine : null;
-        const showActions = !isStarting && (onRerun || canResume || (showErrorUi && isApiKeyError(session.error) && onOpenSettings));
+        const showActions = !isStarting && Boolean(onRerun || canResume);
         return (
           <div
             className="pane__browser-frame"
@@ -1201,11 +1151,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
                     >
                       <ResumeIcon />
                       <span>Resume</span>
-                    </button>
-                  )}
-                  {showErrorUi && isApiKeyError(session.error) && onOpenSettings && (
-                    <button className="pane__rerun-btn" onClick={onOpenSettings}>
-                      <span>Open Settings</span>
                     </button>
                   )}
                   {onRerun && (

@@ -223,9 +223,9 @@ export function enrichedEnv(baseEnv: NodeJS.ProcessEnv = process.env, opts: Omit
 
 /**
  * Windows CreateProcess can't execute `.cmd` / `.bat` shims directly — it only
- * runs true `.exe` files. npm-installed CLIs (like `claude`) ship as `.cmd`
- * shims with no `.exe`, so a plain `spawn('claude', …)` returns ENOENT (-4058)
- * even though the command works fine in any shell.
+ * runs true `.exe` files. Package managers such as npm and pipx install CLIs
+ * as `.cmd` shims with no `.exe`, so a plain `spawn('some-cli', …)` returns
+ * ENOENT (-4058) even though the command works fine in any shell.
  *
  * `resolveCliSpawn` finds the actual file the OS would run (PATHEXT order),
  * and if it's a `.cmd`/`.bat`, rewrites the call to go through `cmd.exe` with
@@ -245,7 +245,7 @@ function findOnWindowsPath(name: string, env: NodeJS.ProcessEnv): string | null 
   // a native binary wins over an npm shim with the same stem.
   const pathExt = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase()).filter(Boolean);
   // npm-installed global CLIs typically ship .cmd, .ps1, AND a sh wrapper
-  // (e.g. claude.cmd + claude.ps1). When both .cmd and .ps1 are present we
+  // (e.g. foo.cmd + foo.ps1). When both .cmd and .ps1 are present we
   // route through cmd.exe — it's already on COMSPEC, doesn't depend on
   // env.Path-based powershell.exe lookup (which has been observed to fail
   // with ENOENT inside Electron's main process), and avoids PowerShell's
@@ -311,7 +311,7 @@ export function resolveCliSpawn(
 
   if (ext === '.ps1') {
     // PowerShell scripts: route through powershell.exe so execution policy
-    // and profile loading don't block npm-installed CLIs like claude.ps1.
+    // and profile loading don't block package-manager-installed CLIs.
     // Use the absolute path under %SystemRoot% rather than relying on
     // env.Path / Path: Electron's main process has been observed to spawn
     // with `spawn powershell.exe ENOENT` even when the WindowsPowerShell
@@ -363,8 +363,8 @@ export interface CliLaunchSpec extends ResolvedCli {
  * mise, etc. become visible even when the app was opened outside a shell.
  *
  * Windows gets the same PATH enrichment, then adds shim resolution for npm's
- * `.cmd`/`.ps1` launchers so callers can keep passing plain names like
- * `claude` or `bcode` without knowing how the package manager installed them.
+ * `.cmd`/`.ps1` launchers so callers can keep passing a plain command name
+ * without knowing how the package manager installed it.
  */
 export function resolveCliLaunch(
   name: string,

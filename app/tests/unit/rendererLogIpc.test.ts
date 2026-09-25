@@ -34,10 +34,10 @@ beforeEach(() => {
 
 describe('handleRendererLog — happy paths', () => {
   it('forwards an error to rendererLogger.error with namespace + extra', () => {
-    const result = handleRendererLog('error', 'EnginePicker', 'engineInstall failed', { id: 'python', code: 7 });
+    const result = handleRendererLog('error', 'hub', 'task failed', { id: 'python', code: 7 });
     expect(result).toEqual({ ok: true });
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(errorSpy).toHaveBeenCalledWith('engineInstall failed', { ns: 'EnginePicker', id: 'python', code: 7 });
+    expect(errorSpy).toHaveBeenCalledWith('task failed', { ns: 'hub', id: 'python', code: 7 });
   });
 
   it('routes each level to the matching ChannelLogger method', () => {
