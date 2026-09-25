@@ -5,6 +5,7 @@ import { Markdown, linkifyOutputPaths } from './Markdown';
 import { TerminalPane } from './TerminalPane';
 import { closeAppPopup, openAnchoredAppPopup } from '../shared/appPopup';
 import type { AgentSession, OutputEntry } from './types';
+import { useBrowserCard } from './useBrowserCard';
 
 function formatElapsed(createdAt: number): string {
   const seconds = Math.floor((Date.now() - createdAt) / 1000);
@@ -682,6 +683,7 @@ interface AgentPaneProps {
 }
 
 export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onClose, onCancel, onSelect, onOpenFollowUp, onOpenChat, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
+  const card = useBrowserCard();
   const paneRef = useRef<HTMLDivElement>(null);
   const pendingUnmountDetachRef = useRef<number | null>(null);
   const [browserDead, setBrowserDead] = useState(false);
@@ -697,6 +699,7 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
     const el = paneRef.current?.querySelector('.pane__output') as HTMLElement | null;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
+    if (rect.width <= 2 || rect.height <= 2) return null;
     const fullWidth = Math.round(rect.width);
     const slotWidth = fullWidth;
     const border = 1;
@@ -789,6 +792,9 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
     // false, we skip the takeover overlay — the session is broken/deleted.
     let attachSucceeded = false;
     let rafScheduled = 0;
+    let delayedLayoutFrame = 0;
+    let delayedLayoutUpdate = 0;
+    let disposed = false;
     const applyBounds = () => {
       rafScheduled = 0;
       const outEl = paneEl.querySelector('.pane__output') as HTMLElement | null;
@@ -867,12 +873,17 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
     };
     // Coalesce rapid ResizeObserver / layout callbacks into one IPC per frame.
     const updateBounds = () => {
+      if (disposed) return;
       if (rafScheduled) return;
       rafScheduled = requestAnimationFrame(applyBounds);
     };
 
     const observer = new ResizeObserver(updateBounds);
     observer.observe(paneEl, { box: 'border-box' });
+    const outputEl = paneEl.querySelector('.pane__output');
+    if (outputEl) observer.observe(outputEl);
+    window.addEventListener('pane:geometry-change', updateBounds);
+    window.addEventListener('resize', updateBounds);
 
     // ResizeObserver misses position-only changes (e.g. sibling pane dismissed
     // causes a grid reflow without this pane resizing). HubApp dispatches
@@ -887,15 +898,28 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
       hasAttached = false;
       lastKey = '';
       updateBounds();
-      requestAnimationFrame(updateBounds);
-      setTimeout(updateBounds, 120);
+      if (delayedLayoutFrame) cancelAnimationFrame(delayedLayoutFrame);
+      delayedLayoutFrame = requestAnimationFrame(() => {
+        delayedLayoutFrame = 0;
+        updateBounds();
+      });
+      if (delayedLayoutUpdate) window.clearTimeout(delayedLayoutUpdate);
+      delayedLayoutUpdate = window.setTimeout(() => {
+        delayedLayoutUpdate = 0;
+        updateBounds();
+      }, 120);
     };
     window.addEventListener('pane:layout-change', onLayoutChange);
 
     return () => {
+      disposed = true;
       observer.disconnect();
+      window.removeEventListener('pane:geometry-change', updateBounds);
+      window.removeEventListener('resize', updateBounds);
       window.removeEventListener('pane:layout-change', onLayoutChange);
       if (rafScheduled) cancelAnimationFrame(rafScheduled);
+      if (delayedLayoutFrame) cancelAnimationFrame(delayedLayoutFrame);
+      if (delayedLayoutUpdate) window.clearTimeout(delayedLayoutUpdate);
     };
   }, [session.id, computeBounds, browserDead, session.hasBrowser, session.status, session.primarySite]);
 
@@ -976,15 +1000,26 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
   }, [focused, isPaused, isRunningLike, onCancel, onPause, session.id]);
 
   return (
+    <div ref={card.stageRef} className="browser-card-stage">
     <div
       ref={paneRef}
-      className={`pane pane--${session.status}${focused ? ' pane--focused' : ''}`}
+      className={`pane browser-card pane--${session.status}${focused ? ' pane--focused' : ''}${card.expanded ? ' browser-card--expanded' : ''}${card.interacting ? ' browser-card--interacting' : ''}`}
+      style={card.style}
       onClick={() => onSelect?.(session.id)}
       onMouseDown={(e) => {
         if ((e.target as HTMLElement).closest('button')) e.preventDefault();
       }}
     >
-      <div className="pane__header">
+      <div className="pane__header"
+        onPointerDown={(event) => card.start(event)}
+        onPointerMove={card.move}
+        onPointerUp={card.end}
+        onPointerCancel={card.end}
+        onLostPointerCapture={card.end}
+        onDoubleClick={(event) => {
+          if (!(event.target as HTMLElement).closest('button')) card.toggleExpanded();
+        }}
+      >
         <span className={`pane__dot pane__dot--${session.status}`} />
         <div className="pane__title-group">
           <span className="pane__prompt">{session.prompt}</span>
@@ -1003,6 +1038,18 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
           )}
         </div>
         <div className="pane__actions">
+          <button type="button" className="pane__action-btn pane__action-btn--icon"
+            aria-label="Center browser card" title="Center browser card"
+            onClick={(event) => { event.stopPropagation(); card.center(); }}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="4" stroke="currentColor"/><path d="M8 1v4m0 6v4M1 8h4m6 0h4" stroke="currentColor"/></svg>
+          </button>
+          <button type="button" className="pane__action-btn pane__action-btn--icon"
+            aria-label={card.expanded ? 'Restore browser card' : 'Expand browser'}
+            title={card.expanded ? 'Restore browser card' : 'Expand browser to fill workspace'}
+            aria-pressed={card.expanded}
+            onClick={(event) => { event.stopPropagation(); card.toggleExpanded(); }}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d={card.expanded ? 'M1 5h4V1m6 0v4h4M1 11h4v4m6 0v-4h4' : 'M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4'} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </button>
           {browserDead && (
             <span className="pane__action-btn pane__action-btn--disabled">
               <BrowserIcon />
@@ -1171,7 +1218,21 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
       <div
         className="pane__output"
       />
-
+      {!card.expanded && <button type="button" className="browser-card__resize"
+        aria-label="Resize browser card" title="Drag to resize browser card"
+        onPointerDown={(event) => card.start(event, true)}
+        onPointerMove={card.move} onPointerUp={card.end}
+        onPointerCancel={card.end} onLostPointerCapture={card.end}
+        onKeyDown={(event) => {
+          const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+          if (!direction) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const step = event.shiftKey ? 80 : 20;
+          card.resizeBy(direction[0] * step, direction[1] * step);
+        }}
+      ><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 10l7-7m-3 7l3-3" stroke="currentColor" strokeWidth="1.2"/></svg></button>}
+    </div>
     </div>
   );
 }

@@ -173,6 +173,9 @@ export class BrowserPool {
     // Without this, attach/detach during view swaps briefly paints black
     // (Chromium's default before the page commits its first frame).
     view.setBackgroundColor(getWindowBackgroundColor());
+    // Native child views paint above the renderer; CSS overflow cannot clip
+    // them. Match the browser card's 12px inner well (minus its 1px border).
+    view.setBorderRadius(11);
     browserLogger.info('BrowserPool.startup.constructed', {
       sessionId,
       component: 'BrowserPool',

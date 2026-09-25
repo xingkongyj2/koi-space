@@ -473,7 +473,10 @@ export function HubApp(): React.ReactElement {
     <div className="hub-root canvas-dots">
       <Navbar
         isDashboard={viewMode === 'dashboard'}
+        isBrowser={viewMode === 'grid'}
         onGoDashboard={() => setViewMode('dashboard')}
+        onGoBrowser={() => setViewMode('grid')}
+        onOpenHelp={() => openSettingsPage({ sectionId: 'settings-shortcuts' })}
         onOpenSettings={() => openSettingsPage()}
         settingsShortcut={shortcutFor('goto.settings')}
         zoomFactor={zoomFactor}

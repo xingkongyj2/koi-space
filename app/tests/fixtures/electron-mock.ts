@@ -330,6 +330,8 @@ export const WebContentsView = class {
   getBackgroundColor(): string {
     return this._bg;
   }
+
+  setBorderRadius(_radius: number): void {}
 };
 
 export const contentViewStub = {

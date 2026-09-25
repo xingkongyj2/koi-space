@@ -77,6 +77,7 @@ function createOverlayEntry(sessionId: string, mode: OverlayMode, subtitle: stri
   // browser view beneath. WebContentsView has no `transparent` webPreference
   // (that's a BrowserWindow option) — use setBackgroundColor with zero alpha.
   view.setBackgroundColor('#00000000');
+  view.setBorderRadius(11);
   const entry: OverlayEntry = { sessionId, view, attached: false, mode, subtitle, loaded: false };
   // Not `once`: a Vite dep-optimisation reload (or a renderer crash) reloads
   // this document after the entry was cached, and the new page starts in idle.
