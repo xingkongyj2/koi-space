@@ -53,6 +53,12 @@ class Orchestrator:
         while self.budget.allow():
             self.budget.consume_step()
             observation = self.observer.capture()
+            # The first observation may already satisfy a navigation step.
+            # Verify before asking Jev or a text model for another action.
+            if self.validator.step(observation, step.success_criteria, step.start_url):
+                completed.append(step.id)
+                protocol.log(f"flow=verify step={step.id} status=passed source=pre_decision")
+                return None
             skill = self.skills.match(step.goal, observation.url) if self.skills else None
             if skill:
                 protocol.log(f"flow=decision step={step.id} route=skill")

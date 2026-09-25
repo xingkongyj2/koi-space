@@ -302,6 +302,21 @@ describe('BrowserPool — attach/detach', () => {
 
     expect(pool.getStats().sessions[0].attached).toBe(false);
   });
+
+  it('keeps visible previews live through idle transitions and throttles again on release', async () => {
+    const view = pool.create('s1');
+    const { setFrameRate } = instrumentLifecycle(view!);
+    pool.markSessionIdle('s1');
+    expect(setFrameRate).toHaveBeenLastCalledWith(1);
+    await pool.parkForPreview('s1', win);
+    expect(setFrameRate).toHaveBeenLastCalledWith(60);
+    await pool.markSessionActive('s1');
+    expect(setFrameRate).toHaveBeenLastCalledWith(60);
+    pool.markSessionIdle('s1');
+    expect(setFrameRate).toHaveBeenLastCalledWith(60);
+    pool.releasePreviewParking('s1', null);
+    expect(setFrameRate).toHaveBeenLastCalledWith(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

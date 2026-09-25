@@ -22,17 +22,28 @@ class Validator:
             return False
         for criterion in criteria:
             criterion = criterion.strip()
-            if not criterion or criterion.startswith("页面"):
-                continue
+            if not criterion:
+                return False
             lower = criterion.lower()
-            if lower.startswith("url contains:"):
-                expected = criterion[13:].strip().lower()
+            if lower.startswith("url_prefix:"):
+                expected = criterion.split(":", 1)[1].strip().rstrip("/").lower()
+                if not observation.url.lower().startswith(expected):
+                    return False
+            elif lower.startswith(("url_contains:", "url contains:")):
+                expected = criterion.split(":", 1)[1].strip().lower()
                 if expected not in observation.url.lower():
                     return False
+            elif lower.startswith("text_contains:"):
+                expected = criterion.split(":", 1)[1].strip().lower()
+                if expected not in observation.snapshot.lower():
+                    return False
             elif lower.startswith("count >="):
-                expected = int(criterion.split(">=", 1)[1].strip())
+                try:
+                    expected = int(criterion.split(">=", 1)[1].strip())
+                except ValueError:
+                    return False
                 if len(observation.elements) < expected:
                     return False
-            elif lower not in text and not re.search(criterion, text, re.I):
+            elif lower not in text:
                 return False
         return True

@@ -31,8 +31,14 @@ class Settings:
 
 def _load_dotenv() -> None:
     """Load .env once, without overwriting variables supplied by the process."""
-    env_file = Path(os.getenv("KOI_ENV_FILE", ".env")).expanduser()
-    if not env_file.exists():
+    configured = os.getenv("KOI_ENV_FILE")
+    candidates = [Path(configured).expanduser()] if configured else [
+        Path(".env"),
+        Path(__file__).resolve().parents[1] / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    ]
+    env_file = next((path for path in candidates if path.exists()), None)
+    if env_file is None:
         return
     for raw in env_file.read_text(encoding="utf8").splitlines():
         raw = raw.strip()

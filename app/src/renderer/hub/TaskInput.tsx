@@ -31,6 +31,7 @@ export interface TaskInputSubmission {
 
 interface TaskInputProps {
   onSubmit: (input: TaskInputSubmission) => void;
+  placeholder?: string;
   /** Optional content rendered inside the input box, above the textarea
    *  and below the chips row. Used by the chat composer to host the quoted-
    *  text preview so it visually extends the box rather than floating
@@ -65,7 +66,7 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function TaskInput({ onSubmit, topSlot }, ref) {
+export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function TaskInput({ onSubmit, topSlot, placeholder = INPUT_PLACEHOLDER }, ref) {
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
   const [attachments, setAttachments] = useState<TaskInputAttachment[]>([]);
@@ -250,17 +251,17 @@ export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function Ta
           onKeyDown={onKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder={INPUT_PLACEHOLDER}
+          placeholder={placeholder}
           rows={1}
-          aria-label="New agent task"
+          aria-label="任务输入"
         />
         <div className="task-input__actions" onClick={focusTextareaOnBoxClick}>
           <button
             type="button"
             className="task-input__attach has-tooltip"
             onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach files"
-            data-tooltip="Attach files"
+            aria-label="添加附件"
+            data-tooltip="添加附件"
           >
             <PaperclipIcon />
           </button>
@@ -278,8 +279,8 @@ export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function Ta
             className="task-input__send"
             onClick={submit}
             disabled={!canSubmit}
-            aria-label="Start agent"
-            title="Start agent (Enter)"
+            aria-label="发送"
+            title="发送（回车）"
           >
             <ArrowUpIcon />
           </button>

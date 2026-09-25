@@ -39,9 +39,11 @@ class Observer:
     def _elements(snapshot: str):
         """Convert agent-browser refs into a compact decision table."""
         for line in snapshot.splitlines():
-            match = re.search(r"(@[\w-]+)\s+(.+)", line)
+            match = re.search(r"\[ref=([\w-]+)\]|(@[\w-]+)", line)
             if match:
-                yield {"ref": match.group(1), "text": match.group(2).strip()[:240]}
+                ref = match.group(1) or match.group(2).lstrip("@")
+                label = line.replace(match.group(0), "").strip(" -")
+                yield {"ref": f"@{ref}", "text": label[:240]}
 
     @staticmethod
     def diff(old: str, new: str) -> str:

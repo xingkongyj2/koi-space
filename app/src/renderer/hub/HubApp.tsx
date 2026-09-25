@@ -1,14 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentPane } from './AgentPane';
-import { Dashboard } from './Dashboard';
+import { Space } from './Space';
+import { NewSessionPage } from './NewSessionPage';
 import { KeybindingsOverlay } from './KeybindingsOverlay';
 import { SettingsPane } from './SettingsPane';
 import { useVimKeys } from './useVimKeys';
 import { useSessionsQuery, useUpdateSession } from './useSessionsQuery';
 import { Navbar } from './Navbar';
-import { Sidebar } from './Sidebar';
-import { MOCK_SESSIONS } from './mock-data';
-import type { AgentSession, HlEvent } from './types';
 import type { ActionId } from './keybindings';
 import type { SettingsOpenIntent, SettingsSectionId } from './SettingsPane';
 import { orderSessionsForSidebar } from './sessionOrdering';
@@ -16,20 +14,15 @@ import { ChatPane } from './chat/ChatPane';
 import { useUIStore } from './state/uiStore';
 import { useSessionsBridge } from './state/useSessionsBridge';
 
-type ViewMode = 'dashboard' | 'grid' | 'chat' | 'settings';
+type ViewMode = 'dashboard' | 'space' | 'grid' | 'chat' | 'settings';
 type SettingsOpenPayload = {
   sectionId?: SettingsSectionId;
 };
 
-let sessionCounter = MOCK_SESSIONS.length + 1;
-
 export function HubApp(): React.ReactElement {
-  const isMock = import.meta.env.VITE_MOCK_MODE === '1';
-  const [mockSessions, setMockSessions] = useState<AgentSession[]>(isMock ? MOCK_SESSIONS : []);
   const sessionsQuery = useSessionsQuery();
   const updateSession = useUpdateSession();
-  const sessions = isMock ? mockSessions : (sessionsQuery.data ?? []);
-  const setSessions = isMock ? setMockSessions : () => {};
+  const sessions = sessionsQuery.data ?? [];
 
   // Mirror sessions into Zustand for the chat view + future fine-grained
   // subscribers. Uses the same per-event `session-output` IPC stream that the
@@ -59,9 +52,10 @@ export function HubApp(): React.ReactElement {
 
   const [viewMode, setViewModeRaw] = useState<ViewMode>(() => {
     const saved = typeof window !== 'undefined' ? window.localStorage.getItem('hub-view-mode') : null;
-    if (saved === 'dashboard' || saved === 'grid') return saved;
+    if (saved === 'dashboard' || saved === 'space' || saved === 'grid') return saved;
     return 'dashboard';
   });
+  const [focusNewSession, setFocusNewSession] = useState(0);
   const setViewMode = useCallback((mode: ViewMode) => {
     const shouldShowBrowserViews = mode === 'grid';
     keepBrowserParkedForChatRef.current = mode === 'chat';
@@ -74,28 +68,21 @@ export function HubApp(): React.ReactElement {
     if (shouldShowBrowserViews) {
       window.electronAPI?.sessions?.viewsSetVisible?.(true)?.catch(() => {});
     }
-    if (mode === 'dashboard' || mode === 'grid') {
+    if (mode === 'dashboard' || mode === 'space' || mode === 'grid') {
       try { window.localStorage.setItem('hub-view-mode', mode); } catch { /* ignore */ }
     }
   }, []);
   const shouldDetachBrowserOnPaneUnmount = useCallback(() => !keepBrowserParkedForChatRef.current, []);
-  const enterChat = useCallback((id: string) => {
-    console.log('[HubApp] enterChat', { id });
-    setChatSession(id);
-    setViewMode('chat');
-  }, [setChatSession, setViewMode]);
-  /**
-   * Submitting a task lands on the browser pane, not the transcript: the point
-   * of the app is watching the agent drive the page, and grid mode is also what
-   * anchors the bottom-right logs pill (see the effect that closes it whenever
-   * viewMode !== 'grid'). Chat stays reachable from the pane header.
-   */
+  // Submitting a task opens its browser and conversation side by side.
   const enterBrowser = useCallback((id: string) => {
     console.log('[HubApp] enterBrowser', { id });
     setChatSession(id);
     setViewMode('grid');
   }, [setChatSession, setViewMode]);
-  const openPill = useCallback(() => { window.electronAPI?.pill.toggle(); }, []);
+  const openNewSession = useCallback(() => {
+    setViewMode('dashboard');
+    setFocusNewSession((request) => request + 1);
+  }, [setViewMode]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsIntent, setSettingsIntent] = useState<SettingsOpenIntent | null>(null);
   const settingsRequestIdRef = useRef(0);
@@ -304,11 +291,11 @@ export function HubApp(): React.ReactElement {
   // for a session that is no longer in the live set.
   useEffect(() => {
     if (!chatSessionId) return;
-    if (!isMock && !sessionsQuery.isSuccess) return;
+    if (!sessionsQuery.isSuccess) return;
     if (sessions.some((s) => s.id === chatSessionId)) return;
     setChatSession(null);
     setViewMode('dashboard');
-  }, [chatSessionId, sessions, sessionsQuery.isSuccess, isMock, setChatSession, setViewMode]);
+  }, [chatSessionId, sessions, sessionsQuery.isSuccess, setChatSession, setViewMode]);
 
   const pendingFocusIdRef = useRef<string | null>(null);
 
@@ -324,6 +311,8 @@ export function HubApp(): React.ReactElement {
 
   const knownIdsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
+    // Loading existing sessions must not navigate away from Home or Space.
+    if (!sessionsQuery.isSuccess) return;
     if (knownIdsRef.current === null) {
       knownIdsRef.current = new Set(sessions.map((s) => s.id));
       console.log('[HubApp] initialize knownIds', { count: knownIdsRef.current.size });
@@ -337,7 +326,7 @@ export function HubApp(): React.ReactElement {
     console.log('[HubApp] new session detected -> browser pane', { id: newSession.id, globalIdx });
     enterBrowser(newSession.id);
     setFocusIndex(globalIdx);
-  }, [sessions, enterBrowser]);
+  }, [sessions, sessionsQuery.isSuccess, enterBrowser]);
 
   useEffect(() => {
     const visible = sessions;
@@ -357,37 +346,6 @@ export function HubApp(): React.ReactElement {
   const handleCreateSession = useCallback(async (input: string | { prompt: string; attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }> }) => {
     const prompt = typeof input === 'string' ? input : input.prompt;
     const attachments = typeof input === 'string' ? [] : (input.attachments ?? []);
-    if (isMock) {
-      const id = `session-${++sessionCounter}`;
-      const now = Date.now();
-      const newSession: AgentSession = {
-        id, prompt, status: 'running', createdAt: now,
-        output: [{ type: 'thinking', text: `Analyzing the task: "${prompt}". Let me break this down and determine the best approach.` }],
-      };
-      console.log('[HubApp] createSession (mock)', { id, prompt });
-      pendingFocusIdRef.current = id;
-      enterBrowser(id);
-      setSessions((prev) => [...prev, newSession]);
-
-      const pushEvent = (event: HlEvent, statusOverride?: AgentSession['status']) => {
-        setSessions((prev) =>
-          prev.map((s) => {
-            if (s.id !== id) return s;
-            const updated = { ...s, output: [...s.output, event] };
-            if (statusOverride) updated.status = statusOverride;
-            return updated;
-          }),
-        );
-      };
-      setTimeout(() => pushEvent({ type: 'tool_call', name: 'file.search', args: { pattern: '**/*.ts', query: prompt.split(' ').slice(0, 3).join(' ') }, iteration: 1 }), 2000);
-      setTimeout(() => pushEvent({ type: 'tool_result', name: 'file.search', ok: true, preview: 'Found 7 relevant files across 3 directories.', ms: 1500 }), 3500);
-      setTimeout(() => pushEvent({ type: 'thinking', text: 'I\'ve found the relevant files. Now analyzing the code structure.' }), 5000);
-      setTimeout(() => pushEvent({ type: 'tool_call', name: 'file.read', args: { path: 'src/main/index.ts', lines: '1-50' }, iteration: 2 }), 7000);
-      setTimeout(() => pushEvent({ type: 'tool_result', name: 'file.read', ok: true, preview: 'Read 50 lines. Found entry point configuration.', ms: 800 }), 8000);
-      setTimeout(() => pushEvent({ type: 'done', summary: 'Implementation complete.', iterations: 2 }, 'stopped'), 10000);
-      return;
-    }
-
     const api = window.electronAPI;
     if (!api) { console.error('[HubApp] electronAPI not available'); return; }
 
@@ -406,7 +364,7 @@ export function HubApp(): React.ReactElement {
     } catch (err) {
       console.error('[HubApp] createSession failed', err);
     }
-  }, [isMock, setViewMode, enterBrowser]);
+  }, [enterBrowser]);
 
 
   const handleFollowUp = useCallback(async (
@@ -414,24 +372,21 @@ export function HubApp(): React.ReactElement {
     prompt: string,
     attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>,
   ) => {
-    if (!isMock) {
-      const api = window.electronAPI;
-      if (!api) return;
-      try {
-        console.log('[HubApp] followUp', { sessionId, prompt, attachmentCount: attachments?.length ?? 0 });
-        const result = await api.sessions.resume(sessionId, prompt, attachments);
-        if (result?.error) {
-          console.warn('[HubApp] followUp error', { sessionId, error: result.error });
-          updateSession(sessionId, { status: 'stopped' as const, error: result.error });
-        }
-      } catch (err) {
-        console.error('[HubApp] followUp failed', err);
+    const api = window.electronAPI;
+    if (!api) return;
+    try {
+      console.log('[HubApp] followUp', { sessionId, prompt, attachmentCount: attachments?.length ?? 0 });
+      const result = await api.sessions.resume(sessionId, prompt, attachments);
+      if (result?.error) {
+        console.warn('[HubApp] followUp error', { sessionId, error: result.error });
+        updateSession(sessionId, { status: 'stopped' as const, error: result.error });
       }
+    } catch (err) {
+      console.error('[HubApp] followUp failed', err);
     }
-  }, [isMock, updateSession]);
+  }, [updateSession]);
 
   const handleResume = useCallback(async (sessionId: string) => {
-    if (isMock) return;
     const api = window.electronAPI;
     if (!api) return;
     try {
@@ -444,10 +399,9 @@ export function HubApp(): React.ReactElement {
     } catch (err) {
       console.error('[HubApp] resume failed', err);
     }
-  }, [isMock, updateSession]);
+  }, [updateSession]);
 
   const handlePause = useCallback(async (sessionId: string) => {
-    if (isMock) return;
     const api = window.electronAPI;
     if (!api) return;
     try {
@@ -459,7 +413,7 @@ export function HubApp(): React.ReactElement {
     } catch (err) {
       console.error('[HubApp] pause failed', err);
     }
-  }, [isMock]);
+  }, []);
 
   const handleSelectSession = useCallback((id: string) => {
     const idx = sessions.findIndex((s) => s.id === id);
@@ -473,10 +427,9 @@ export function HubApp(): React.ReactElement {
     <div className="hub-root canvas-dots">
       <Navbar
         isDashboard={viewMode === 'dashboard'}
-        isBrowser={viewMode === 'grid'}
-        onGoDashboard={() => setViewMode('dashboard')}
-        onGoBrowser={() => setViewMode('grid')}
-        onOpenHelp={() => openSettingsPage({ sectionId: 'settings-shortcuts' })}
+        isSpace={viewMode === 'space'}
+        onGoSpace={() => setViewMode('space')}
+        onNewSession={openNewSession}
         onOpenSettings={() => openSettingsPage()}
         settingsShortcut={shortcutFor('goto.settings')}
         zoomFactor={zoomFactor}
@@ -484,40 +437,10 @@ export function HubApp(): React.ReactElement {
           setZoomFactor(1.0);
           localStorage.setItem('hub-zoom-factor', '1');
         }}
-        resetZoomTitle={`Reset zoom (${vim.formatShortcut('CommandOrControl+0')})`}
+        resetZoomTitle={`重置缩放 (${vim.formatShortcut('CommandOrControl+0')})`}
       />
 
       <div className="hub-body" data-tabs-position={tabsPosition}>
-      <Sidebar
-        mode={tabsPosition}
-        isDashboard={viewMode === 'dashboard'}
-        sessions={sessions}
-        selectedId={viewMode === 'grid' ? selectedSessionId : viewMode === 'chat' ? chatSessionId : null}
-        onSelect={(id) => {
-          handleSelectSession(id);
-          enterChat(id);
-        }}
-        onNewAgent={() => openPill()}
-        onNewChat={() => setViewMode('dashboard')}
-        onSearch={() => openPill()}
-        onRowAction={(id, action) => {
-          console.log('[HubApp] sidebar row action', { id, action });
-          switch (action) {
-            case 'rerun':
-              window.electronAPI?.sessions.rerun(id).catch((err) => console.error('[HubApp] rerun failed', err));
-              break;
-            case 'stop':
-              window.electronAPI?.sessions.cancel(id).catch(() => {});
-              break;
-            case 'pause':
-              handlePause(id);
-              break;
-            case 'resume':
-              handleResume(id);
-              break;
-          }
-        }}
-      />
       <div className="hub-main">
       {viewMode === 'settings' ? (
         <SettingsPane
@@ -541,9 +464,15 @@ export function HubApp(): React.ReactElement {
             />
           : <div className="chat-empty">No session selected. <button className="chat-pane__back" onClick={() => setViewMode('dashboard')}>Back to dashboard</button></div>
       ) : viewMode === 'dashboard' ? (
-        <Dashboard
+        <NewSessionPage onSubmit={handleCreateSession} focusRequest={focusNewSession} />
+      ) : viewMode === 'space' ? (
+        <Space
           sessions={sessions}
-          onSubmitTask={(submission) => { handleCreateSession(submission); }}
+          selectedId={selectedSessionId}
+          onSelect={(id) => {
+            handleSelectSession(id);
+            enterBrowser(id);
+          }}
         />
       ) : (
         (() => {
@@ -554,23 +483,23 @@ export function HubApp(): React.ReactElement {
           const pageStart = safePage * pageSize;
           const pageSessions = visibleSessions.slice(pageStart, pageStart + pageSize);
           if (visibleSessions.length === 0) {
-            const shortcut = shortcutFor('action.createPane');
             return (
               <div className="hub-grid-container">
                 <button
                   type="button"
                   className="hub-grid__empty"
-                  onClick={() => window.electronAPI?.pill.toggle()}
+                  onClick={openNewSession}
                 >
-                  press {shortcut ? <kbd className="hub-grid__empty-kbd">{shortcut}</kbd> : 'the global command'} to start a new task
+                  新建会话
                 </button>
               </div>
             );
           }
           return (
-            <div className="hub-grid-container">
-              <div className="hub-grid" data-count={String(gridColumns)}>
-                {pageSessions.map((session) => {
+            <div className="workspace-split">
+              <div className="workspace-split__browser">
+              <div className="hub-grid" data-count="1">
+                {pageSessions.slice(0, 1).map((session) => {
                   const globalIdx = sessions.findIndex((s) => s.id === session.id);
                   return (
                     <AgentPane
@@ -600,12 +529,24 @@ export function HubApp(): React.ReactElement {
                       onOpenFollowUp={() => {
                         window.electronAPI?.logs.focusFollowUp(session.id);
                       }}
-                      onOpenChat={enterChat}
                       shouldDetachBrowserOnUnmount={shouldDetachBrowserOnPaneUnmount}
                       followUpShortcut={shortcutFor('action.followUp')}
                     />
                   );
                 })}
+              </div>
+              </div>
+              <div className="workspace-split__chat">
+                {selectedSessionId ? (
+                  <ChatPane
+                    sessionId={selectedSessionId}
+                    showBrowserPreview={false}
+                    onExit={() => setViewMode('dashboard')}
+                    onSwitchToBrowser={() => setViewMode('grid')}
+                  />
+                ) : (
+                  <div className="workspace-split__chat-empty">选择一个会话查看对话</div>
+                )}
               </div>
             </div>
           );

@@ -23,10 +23,6 @@ interface MemoryData {
   errors?: string[];
 }
 
-interface AppInfo {
-  version: string;
-}
-
 function formatGb(mb: number): string {
   if (mb < 1024) return `${Math.round(mb)} MB`;
   return `${(mb / 1024).toFixed(1)} GB`;
@@ -62,16 +58,6 @@ export function MemoryIndicator(): React.ReactElement {
     staleTime: 4000,
   });
 
-  const { data: appInfo } = useQuery<AppInfo | null>({
-    queryKey: ['app-info'],
-    queryFn: async () => {
-      const api = window.electronAPI?.settings?.app;
-      if (!api) return null;
-      return api.getInfo();
-    },
-    staleTime: Infinity,
-  });
-
   const openMenu = useCallback(async () => {
     const button = buttonRef.current;
     if (!button) return;
@@ -96,26 +82,21 @@ export function MemoryIndicator(): React.ReactElement {
 
   return (
     <div className="mem-indicator">
-      {appInfo?.version && (
-        <span className="mem-indicator__version" title={`Browser Use v${appInfo.version}`}>
-          v{appInfo.version}
-        </span>
-      )}
       <button
         ref={buttonRef}
         className="mem-indicator__btn"
         onClick={(e) => { e.stopPropagation(); void openMenu(); }}
         aria-expanded={Boolean(popupId)}
         aria-haspopup="menu"
-        aria-label="Resources"
-        title={data ? `${formatGb(data.totalMb)} / ${formatCpu(data.totalCpuPercent)}` : 'Resources'}
+        aria-label="资源"
+        title={data ? `资源占用：内存 ${formatGb(data.totalMb)} / CPU ${formatCpu(data.totalCpuPercent)}` : '资源'}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <rect x="2" y="1.5" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
           <rect x="4" y="7" width="2" height="3.5" rx="0.5" fill="currentColor" opacity="0.5" />
           <rect x="7.5" y="4.5" width="2" height="6" rx="0.5" fill="currentColor" opacity="0.7" />
         </svg>
-        <span>Resources</span>
+        <span>资源</span>
         <svg className="mem-indicator__chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
     </div>

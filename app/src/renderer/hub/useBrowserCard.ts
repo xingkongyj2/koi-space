@@ -3,7 +3,13 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { centeredBrowserCard, fitBrowserCard } from './browserCardGeometry';
 import type { CardArea, CardRect } from './browserCardGeometry';
 
-export function useBrowserCard() {
+interface BrowserCardOptions {
+  /** Fill the measured stage instead of rendering a floating/resizable card. */
+  fill?: boolean;
+}
+
+export function useBrowserCard(options: BrowserCardOptions = {}) {
+  const fill = options.fill === true;
   const stageRef = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState<CardArea>({ width: 0, height: 0 });
   const [saved, setSaved] = useState<CardRect | null>(null);
@@ -11,7 +17,7 @@ export function useBrowserCard() {
   const [interacting, setInteracting] = useState(false);
   const gesture = useRef<{ id: number; x: number; y: number; rect: CardRect; resize: boolean; scaleX: number; scaleY: number } | null>(null);
   const floating = saved ? fitBrowserCard(saved, area) : centeredBrowserCard(area);
-  const rect = expanded ? { x: 0, y: 0, ...area } : floating;
+  const rect = fill || expanded ? { x: 0, y: 0, ...area } : floating;
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -30,7 +36,7 @@ export function useBrowserCard() {
   }, [rect.x, rect.y, rect.width, rect.height]);
 
   const start = (event: ReactPointerEvent<HTMLElement>, resize = false) => {
-    if (expanded || event.button !== 0 || (!resize && (event.target as HTMLElement).closest('button, input, a'))) return;
+    if (fill || expanded || event.button !== 0 || (!resize && (event.target as HTMLElement).closest('button, input, a'))) return;
     const stage = stageRef.current;
     if (!stage) return;
     const bounds = stage.getBoundingClientRect();
@@ -54,7 +60,7 @@ export function useBrowserCard() {
   const toggleExpanded = () => { end(); setExpanded(value => !value); };
   const center = () => { end(); setSaved(null); setExpanded(false); };
   const resizeBy = (dx: number, dy: number) => {
-    if (expanded) return;
+    if (fill || expanded) return;
     setSaved(fitBrowserCard({ ...floating,
       width: Math.min(floating.width + dx, area.width - floating.x - 24),
       height: Math.min(floating.height + dy, area.height - floating.y - 24),

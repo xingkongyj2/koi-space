@@ -1,20 +1,10 @@
 import React, { useCallback, useRef, useEffect, useState } from 'react';
-import { STATUS_LABEL } from './constants';
 import { ContentRenderer, getPreview } from './ContentRenderer';
 import { Markdown, linkifyOutputPaths } from './Markdown';
 import { TerminalPane } from './TerminalPane';
 import { closeAppPopup, openAnchoredAppPopup } from '../shared/appPopup';
 import type { AgentSession, OutputEntry } from './types';
 import { useBrowserCard } from './useBrowserCard';
-
-function formatElapsed(createdAt: number): string {
-  const seconds = Math.floor((Date.now() - createdAt) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h`;
-}
 
 function friendlyError(raw: string): string {
   const lower = raw.toLowerCase();
@@ -29,14 +19,6 @@ function friendlyError(raw: string): string {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-// Display dollar amounts: sub-cent uses 4 decimals so tiny runs stay visible
-// (e.g. $0.0023), single-dollar uses 3 decimals, larger rounds to cents.
-function formatCostUsd(usd: number): string {
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  if (usd < 1) return `$${usd.toFixed(3)}`;
-  return `$${usd.toFixed(2)}`;
 }
 
 function BrowseIcon(): React.ReactElement {
@@ -433,17 +415,6 @@ function OutputRow({ entry }: { entry: OutputEntry }): React.ReactElement {
   );
 }
 
-function BrowserIcon(): React.ReactElement {
-  return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-      <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M1.5 5.5h11" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="3.5" cy="4" r="0.5" fill="currentColor" />
-      <circle cx="5.5" cy="4" r="0.5" fill="currentColor" />
-    </svg>
-  );
-}
-
 function OutputIcon(): React.ReactElement {
   return (
     <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
@@ -483,15 +454,6 @@ function ResumeIcon(): React.ReactElement {
   return (
     <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
       <path d="M5 3.5v7L10.5 7 5 3.5Z" fill="currentColor" />
-    </svg>
-  );
-}
-
-function PauseIcon(): React.ReactElement {
-  return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-      <rect x="4" y="3" width="2" height="8" rx="0.6" fill="currentColor" />
-      <rect x="8" y="3" width="2" height="8" rx="0.6" fill="currentColor" />
     </svg>
   );
 }
@@ -676,14 +638,16 @@ interface AgentPaneProps {
   onCancel?: (sessionId: string) => void;
   onSelect?: (sessionId: string) => void;
   onOpenFollowUp?: () => void;
-  onOpenChat?: (sessionId: string) => void;
   shouldDetachBrowserOnUnmount?: () => boolean;
   followUpShortcut?: string;
   cycleShortcut?: string;
 }
 
-export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onClose, onCancel, onSelect, onOpenFollowUp, onOpenChat, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
-  const card = useBrowserCard();
+export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onClose, onCancel, onSelect, onOpenFollowUp, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
+  // The session view owns the whole browser column. The hook's fill mode keeps
+  // the native WebContentsView bounds tied to the browser card while retaining
+  // its standalone floating-card behavior for other consumers.
+  const card = useBrowserCard({ fill: true });
   const paneRef = useRef<HTMLDivElement>(null);
   const pendingUnmountDetachRef = useRef<number | null>(null);
   const [browserDead, setBrowserDead] = useState(false);
@@ -692,9 +656,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
   // Logs overlay is a separate window (see logsPill.ts). The pane tracks
   // visibility only to reflect it in the Logs button's active state.
   const [logsOpen, setLogsOpen] = useState(false);
-  // Auto-open the logs overlay once per fresh session id so users see the
-  // agent's stream as soon as a task starts.
-  const autoLogsTriggeredRef = useRef<Set<string>>(new Set());
   const computeBounds = useCallback((): { x: number; y: number; width: number; height: number; slotWidth: number } | null => {
     const el = paneRef.current?.querySelector('.pane__output') as HTMLElement | null;
     if (!el) return null;
@@ -748,29 +709,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
       ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) }
       : undefined;
     void api.logs.toggle(session.id, anchor).then((nowOpen) => setLogsOpen(nowOpen));
-  }, [session.id]);
-
-  // On session change, push the new session id to the floating logs overlay
-  // so it re-targets (also handles first-mount auto-show for running sessions).
-  // Deliberately does NOT depend on session.status — re-firing logs.show() on
-  // every running→idle transition causes the logs window's showInactive +
-  // setAlwaysOnTop calls to surface the app/Space on macOS, yanking the user
-  // back from whatever window they'd switched to.
-  useEffect(() => {
-    if (session.status === 'draft') return;
-    const api = window.electronAPI;
-    if (!api?.logs?.show) return;
-    const outEl = paneRef.current?.querySelector('.pane__output') as HTMLElement | null;
-    const rect = outEl?.getBoundingClientRect();
-    if (!rect || rect.width <= 0 || rect.height <= 0) return;
-    const anchor = {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-    };
-    void api.logs.show(session.id, anchor).then((open) => setLogsOpen(open));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
   }, [session.id]);
 
   useEffect(() => {
@@ -848,8 +786,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
         width: slotWidth,
         height: Math.round(o.height),
       });
-      // Auto-show the logs overlay once per session on the first real pane
-      // measurement. Ref-keyed so Esc-close doesn't trigger a re-open.
       const logsAnchor = {
         x: Math.round(o.left),
         y: Math.round(o.top),
@@ -858,17 +794,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
       };
       if (logsAnchor.width > 0 && logsAnchor.height > 0) {
         api.logs?.updateAnchor?.(logsAnchor);
-      }
-      if (
-        session.status !== 'draft' &&
-        api.logs?.show &&
-        logsAnchor.width > 0 &&
-        logsAnchor.height > 0 &&
-        !autoLogsTriggeredRef.current.has(session.id)
-      ) {
-        autoLogsTriggeredRef.current.add(session.id);
-        console.log('[AgentPane] auto-open logs on first pane measurement', { sessionId: session.id, logsAnchor });
-        void api.logs.show(session.id, logsAnchor).then((open) => setLogsOpen(open));
       }
     };
     // Coalesce rapid ResizeObserver / layout callbacks into one IPC per frame.
@@ -959,8 +884,6 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
     }
   }, [session.id, session.status]);
 
-  const elapsed = formatElapsed(session.createdAt);
-  const statusText = STATUS_LABEL[session.status] ?? session.status;
   const isCancellation = !!session.error && session.error.toLowerCase().includes('cancel');
   const showErrorUi = !!session.error && !isCancellation;
   const hasLiveBrowser = session.hasBrowser && !browserDead && !browserMissing;
@@ -1000,151 +923,62 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
   }, [focused, isPaused, isRunningLike, onCancel, onPause, session.id]);
 
   return (
-    <div ref={card.stageRef} className="browser-card-stage">
-    <div
-      ref={paneRef}
-      className={`pane browser-card pane--${session.status}${focused ? ' pane--focused' : ''}${card.expanded ? ' browser-card--expanded' : ''}${card.interacting ? ' browser-card--interacting' : ''}`}
-      style={card.style}
-      onClick={() => onSelect?.(session.id)}
-      onMouseDown={(e) => {
-        if ((e.target as HTMLElement).closest('button')) e.preventDefault();
-      }}
-    >
-      <div className="pane__header"
-        onPointerDown={(event) => card.start(event)}
-        onPointerMove={card.move}
-        onPointerUp={card.end}
-        onPointerCancel={card.end}
-        onLostPointerCapture={card.end}
-        onDoubleClick={(event) => {
-          if (!(event.target as HTMLElement).closest('button')) card.toggleExpanded();
+    <div className="browser-card-layout">
+      <div
+        className="browser-card-title"
+        onClick={() => onSelect?.(session.id)}
+        onMouseDown={(event) => {
+          if ((event.target as HTMLElement).closest('button')) event.preventDefault();
         }}
       >
-        <span className={`pane__dot pane__dot--${session.status}`} />
+      <div className="pane__header">
         <div className="pane__title-group">
-          <span className="pane__prompt">{session.prompt}</span>
-          {typeof session.costUsd === 'number' && session.costUsd > 0 && (
-            <span
-              className="pane__cost"
-              title={
-                session.costSource === 'estimated'
-                  ? `Estimated from token count × local price table · ${session.inputTokens ?? 0} in / ${session.outputTokens ?? 0} out`
-                  : `${session.inputTokens ?? 0} in / ${session.outputTokens ?? 0} out`
-              }
-            >
-              {session.costSource === 'estimated' ? '~' : ''}
-              {formatCostUsd(session.costUsd)}
-            </span>
-          )}
+          <span className="pane__prompt" title={session.prompt}>{session.prompt}</span>
         </div>
         <div className="pane__actions">
-          <button type="button" className="pane__action-btn pane__action-btn--icon"
-            aria-label="Center browser card" title="Center browser card"
-            onClick={(event) => { event.stopPropagation(); card.center(); }}>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="4" stroke="currentColor"/><path d="M8 1v4m0 6v4M1 8h4m6 0h4" stroke="currentColor"/></svg>
-          </button>
-          <button type="button" className="pane__action-btn pane__action-btn--icon"
-            aria-label={card.expanded ? 'Restore browser card' : 'Expand browser'}
-            title={card.expanded ? 'Restore browser card' : 'Expand browser to fill workspace'}
-            aria-pressed={card.expanded}
-            onClick={(event) => { event.stopPropagation(); card.toggleExpanded(); }}>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d={card.expanded ? 'M1 5h4V1m6 0v4h4M1 11h4v4m6 0v-4h4' : 'M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4'} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-          {browserDead && (
-            <span className="pane__action-btn pane__action-btn--disabled">
-              <BrowserIcon />
-              <span>Browser ended</span>
-            </span>
-          )}
-          {onOpenChat && (
-            <button
-              className="pane__action-btn"
-              onClick={(e) => { e.stopPropagation(); onOpenChat(session.id); }}
-              aria-label="Back to chat view"
-              data-tip="Back to chat view"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M7 3L4 6l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span>Back to chat</span>
-            </button>
-          )}
           <button
             className={`pane__action-btn${logsOpen ? ' pane__action-btn--active' : ''}`}
             onClick={(e) => { e.stopPropagation(); handleToggleLogs(); }}
-            aria-label="Toggle logs overlay"
-            data-tip="Toggle logs overlay"
+            aria-label="日志"
+            title="日志"
           >
             <SplitIcon />
-            <span>Logs</span>
+            <span>日志</span>
           </button>
           {onRerun && (
             <button
               className="pane__action-btn pane__action-btn--icon"
               onClick={(e) => { e.stopPropagation(); onRerun(session.id); }}
-              aria-label="Rerun"
-              data-tip="Rerun"
+              aria-label="刷新"
+              title="刷新会话"
             >
               <RerunIcon />
             </button>
           )}
-          {canResume && (
-            <button
-              className="pane__action-btn pane__action-btn--icon pane__action-btn--primary"
-              onClick={(e) => { e.stopPropagation(); onResume?.(session.id); }}
-              aria-label="Resume"
-              data-tip="Resume"
-            >
-              <ResumeIcon />
-            </button>
-          )}
-          {isRunningLike && onPause && (
-            <button
-              className="pane__action-btn pane__action-btn--icon"
-              onClick={(e) => { e.stopPropagation(); onPause(session.id); }}
-              aria-label="Pause"
-              data-tip="Pause"
-            >
-              <PauseIcon />
-            </button>
-          )}
-          {(isRunningLike || isPaused) && onCancel && (
-            <button
-              className="pane__action-btn pane__action-btn--icon pane__action-btn--danger"
-              onClick={(e) => { e.stopPropagation(); onCancel(session.id); }}
-              aria-label="Stop"
-              data-tip="Stop"
-            >
-              <CloseIcon />
-            </button>
-          )}
-          {!isRunningLike && !isPaused && onClose && (
+          {onClose && (
             <button
               className="pane__action-btn pane__action-btn--icon pane__action-btn--danger"
               onClick={(e) => { e.stopPropagation(); onClose(session.id); }}
-              aria-label="Close"
-              data-tip="Close"
+              aria-label="关闭"
+              title="关闭会话"
             >
               <CloseIcon />
             </button>
           )}
         </div>
       </div>
-      <div className="pane__meta">
-        <span className="pane__status">{statusText}</span>
-        <span className="pane__sep" />
-        <span className="pane__elapsed">{elapsed}</span>
-        {session.group && (
-          <>
-            <span className="pane__sep" />
-            <span className="pane__group">{session.group}</span>
-          </>
-        )}
       </div>
 
-      <div className="pane__progress" aria-hidden="true">
-        {session.status === 'running' && <div className="pane__progress-bar" />}
-      </div>
+      <div ref={card.stageRef} className="browser-card-stage">
+      <div
+        ref={paneRef}
+        className={`pane browser-card pane--${session.status}${focused ? ' pane--focused' : ''}`}
+        style={card.style}
+        onClick={() => onSelect?.(session.id)}
+        onMouseDown={(event) => {
+          if ((event.target as HTMLElement).closest('button')) event.preventDefault();
+        }}
+      >
 
       {frameRect && (showErrorUi || browserDead || browserMissing || session.status === 'draft' || endedWithoutBrowser) && (() => {
         const isStarting = !showErrorUi && !browserDead && !browserMissing && session.status === 'draft';
@@ -1218,21 +1052,8 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
       <div
         className="pane__output"
       />
-      {!card.expanded && <button type="button" className="browser-card__resize"
-        aria-label="Resize browser card" title="Drag to resize browser card"
-        onPointerDown={(event) => card.start(event, true)}
-        onPointerMove={card.move} onPointerUp={card.end}
-        onPointerCancel={card.end} onLostPointerCapture={card.end}
-        onKeyDown={(event) => {
-          const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
-          if (!direction) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const step = event.shiftKey ? 80 : 20;
-          card.resizeBy(direction[0] * step, direction[1] * step);
-        }}
-      ><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 10l7-7m-3 7l3-3" stroke="currentColor" strokeWidth="1.2"/></svg></button>}
-    </div>
+      </div>
+      </div>
     </div>
   );
 }

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserWindow, WebContents } from 'electron';
 import type { BrowserPool } from '../../../src/main/sessions/BrowserPool';
 import { SessionScreencast } from '../../../src/main/sessions/SessionScreencast';
+import { EventEmitter } from 'node:events';
 
-function mockWebContents(opts: { destroyed?: boolean; delayCapture?: boolean; hangCapture?: boolean; attached?: boolean; attachThrows?: boolean } = {}): WebContents {
+function mockWebContents(opts: { stream?: boolean; destroyed?: boolean; delayCapture?: boolean; hangCapture?: boolean; attached?: boolean; attachThrows?: boolean } = {}): WebContents {
   let attached = opts.attached ?? false;
+  let throttled = true;
   const sendCommand = vi.fn(async (method: string) => {
+    if (method === 'Page.startScreencast' && !opts.stream) throw new Error('stream unavailable');
     if (method !== 'Page.captureScreenshot') return {};
     if (opts.hangCapture) return new Promise(() => {});
     if (opts.delayCapture) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -14,7 +17,9 @@ function mockWebContents(opts: { destroyed?: boolean; delayCapture?: boolean; ha
 
   return {
     isDestroyed: vi.fn(() => opts.destroyed ?? false),
-    debugger: {
+    getBackgroundThrottling: vi.fn(() => throttled),
+    setBackgroundThrottling: vi.fn((value: boolean) => { throttled = value; }),
+    debugger: Object.assign(new EventEmitter(), {
       isAttached: vi.fn(() => attached),
       attach: vi.fn(() => {
         if (opts.attachThrows) throw new Error('attach failed');
@@ -22,8 +27,12 @@ function mockWebContents(opts: { destroyed?: boolean; delayCapture?: boolean; ha
       }),
       detach: vi.fn(() => { attached = false; }),
       sendCommand,
-    },
+    }),
   } as unknown as WebContents;
+}
+
+function screenshotCalls(wc: WebContents) {
+  return vi.mocked(wc.debugger.sendCommand).mock.calls.filter(([method]) => method === 'Page.captureScreenshot');
 }
 
 function makeScreencast(wc: WebContents | null): {
@@ -63,6 +72,77 @@ afterEach(() => {
 });
 
 describe('SessionScreencast', () => {
+  it('pushes paint frames immediately, acknowledges them, and avoids polling while streaming', async () => {
+    vi.useFakeTimers();
+    const wc = mockWebContents({ stream: true });
+    const { screencast, sent } = makeScreencast(wc);
+    await screencast.start('s1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(wc.debugger.sendCommand).toHaveBeenCalledWith('Page.startScreencast', {
+      format: 'jpeg', quality: 55, maxWidth: 960, maxHeight: 600, everyNthFrame: 1,
+    });
+    expect(wc.setBackgroundThrottling).toHaveBeenCalledWith(false);
+    sent.mockClear();
+    for (let i = 0; i < 60; i += 1) {
+      wc.debugger.emit('message', {}, 'Page.screencastFrame', { sessionId: i, data: `frame-${i}` });
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    expect(sent).toHaveBeenCalledTimes(60);
+    expect(sent).toHaveBeenLastCalledWith('session-preview-frame', 's1', 'frame-59');
+    expect(wc.debugger.sendCommand).toHaveBeenCalledWith('Page.screencastFrameAck', { sessionId: 59 });
+    expect(screenshotCalls(wc)).toHaveLength(1);
+    await screencast.stop('s1');
+    expect(wc.debugger.listenerCount('message')).toBe(0);
+    expect(wc.debugger.sendCommand).toHaveBeenCalledWith('Page.stopScreencast');
+    expect(wc.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('never overwrites a live frame with a delayed bootstrap screenshot', async () => {
+    vi.useFakeTimers();
+    const wc = mockWebContents({ stream: true, delayCapture: true });
+    const { screencast, sent } = makeScreencast(wc);
+    await screencast.start('s1');
+    wc.debugger.emit('message', {}, 'Page.screencastFrame', { sessionId: 1, data: 'new-frame' });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveBeenLastCalledWith('session-preview-frame', 's1', 'new-frame');
+    await screencast.stop('s1');
+  });
+
+  it('delivers live previews at 100ms intervals and stops the timer on cleanup', async () => {
+    vi.useFakeTimers();
+    const wc = mockWebContents();
+    const { screencast, sent } = makeScreencast(wc);
+    await screencast.start('s1');
+    await vi.advanceTimersByTimeAsync(950);
+    expect(sent).toHaveBeenCalledTimes(10);
+    await screencast.stop('s1');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sent).toHaveBeenCalledTimes(10);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not queue more screenshots when capture is slower than the refresh interval', async () => {
+    vi.useFakeTimers();
+    const wc = mockWebContents();
+    const gate = deferred<{ data: string }>();
+    vi.mocked(wc.debugger.sendCommand).mockImplementation(async (method) => {
+      if (method === 'Page.startScreencast') throw new Error('stream unavailable');
+      if (method === 'Page.captureScreenshot') return gate.promise;
+      return {};
+    });
+    const { screencast, sent } = makeScreencast(wc);
+    await screencast.start('s1');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(screenshotCalls(wc)).toHaveLength(1);
+    gate.resolve({ data: 'latest-frame' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toHaveBeenCalledTimes(1);
+    await screencast.stop('s1');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('captures the assigned WebContents once per preview stream', async () => {
     const wc = mockWebContents();
     const { screencast, sent } = makeScreencast(wc);
@@ -87,7 +167,7 @@ describe('SessionScreencast', () => {
 
     await screencast.start('s1');
     await screencast.start('s1');
-    await vi.waitFor(() => expect(wc.debugger.sendCommand).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(screenshotCalls(wc)).toHaveLength(1));
 
     await screencast.stop('s1');
   });
@@ -98,7 +178,7 @@ describe('SessionScreencast', () => {
     const { screencast } = makeScreencast(wc);
 
     await expect(screencast.start('s1', 'preview-old')).resolves.toEqual({ ok: true });
-    await vi.waitFor(() => expect(wc.debugger.sendCommand).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(screenshotCalls(wc)).toHaveLength(1));
     await expect(screencast.start('s1', 'preview-new')).resolves.toEqual({ ok: true });
 
     await screencast.stop('s1', 'preview-old');
@@ -187,7 +267,7 @@ describe('SessionScreencast', () => {
     gate.resolve({ ok: true, parkedByUs: true });
 
     await expect(Promise.all([first, second])).resolves.toEqual([{ ok: true }, { ok: true }]);
-    await vi.waitFor(() => expect(wc.debugger.sendCommand).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(screenshotCalls(wc)).toHaveLength(1));
     expect(vi.getTimerCount()).toBe(1);
 
     await screencast.stop('s1');
@@ -268,10 +348,10 @@ describe('SessionScreencast', () => {
     const { screencast, sent } = makeScreencast(wc);
 
     await screencast.start('s1');
-    expect(wc.debugger.sendCommand).toHaveBeenCalledTimes(1);
+    expect(screenshotCalls(wc)).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(3000);
-    expect(wc.debugger.sendCommand).toHaveBeenCalledTimes(2);
+    expect(screenshotCalls(wc)).toHaveLength(2);
     expect(sent).not.toHaveBeenCalled();
 
     await screencast.stop('s1');

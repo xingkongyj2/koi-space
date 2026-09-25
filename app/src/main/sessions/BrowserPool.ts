@@ -10,6 +10,7 @@ const DEFAULT_MAX_CONCURRENT = 10;
 const THROTTLED_FRAME_RATE = 4;
 const IDLE_FRAME_RATE = 1;
 const ACTIVE_FRAME_RATE = 60;
+const PREVIEW_FRAME_RATE = 60;
 const DEFAULT_IDLE_FREEZE_DELAY_MS = 15_000;
 const CDP_PROTOCOL_VERSION = '1.3';
 const PREVIEW_PARK_VISIBLE_PX = 1;
@@ -507,6 +508,7 @@ export class BrowserPool {
   }
 
   private frameRateFor(entry: PoolEntry): number {
+    if (entry.attached && entry.parked) return PREVIEW_FRAME_RATE;
     if (entry.attached) return ACTIVE_FRAME_RATE;
     return entry.idleFreezeEligible ? IDLE_FRAME_RATE : THROTTLED_FRAME_RATE;
   }
@@ -792,14 +794,7 @@ export class BrowserPool {
     entry.parked = true;
     this.clearIdleFreezeTimer(entry);
     await this.wakeForVisibility(entry, 'preview');
-    try {
-      entry.view.webContents.setFrameRate(entry.idleFreezeEligible ? IDLE_FRAME_RATE : THROTTLED_FRAME_RATE);
-    } catch (err) {
-      browserLogger.warn('BrowserPool.parkForPreview.frameRate.error', {
-        sessionId,
-        error: (err as Error).message,
-      });
-    }
+    this.applyFrameRate(entry);
     browserLogger.info('BrowserPool.parkForPreview', { sessionId, parkedByUs, width, height, bounds: entry.view.getBounds() });
     return { ok: true, parkedByUs };
   }

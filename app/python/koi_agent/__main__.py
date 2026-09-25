@@ -104,7 +104,15 @@ def main() -> int:
     try:
         decision = None
         if settings.decision.api_key:
-            decision = Decision(jev=JevDecision(settings.decision))
+            decision = Decision(
+                jev=JevDecision(settings.decision, text_model=planner_client),
+                model=(
+                    lambda payload: planner_client.chat(
+                        '根据浏览器快照选择最多一个安全动作，只返回 JSON：{"actions":[{"kind":"click|fill|press|wait|scroll|open","ref":"@e1","value":""}],"confidence":0.8}。只使用快照中存在的 ref；不要猜测密码。',
+                        payload,
+                    )
+                ) if planner_client else None,
+            )
         orchestrator = Orchestrator(
             session,
             plan,

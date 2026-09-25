@@ -34,7 +34,14 @@ class Decision:
 
         if self.jev:
             try:
-                value = self.jev.choose(goal, observation.snapshot)
+                value = self.jev.choose(goal, observation)
+                if value["operation"] in {"DONE", "BLOCKED"}:
+                    return DecisionResult(
+                        (),
+                        float(value.get("confidence", 0)),
+                        "jev",
+                        value["operation"].lower(),
+                    )
                 return DecisionResult(
                     (self._jev_action(value),),
                     float(value.get("confidence", 0.8)),
@@ -91,8 +98,6 @@ class Decision:
             "SELECT": "click",
             "SCROLL": "scroll",
             "WAIT": "wait",
-            "DONE": "wait",
-            "BLOCKED": "wait",
         }
         return Action(
             kinds.get(operation, "wait"),

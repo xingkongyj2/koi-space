@@ -1,4 +1,4 @@
-import type { BrowserWindow, Debugger, WebContents } from 'electron';
+import type { BrowserWindow, Debugger, Event as ElectronEvent, WebContents } from 'electron';
 import { mainLogger } from '../logger';
 import type { BrowserPool } from './BrowserPool';
 
@@ -15,9 +15,11 @@ interface PreviewOptions {
 const DEFAULT_OPTIONS: PreviewOptions = {
   format: 'jpeg',
   quality: 55,
-  intervalMs: 1000,
+  // Snapshot fallback only. Normal previews are driven by Chromium paint events.
+  intervalMs: 100,
 };
 const CAPTURE_TIMEOUT_MS = 2500;
+const STREAM_STALL_MS = 2000;
 
 interface ActivePreview {
   ownerToken: string;
@@ -31,6 +33,11 @@ interface ActivePreview {
   framesSent: number;
   lastFrameLogAt: number;
   parkedByUs: boolean;
+  streaming: boolean;
+  lastFrameAt: number;
+  latestFrame: string | null;
+  backgroundThrottling: boolean;
+  onMessage: ((event: ElectronEvent, method: string, params: Record<string, unknown>) => void) | null;
 }
 
 type CaptureScreenshotParams = {
@@ -97,7 +104,7 @@ export class SessionScreencast {
         inFlight: active.inFlight,
       });
       active.ownerToken = ownerToken;
-      void this.capture(sessionId);
+      if (active.latestFrame) this.deliverFrame(sessionId, active, active.latestFrame);
       return { ok: true };
     }
 
@@ -157,7 +164,7 @@ export class SessionScreencast {
         });
         duplicate.ownerToken = ownerToken;
         if (parking.parkedByUs && previewWindow) this.pool.releasePreviewParking(sessionId, previewWindow);
-        void this.capture(sessionId);
+        if (duplicate.latestFrame) this.deliverFrame(sessionId, duplicate, duplicate.latestFrame);
         return { ok: true };
       }
 
@@ -169,16 +176,27 @@ export class SessionScreencast {
         options,
         attachedByUs,
         timer: setInterval(() => {
-          void this.capture(sessionId);
+          if (!preview.streaming || Date.now() - preview.lastFrameAt >= STREAM_STALL_MS) {
+            void this.capture(sessionId);
+          }
         }, options.intervalMs),
         inFlight: false,
         stopped: false,
         framesSent: 0,
         lastFrameLogAt: 0,
         parkedByUs: parking.parkedByUs,
+        streaming: false,
+        lastFrameAt: Date.now(),
+        latestFrame: null,
+        backgroundThrottling: wc.getBackgroundThrottling(),
+        onMessage: null,
       };
 
       this.previews.set(sessionId, preview);
+      // Keep animations and painting live while this preview has a consumer.
+      wc.setBackgroundThrottling(false);
+      this.startStream(sessionId, preview);
+      // Bootstrap a still page immediately, even if no paint event occurs.
       void this.capture(sessionId);
 
       mainLogger.info('SessionScreencast.start.ok', {
@@ -227,6 +245,7 @@ export class SessionScreencast {
     this.previews.delete(sessionId);
     preview.stopped = true;
     clearInterval(preview.timer);
+    this.stopStream(preview);
     if (!preview.inFlight) this.cleanupPreview(sessionId, preview);
 
     mainLogger.info('SessionScreencast.stop.ok', {
@@ -245,6 +264,61 @@ export class SessionScreencast {
     return this.previews.has(sessionId);
   }
 
+  private startStream(sessionId: string, preview: ActivePreview): void {
+    preview.streaming = true;
+    preview.onMessage = (_event, method, params) => {
+      if (method !== 'Page.screencastFrame') return;
+      // Acknowledge every frame promptly so Chromium can produce the next one.
+      if (typeof params.sessionId === 'number') {
+        void preview.dbg.sendCommand('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      }
+      if (typeof params.data === 'string' && params.data) {
+        this.deliverFrame(sessionId, preview, params.data);
+      }
+    };
+    preview.dbg.on('message', preview.onMessage);
+    void withTimeout(preview.dbg.sendCommand('Page.startScreencast', {
+      format: preview.options.format,
+      ...(preview.options.format === 'jpeg' ? { quality: preview.options.quality } : {}),
+      // Encode card-sized frames rather than repeatedly shipping a full viewport.
+      maxWidth: 960,
+      maxHeight: 600,
+      everyNthFrame: 1,
+    }), CAPTURE_TIMEOUT_MS).catch((error) => {
+      if (preview.stopped || this.previews.get(sessionId) !== preview) return;
+      this.stopStream(preview);
+      mainLogger.warn('SessionScreencast.stream.fallback', { sessionId, error: String(error) });
+    });
+  }
+
+  private stopStream(preview: ActivePreview): void {
+    if (preview.onMessage) {
+      preview.dbg.removeListener('message', preview.onMessage);
+      preview.onMessage = null;
+    }
+    if (preview.streaming && !preview.wc.isDestroyed() && preview.dbg.isAttached()) {
+      void preview.dbg.sendCommand('Page.stopScreencast').catch(() => {});
+    }
+    preview.streaming = false;
+  }
+
+  private deliverFrame(sessionId: string, preview: ActivePreview, data: string): void {
+    if (preview.stopped || this.previews.get(sessionId) !== preview) return;
+    preview.latestFrame = data;
+    preview.lastFrameAt = Date.now();
+    preview.framesSent += 1;
+    if (preview.framesSent === 1 || preview.lastFrameAt - preview.lastFrameLogAt >= 5000) {
+      preview.lastFrameLogAt = preview.lastFrameAt;
+      mainLogger.info('SessionScreencast.frame', {
+        sessionId, owner: ownerHint(preview.ownerToken),
+        framesSent: preview.framesSent, bytes: data.length, streaming: preview.streaming,
+      });
+    }
+    if (this.window && !this.window.isDestroyed()) {
+      this.window.webContents.send('session-preview-frame', sessionId, data);
+    }
+  }
+
   private async capture(sessionId: string): Promise<void> {
     const preview = this.previews.get(sessionId);
     if (!preview || preview.inFlight || preview.stopped) return;
@@ -255,6 +329,7 @@ export class SessionScreencast {
     }
 
     preview.inFlight = true;
+    const framesBeforeCapture = preview.framesSent;
     try {
       const params: CaptureScreenshotParams = {
         format: preview.options.format,
@@ -270,22 +345,11 @@ export class SessionScreencast {
         CAPTURE_TIMEOUT_MS,
       );
       if (preview.stopped || this.previews.get(sessionId) !== preview) return;
+      // Never overwrite a newer stream frame with an older bootstrap/fallback capture.
+      if (preview.framesSent !== framesBeforeCapture) return;
       if (typeof result.data !== 'string' || result.data.length === 0) return;
 
-      preview.framesSent += 1;
-      const now = Date.now();
-      if (preview.framesSent === 1 || now - preview.lastFrameLogAt >= 5000) {
-        preview.lastFrameLogAt = now;
-        mainLogger.info('SessionScreencast.frame', {
-          sessionId,
-          owner: ownerHint(preview.ownerToken),
-          framesSent: preview.framesSent,
-          bytes: result.data.length,
-        });
-      }
-      if (this.window && !this.window.isDestroyed()) {
-        this.window.webContents.send('session-preview-frame', sessionId, result.data);
-      }
+      this.deliverFrame(sessionId, preview, result.data);
     } catch (err) {
       const error = (err as Error).message;
       mainLogger.warn(error.startsWith('capture_timeout_') ? 'SessionScreencast.capture.timeout' : 'SessionScreencast.capture.error', {
@@ -308,6 +372,7 @@ export class SessionScreencast {
     if (active && active !== preview) {
       if (preview.attachedByUs && active.dbg === preview.dbg) active.attachedByUs = true;
       if (preview.parkedByUs) active.parkedByUs = true;
+      active.backgroundThrottling = preview.backgroundThrottling;
       mainLogger.info('SessionScreencast.cleanup.skipStalePreview', {
         sessionId,
         owner: ownerHint(preview.ownerToken),
@@ -326,6 +391,7 @@ export class SessionScreencast {
       parkedByUs: preview.parkedByUs,
     });
     this.detachIfOwned(preview);
+    if (!preview.wc.isDestroyed()) preview.wc.setBackgroundThrottling(preview.backgroundThrottling);
     if (!preview.parkedByUs) return;
     this.pool.releasePreviewParking(sessionId, this.window);
   }

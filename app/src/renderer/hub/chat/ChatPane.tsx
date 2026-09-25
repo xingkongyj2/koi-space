@@ -14,6 +14,7 @@ import './chat.css';
 
 interface ChatPaneProps {
   sessionId: string;
+  showBrowserPreview?: boolean;
   onSwitchToBrowser: () => void;
   onExit: () => void;
 }
@@ -25,7 +26,7 @@ function formatCost(usd?: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps): React.ReactElement {
+export function ChatPane({ sessionId, onSwitchToBrowser, onExit, showBrowserPreview = true }: ChatPaneProps): React.ReactElement {
   // sessions.listAll (used at boot) returns metadata only — output[] is empty
   // until something triggers hydrateOutput in the main process. Call
   // sessions.get on mount so the transcript repaints from the DB instead of
@@ -315,9 +316,9 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit }: ChatPaneProps
           onShare={onShare}
         />
         <div className="chat-composer">
-          <div className="chat-preview-rail">
+          {showBrowserPreview && <div className="chat-preview-rail">
             <BrowserPreview sessionId={sessionId} onExpand={onSwitchToBrowser} />
-          </div>
+          </div>}
           {composer}
         </div>
       </div>
