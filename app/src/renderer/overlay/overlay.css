@@ -1,0 +1,43 @@
+/**
+ * Takeover overlay document chrome.
+ *
+ * The view sits directly on top of the session's browser view, so the document
+ * stays transparent while active and the effect (see
+ * components/ai-control-effect) composites over real page content. Idle gets an
+ * opaque theme-aware fill because it covers a not-yet-navigated view.
+ */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Geist', 'Söhne', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body[data-mode='idle'] {
+  background: #131318;
+}
+
+@media (prefers-color-scheme: light) {
+  body[data-mode='idle'] {
+    background: #f4f4f6;
+  }
+  body[data-mode='idle'] .overlay-idle-label {
+    color: rgba(40, 40, 50, 0.55);
+  }
+}
+
+.overlay-idle-label {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(200, 210, 225, 0.55);
+  pointer-events: none;
+  user-select: none;
+}

@@ -1716,11 +1716,15 @@ app.whenReady().then(async () => {
     return browserPool.detachFromWindow(validatedId, shellWindow);
   });
 
-  // ---- Takeover overlay (pulsing glow + stop-and-take-over button) ----
+  // ---- Takeover overlay (AI control effect + stop banner) ----
   ipcMain.handle('takeover:show', (_event, id: string, bounds: { x: number; y: number; width: number; height: number }, mode?: 'idle' | 'active') => {
     const validatedId = assertString(id, 'id', 100);
     if (!shellWindow) return;
-    takeoverOverlay.show(validatedId, shellWindow, bounds, mode ?? 'idle');
+    // The banner's context line is the task the agent is working on. Main
+    // resolves it rather than trusting the caller so a page can't label
+    // somebody else's session.
+    const subtitle = (sessionManager.getSession(validatedId)?.prompt ?? '').slice(0, 120);
+    takeoverOverlay.show(validatedId, shellWindow, bounds, mode ?? 'idle', subtitle);
     // The browser view was attached before us most of the time; reraise to
     // guarantee our overlay paints above it.
     takeoverOverlay.reraise(validatedId, shellWindow);

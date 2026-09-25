@@ -18,12 +18,21 @@ report. `analyze()` is where the Planner/Decision modules from
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from dataclasses import dataclass
 
 from . import browser, protocol
 
 FIXED_URL = "https://v.qq.com/"
+
+# The fixed task navigates and returns in well under a second, which is too
+# quick to see the takeover effect. Hold the run open with progress events so a
+# task reads as real agent work. Set KOI_AGENT_SIMULATE_SECONDS=0 to drop the
+# hold; delete this once the real Planner replaces analyze().
+SIMULATED_WORK_SECONDS = max(0.0, float(os.environ.get("KOI_AGENT_SIMULATE_SECONDS", "5")))
+SIMULATED_TICK_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,17 @@ def analyze(prompt: str) -> Plan:
     Planner and Decision modules take over.
     """
     return Plan(url=FIXED_URL, rationale="fixed target — no analysis yet")
+
+
+def simulate_work() -> None:
+    """Spend SIMULATED_WORK_SECONDS reporting progress, one event per tick."""
+    if SIMULATED_WORK_SECONDS <= 0:
+        return
+    elapsed = 0.0
+    while elapsed < SIMULATED_WORK_SECONDS:
+        time.sleep(min(SIMULATED_TICK_SECONDS, SIMULATED_WORK_SECONDS - elapsed))
+        elapsed += SIMULATED_TICK_SECONDS
+        protocol.thinking(f"Working… {min(elapsed, SIMULATED_WORK_SECONDS):.0f}s / {SIMULATED_WORK_SECONDS:.0f}s")
 
 
 def read_task() -> dict:
@@ -117,6 +137,7 @@ def main() -> int:
         protocol.thinking(f"View reports {observed} after navigating to {plan.url}")
 
     protocol.log(f"navigated; view now at {observed or '<unknown>'}")
+    simulate_work()
     protocol.done(f"Opened {observed or plan.url} in the session browser view.", iteration)
     return 0
 

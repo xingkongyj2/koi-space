@@ -258,6 +258,12 @@ const config: ForgeConfig = {
           config: 'vite.preload.config.ts',
           target: 'preload',
         },
+        {
+          // Takeover overlay preload (glow + stop control over a session view)
+          entry: 'src/preload/overlay.ts',
+          config: 'vite.preload.config.ts',
+          target: 'preload',
+        },
       ],
       renderer: [
         {
@@ -284,6 +290,11 @@ const config: ForgeConfig = {
           // Shared top-level popup renderer
           name: 'popup',
           config: 'vite.popup.config.mts',
+        },
+        {
+          // Takeover overlay renderer (src/renderer/overlay/overlay.html)
+          name: 'overlay',
+          config: 'vite.overlay.config.mts',
         },
       ],
     }),
