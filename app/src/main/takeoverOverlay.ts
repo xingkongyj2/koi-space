@@ -320,11 +320,41 @@ export function hide(sessionId: string, window: BrowserWindow | null): void {
     try { window.contentView.removeChildView(entry.view); } catch { /* ignore */ }
   }
   entry.attached = false;
-  // Let the view + its webContents GC naturally after removeChildView.
-  // Calling any destroy/close on WebContents here is brittle across Electron
-  // versions and the overlay is cheap enough to recreate on next show().
   entries.delete(sessionId);
+  reclaimView(entry);
   mainLogger.info('takeoverOverlay.hide', { sessionId });
+}
+
+/**
+ * `removeChildView` only detaches — the renderer process stays alive until the
+ * webContents is closed. `entries` is keyed per session, so an unreclaimed
+ * overlay is a permanent extra Chromium tab for the life of the app. show()
+ * builds a fresh entry on demand, so tearing down here costs nothing.
+ */
+function reclaimView(entry: OverlayEntry): void {
+  const wc = entry.view.webContents as unknown as {
+    isDestroyed: () => boolean;
+    close: (opts?: { waitForBeforeUnload?: boolean }) => void;
+    destroy?: () => void;
+  };
+  try {
+    if (!wc.isDestroyed()) wc.close();
+  } catch (err) {
+    mainLogger.warn('takeoverOverlay.reclaim.closeFailed', {
+      sessionId: entry.sessionId,
+      error: (err as Error).message,
+    });
+  }
+  setImmediate(() => {
+    try {
+      if (!wc.isDestroyed()) wc.destroy?.();
+    } catch (err) {
+      mainLogger.warn('takeoverOverlay.reclaim.destroyFailed', {
+        sessionId: entry.sessionId,
+        error: (err as Error).message,
+      });
+    }
+  });
 }
 
 export function hasOverlay(sessionId: string): boolean {
