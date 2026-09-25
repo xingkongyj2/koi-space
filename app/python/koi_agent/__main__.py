@@ -1,77 +1,131 @@
-"""Koi agent process: plan first, then execute the smallest browser path."""
+"""Process entry point for one Koi task."""
 from __future__ import annotations
-import json, sys
+
+import json
+import sys
+
 from . import browser, protocol
-from .planner import Planner, Plan, PlanError
-from .orchestrator import Orchestrator
-from .decision import Decision
-from .config import load_settings
-from .models import OpenAICompatible, JevDecision
-from .memory import Memory
-from .skills import SkillLibrary
 from .budget import Budget
+from .config import load_settings
+from .decision import Decision
+from .models import JevDecision, OpenAICompatible
+from .memory import Memory
+from .orchestrator import Orchestrator
+from .planner import Plan, PlanError, Planner
+from .skills import SkillLibrary
+
 
 def read_task() -> dict:
     raw = sys.stdin.read()
-    if not raw.strip(): raise ValueError("no task on stdin")
+    if not raw.strip():
+        raise ValueError("no task on stdin")
     value = json.loads(raw)
-    if not isinstance(value, dict): raise ValueError("task envelope must be a JSON object")
+    if not isinstance(value, dict):
+        raise ValueError("task envelope must be a JSON object")
     return value
+
 
 def browser_target(task: dict) -> tuple[int, str]:
     spec = task.get("browser")
-    if not isinstance(spec, dict): raise ValueError("envelope is missing the `browser` object")
+    if not isinstance(spec, dict):
+        raise ValueError("envelope is missing the `browser` object")
     port, target = spec.get("cdpPort"), spec.get("targetId")
-    if not isinstance(port, int) or not isinstance(target, str) or not target: raise ValueError("browser must carry cdpPort and targetId")
+    if not isinstance(port, int) or not isinstance(target, str) or not target:
+        raise ValueError("browser must carry cdpPort and targetId")
     return port, target
 
+
 def emit_plan(plan: Plan) -> None:
-    protocol.log(f"planner status={plan.status} needs_browser={plan.needs_browser} steps={len(plan.steps)}")
+    protocol.log(
+        f"planner status={plan.status} needs_browser={plan.needs_browser} "
+        f"steps={len(plan.steps)}"
+    )
     protocol.thinking(f"Planner: {plan.status}; {len(plan.steps)} step(s)")
 
+
 def main() -> int:
-    try: task = read_task()
+    try:
+        task = read_task()
     except (ValueError, json.JSONDecodeError) as exc:
-        protocol.error(f"could not read the task envelope: {exc}"); return 0
-    prompt, session_id = str(task.get("prompt") or ""), str(task.get("sessionId") or "?")
+        protocol.error(f"could not read the task envelope: {exc}")
+        return 0
+
+    prompt = str(task.get("prompt") or "")
+    session_id = str(task.get("sessionId") or "?")
     protocol.log(f"flow=receive session={session_id} prompt={prompt[:160]!r}")
+
     settings = load_settings()
-    planner_client = OpenAICompatible(settings.planner) if settings.planner.api_key else None
-    planner_model = (lambda system, user: planner_client.chat(system, user)) if planner_client else None
-    try: plan = Planner(planner_model).plan(prompt)
-    except PlanError as exc: protocol.error(f"flow=planner invalid: {exc}"); return 0
+    planner_client = (
+        OpenAICompatible(settings.planner) if settings.planner.api_key else None
+    )
+    planner_model = (
+        (lambda system, user: planner_client.chat(system, user))
+        if planner_client
+        else None
+    )
+
+    try:
+        plan = Planner(planner_model).plan(prompt)
+    except PlanError as exc:
+        protocol.error(f"flow=planner invalid: {exc}")
+        return 0
     emit_plan(plan)
+
     if plan.status == "ask":
-        protocol.notify(plan.question, "info"); protocol.done(plan.question, 0); return 0
+        protocol.notify(plan.question, "info")
+        protocol.done(plan.question, 0)
+        return 0
     if plan.status == "direct" or not plan.needs_browser:
         answer = plan.direct_answer or "已完成规划，无需打开浏览器。"
-        protocol.notify(answer, "info"); protocol.done(answer, 0); return 0
-    try: cdp_port, target_id = browser_target(task)
-    except ValueError as exc: protocol.error(f"flow=browser_gate {exc}"); return 0
-    browser.log_environment(); session = browser.BrowserSession(session_id, cdp_port, target_id)
-    try: tab = session.bind()
-    except browser.BindingLost as exc: protocol.error(f"flow=bind failed: {exc}"); return 0
+        protocol.notify(answer, "info")
+        protocol.done(answer, 0)
+        return 0
+
+    try:
+        cdp_port, target_id = browser_target(task)
+    except ValueError as exc:
+        protocol.error(f"flow=browser_gate {exc}")
+        return 0
+
+    browser.log_environment()
+    session = browser.BrowserSession(session_id, cdp_port, target_id)
+    try:
+        tab = session.bind()
+    except browser.BindingLost as exc:
+        protocol.error(f"flow=bind failed: {exc}")
+        return 0
     protocol.log(f"flow=bind tab={tab}")
-    step = plan.steps[0]; url = step.start_url
-    if not url:
+
+    if not plan.steps[0].start_url:
         protocol.notify("规划已生成，当前步骤需要继续观察页面后执行。", "info")
-        protocol.done(step.goal, 0); return 0
-    protocol.log(f"flow=runtime start steps={len(plan.steps)}")
+        protocol.done(plan.steps[0].goal, 0)
+        return 0
+
     try:
         decision = None
         if settings.decision.api_key:
-            jev = JevDecision(settings.decision)
-            decision = Decision(lambda payload: json.dumps({"actions": [{"kind": "click", "ref": str(jev.choose(plan.steps[0].goal, payload).get("target", ""))}]}))
-        summary = Orchestrator(
-            session, plan, decision=decision,
+            decision = Decision(jev=JevDecision(settings.decision))
+        orchestrator = Orchestrator(
+            session,
+            plan,
+            decision=decision,
             budget=Budget(settings.max_steps, settings.max_failures, settings.max_seconds),
             memory=Memory(settings.memory_path),
-            skills=SkillLibrary(settings.skills_path) if settings.skills_path else None,
-        ).run()
+            skills=SkillLibrary(settings.skills_path),
+        )
+        summary = orchestrator.run()
     except browser.BindingLost as exc:
-        protocol.error(f"flow=runtime binding lost: {exc}"); return 0
-    protocol.done(summary, len(plan.steps)); return 0
+        protocol.error(f"flow=runtime binding lost: {exc}")
+        return 0
+
+    protocol.done(summary, len(plan.steps))
+    return 0
+
 
 if __name__ == "__main__":
-    try: sys.exit(main())
-    except Exception as exc: protocol.log(f"unhandled exception: {exc!r}"); protocol.error(f"agent crashed: {exc}"); sys.exit(0)
+    try:
+        sys.exit(main())
+    except Exception as exc:  # Last resort: never leave the task hanging.
+        protocol.log(f"unhandled exception: {exc!r}")
+        protocol.error(f"agent crashed: {exc}")
+        sys.exit(0)
