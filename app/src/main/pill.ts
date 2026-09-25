@@ -296,7 +296,7 @@ export function createPillWindow(): BrowserWindow {
     alwaysOnTop: true,
     hasShadow: true,
     resizable: false,
-    backgroundColor: isMac ? '#00000000' : '#0b0d10',
+    backgroundColor: isMac ? '#00000000' : '#101111',
     roundedCorners: true,
     skipTaskbar: true,
     show: false,

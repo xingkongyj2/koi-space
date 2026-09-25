@@ -17,69 +17,127 @@
 =========================================================================== */
 
 :root {
-  /* Slate scale — 0 = darkest, 12 = lightest */
-  --slate-0:  #030305;
-  --slate-1:  #0e0e11;
-  --slate-2:  #131318;
-  --slate-3:  #181820;
-  --slate-4:  #1d1d26;
-  --slate-5:  #22222c;
-  --slate-6:  #292932;
-  --slate-7:  #1e1e24;
-  --slate-8:  #282830;
-  --slate-9:  #3a3a44;
-  --slate-10: #6e737d;
-  --slate-11: #8a8f98;
-  --slate-12: #f0f0f2;
+  /* Slate scale — 0 = darkest, 12 = lightest.
+     Remapped onto the Black Bear neutral palette: near-black canvas, warm
+     neutral surfaces, and a notably lighter border than the old blue-grey
+     scheme (the border is what makes the gradient cards read as cards). */
+  --slate-0:  #0a0a0b;
+  --slate-1:  #101111;
+  --slate-2:  #171718;
+  --slate-3:  #1b1b1c;
+  --slate-4:  #222223;
+  --slate-5:  #2b2b2c;
+  --slate-6:  #2d2d2d;
+  --slate-7:  #414143;
+  --slate-8:  #515153;
+  --slate-9:  #6a6a6c;
+  --slate-10: #777777;
+  --slate-11: #aaaaaa;
+  --slate-12: #f4f4f4;
 
-  /* Accent primitives — muted blue-grey, ONE accent colour */
-  --accent-base:  #6D8196;
-  --accent-dim:   #5C7085;
-  --accent-hover: #7E92A7;
+  /* Accent primitives — Black Bear green is the primary action colour, with
+     blue for informational affordances, yellow for stuck/warning, red for
+     error/stop. Green-soft is the status-dot variant (slightly deeper so the
+     glow reads on a #2d2d2d surface). */
+  --accent-base:  #93e9b1;
+  --accent-dim:   #74e193;
+  --accent-hover: #9efbbb;
+  --accent-ink:   #15321e;   /* text ON accent surfaces — never white */
 
-  /* Extended slate-blue palette (from intro.png artwork) */
-  --palette-100:  #bfcddc;
-  --palette-300:  #8ea7c1;
-  --palette-500:  #6d8196;
+  /* Extended palette — Black Bear status hues. */
+  --palette-100:  #c1ffd3;
+  --palette-300:  #8fc5e9;
+  --palette-500:  #93e9b1;
   --palette-700:  #4e5d6d;
   --palette-900:  #313b46;
 
   /* Status primitives */
-  --danger:  #f87171;
-  --success: #4ade80;
-  --warning: #f59e0b;
-  --info:    #60a5fa;
+  --danger:  #ef6684;
+  --success: #93e9b1;
+  --warning: #e6f878;
+  --info:    #8fc5e9;
+  /* Pink is the reference's fourth label colour (collaborator chips, the
+     "negative" port). Kept distinct from --danger so a label never reads as
+     an error. */
+  --pink:    #ef9ac0;
 
   /* RGB triplets used inside rgba() so opacity stays per-callsite while the
      channel colour flips by theme. Reference as rgba(var(--shadow-rgb), X). */
   --shadow-rgb:    0, 0, 0;
   --highlight-rgb: 255, 255, 255;
 
+  /* ===========================================================================
+     CANVAS ATMOSPHERE — the dotted workflow background
+     The dot grid is a radial-gradient repeated on a square tile; grain is an
+     inline SVG turbulence mask. Both are tokenised so a light theme can dial
+     them down without touching component CSS.
+  =========================================================================== */
+
+  --canvas-dot:      rgba(119, 119, 119, 0.13);
+  --canvas-dot-size: 1.35px;
+  --canvas-dot-fade: 1.8px;
+  --canvas-dot-tile: 21px;
+  /* Grain is baked faint into the SVG so it can ride as a plain background
+     layer — a pseudo-element would need a positioned parent and a z-index that
+     competes with real content. */
+  --canvas-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23fff' filter='url(%23n)' opacity='.035' d='M0 0h160v160H0z'/%3E%3C/svg%3E");
+  --canvas-grain-tile: 160px;
+
+  /* ===========================================================================
+     SURFACE RECIPES — three tiers every card in the app maps onto
+     raised  : the default opaque card (gradient + top inset highlight)
+     glass   : floats over the canvas; backdrop-blur, near-white hairline border
+     inset   : recessed wells — inputs, code, log output
+  =========================================================================== */
+
+  --surface-raised-bg:    linear-gradient(128deg, rgba(45, 45, 45, 0.92), rgba(43, 43, 43, 0.93));
+  --surface-raised-border: var(--slate-8);
+  --surface-glass-bg:      linear-gradient(135deg, rgba(48, 46, 49, 0.91), rgba(27, 27, 29, 0.87));
+  --surface-glass-border:  rgba(255, 255, 255, 0.08);
+  --surface-glass-blur:    28px;
+  --surface-inset-bg:      var(--slate-2);
+  --surface-inset-border:  #242426;
+
+  /* Header sheen — the blurred violet/blue/pink light that sits behind a
+     card's transparent header. Three off-canvas radial blobs read as one
+     coloured bloom bleeding in from the top edge, matching the reference's
+     .bb-ambient treatment without needing a positioned child element. */
+  --surface-sheen:
+    radial-gradient(150% 190% at 12% 0%, rgba(101, 83, 112, 0.60), transparent 68%),
+    radial-gradient(120% 170% at 55% -12%, rgba(143, 197, 233, 0.30), transparent 62%),
+    radial-gradient(110% 160% at 96% 4%, rgba(239, 154, 192, 0.26), transparent 58%);
+
+  --shadow-panel: inset 0 1px 1px rgba(255, 255, 255, 0.043), 0 5px 12px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 12px 35px rgba(0, 0, 0, 0.4);
+  --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+
   /* Menu / floating-surface tokens — used by dropdowns, popovers, sheets. */
-  --color-menu-bg:    rgba(28, 28, 32, 0.97);
-  --color-overlay-bg: rgba(10, 10, 13, 0.85);
+  --color-menu-bg:    rgba(45, 45, 45, 0.94);
+  --color-overlay-bg: rgba(10, 10, 11, 0.85);
 
   /* Glass surfaces (pill, command bars). Two-stop gradient handled at use
      site; these are the start/end stops. */
-  --color-glass-top:    rgba(30, 30, 34, 0.58);
-  --color-glass-bottom: rgba(22, 22, 26, 0.62);
+  --color-glass-top:    rgba(48, 46, 49, 0.91);
+  --color-glass-bottom: rgba(27, 27, 29, 0.87);
 
   /* ===========================================================================
      SEMANTIC COLORS (shell defaults; overridden per-theme below)
   =========================================================================== */
 
-  /* Backgrounds */
-  --color-bg-base:     var(--slate-2);
+  /* Backgrounds — four tiers on the Black Bear canvas:
+     base (#101111) the dotted page · sunken (#171718) recessed wells
+     elevated (#222223) solid cards · overlay (#2d2d2d) menus and floats */
+  --color-bg-base:     var(--slate-1);
   --color-bg-elevated: var(--slate-4);
   --color-bg-overlay:  var(--slate-6);
-  --color-bg-sunken:   var(--slate-1);
+  --color-bg-sunken:   var(--slate-2);
 
   /* Foregrounds */
   --color-fg-primary:   var(--slate-12);
   --color-fg-secondary: var(--slate-11);
   --color-fg-tertiary:  var(--slate-10);
-  --color-fg-disabled:  #3a3f48;
-  --color-fg-inverse:   var(--slate-2);
+  --color-fg-disabled:  #4a4a4c;
+  --color-fg-inverse:   var(--accent-ink);
 
   /* Borders */
   --color-border-subtle:  var(--slate-7);
@@ -90,10 +148,17 @@
   --color-accent-default: var(--accent-base);
   --color-accent-hover:   var(--accent-hover);
   --color-accent-dim:     var(--accent-dim);
-  --color-accent-muted:   rgba(109, 129, 150, 0.10);
-  --color-accent-glow:    rgba(109, 129, 150, 0.18);
+  --color-accent-muted:   rgba(147, 233, 177, 0.10);
+  --color-accent-glow:    rgba(147, 233, 177, 0.18);
+
+  /* Status — soft variants for tinted icon chips and hover fills. */
+  --color-status-success-soft: rgba(147, 233, 177, 0.14);
+  --color-status-info-soft:    rgba(143, 197, 233, 0.14);
+  --color-status-warning-soft: rgba(230, 248, 120, 0.14);
+  --color-status-danger-soft:  rgba(239, 102, 132, 0.14);
 
   /* Status */
+  --color-accent-pink:    var(--pink);
   --color-status-danger:  var(--danger);
   --color-status-success: var(--success);
   --color-status-warning: var(--warning);
@@ -114,9 +179,9 @@
      Never Inter. UI font: Geist. Mono: Berkeley Mono. Display: same as UI.
   =========================================================================== */
 
-  --font-ui:      'Geist', 'Söhne', system-ui, sans-serif;
+  --font-ui:      'Avenir Next', Avenir, 'Century Gothic', Geist, system-ui, sans-serif;
   --font-mono:    'Berkeley Mono', 'JetBrains Mono', ui-monospace, monospace;
-  --font-display: 'Geist', 'Söhne', system-ui, sans-serif;
+  --font-display: 'Avenir Next', Avenir, 'Century Gothic', Geist, system-ui, sans-serif;
 
   --font-size-xs:   11px;
   --font-size-sm:   12px;
@@ -166,26 +231,28 @@
   =========================================================================== */
 
   --radius-xs:   2px;
-  --radius-sm:   4px;
-  --radius-md:   6px;
-  --radius-lg:   8px;
-  --radius-xl:   12px;
-  --radius-2xl:  16px;
+  --radius-sm:   8px;
+  --radius-md:   11px;
+  --radius-lg:   15px;
+  --radius-xl:   18px;
+  --radius-2xl:  22px;
   --radius-full: 9999px;
 
   /* ===========================================================================
      DEPTH — shadows + glows
+     Cards read from an inset top highlight rather than a heavy drop shadow, so
+     the ambient dot grid stays visible underneath them.
   =========================================================================== */
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.55);
-  --shadow-xl: 0 16px 64px rgba(0, 0, 0, 0.65);
+  --shadow-sm: var(--shadow-panel);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.28);
+  --shadow-lg: var(--shadow-float);
+  --shadow-xl: 0 20px 56px rgba(0, 0, 0, 0.50);
 
-  --glow-accent-sm: 0 0 8px rgba(109, 129, 150, 0.12);
-  --glow-accent-md: 0 0 16px rgba(109, 129, 150, 0.20);
-  --glow-accent-lg: 0 0 32px rgba(109, 129, 150, 0.30);
+  --glow-accent-sm: 0 0 8px rgba(147, 233, 177, 0.14);
+  --glow-accent-md: 0 0 16px rgba(147, 233, 177, 0.22);
+  --glow-accent-lg: 0 0 32px rgba(147, 233, 177, 0.30);
   /* convenience alias — default glow used by most components */
   --glow-accent:    var(--glow-accent-sm);
 
@@ -304,6 +371,29 @@
      Going darker here lights the page on fire. */
   --shadow-rgb:    150, 155, 165;
   --highlight-rgb: 22, 23, 27;
+
+  /* Canvas + surface recipes — light counterparts. The dot grid keeps the same
+     geometry and only inverts its ink, so the layout never shifts between
+     modes. */
+  --canvas-dot: rgba(22, 23, 27, 0.09);
+  --canvas-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23000' filter='url(%23n)' opacity='.02' d='M0 0h160v160H0z'/%3E%3C/svg%3E");
+  --surface-raised-bg:     linear-gradient(128deg, #ffffff, #f7f7f9);
+  --surface-raised-border: #dcdce1;
+  --surface-glass-bg:      linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(244, 244, 246, 0.82));
+  --surface-glass-border:  rgba(22, 23, 27, 0.08);
+  --surface-inset-bg:      #ececef;
+  --surface-inset-border:  #e0e0e4;
+  --shadow-panel: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 5px 12px rgba(40, 40, 50, 0.06);
+  --shadow-float: 0 12px 35px rgba(40, 40, 50, 0.10);
+  --shadow-inset: inset 0 2px 4px rgba(40, 40, 50, 0.06);
+  --accent-ink: #10231a;
+
+  /* Same three header blobs, dialled down so they tint rather than muddy a
+     white card. */
+  --surface-sheen:
+    radial-gradient(150% 190% at 12% 0%, rgba(101, 83, 112, 0.12), transparent 68%),
+    radial-gradient(120% 170% at 55% -12%, rgba(70, 130, 180, 0.09), transparent 62%),
+    radial-gradient(110% 160% at 96% 4%, rgba(200, 110, 160, 0.08), transparent 58%);
 
   /* Floating surfaces — neutral grey glass. */
   --color-menu-bg:    rgba(244, 244, 246, 0.97);
@@ -614,6 +704,63 @@ ol {
 .stagger-4 { animation-delay: 160ms; }
 .stagger-5 { animation-delay: 200ms; }
 .stagger-6 { animation-delay: 240ms; }
+
+/* ===========================================================================
+   CANVAS + SURFACE UTILITIES
+   Shared recipes so every window composes the same dotted canvas and the same
+   three card tiers instead of re-declaring a gradient per component. Apply
+   `canvas-dots` to a window's root container — backgrounds do not inherit, so
+   putting it on <body> alone gets covered by any opaque child.
+=========================================================================== */
+
+.canvas-dots {
+  background-color: var(--color-bg-base);
+  background-image:
+    var(--canvas-grain),
+    radial-gradient(circle, var(--canvas-dot) var(--canvas-dot-size), transparent var(--canvas-dot-fade));
+  background-size: var(--canvas-grain-tile) var(--canvas-grain-tile), var(--canvas-dot-tile) var(--canvas-dot-tile);
+}
+
+/* Tier 1 — the default opaque card. */
+.surface-raised {
+  border: 1px solid var(--surface-raised-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised-bg);
+  box-shadow: var(--shadow-panel);
+}
+
+/* Tier 2 — floats over the canvas; the dot grid reads through it. */
+.surface-glass {
+  border: 1px solid var(--surface-glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-glass-bg);
+  box-shadow: var(--shadow-float), inset 0 1px 1px rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(var(--surface-glass-blur));
+}
+
+/* Tier 3 — recessed wells: inputs, selects, code and log output. */
+.surface-inset {
+  border: 1px solid var(--surface-inset-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-bg);
+  box-shadow: var(--shadow-inset);
+}
+
+/* Status dots — the small coloured indicator every card header carries.
+   Base (no modifier) is the neutral/idle ink. */
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-fg-tertiary);
+  box-shadow: 0 0 5px 2px rgba(var(--highlight-rgb), 0.07);
+}
+.status-dot--running { background: var(--success); box-shadow: 0 0 6px 2px rgba(147, 233, 177, 0.16); }
+.status-dot--stuck   { background: var(--warning); box-shadow: 0 0 6px 2px rgba(234, 250, 118, 0.19); }
+.status-dot--error   { background: var(--danger);  box-shadow: 0 0 6px 2px rgba(236, 107, 146, 0.13); }
+.status-dot--info    { background: var(--info);    box-shadow: 0 0 6px 2px rgba(130, 197, 255, 0.19); }
 
 /* ===========================================================================
    REDUCED MOTION — global catch-all (last rule wins)

@@ -34,34 +34,3 @@ export const DEFAULT_KEYBINDINGS: KeyBinding[] = [
   { id: 'meta.commandPalette', label: 'Command bar', keys: [], category: 'Meta' },
   { id: 'meta.escape', label: 'Close overlay', keys: ['Escape'], category: 'Meta' },
 ];
-
-export type ScreenId = 'dashboard' | 'grid' | 'chat' | 'settings';
-
-export const SCREEN_COMMANDS: Record<ScreenId, ActionId[]> = {
-  dashboard: [
-    'action.createPane',
-    'goto.agents',
-    'goto.settings',
-  ],
-  grid: [
-    'nav.down',
-    'nav.up',
-    'action.createPane',
-    'action.followUp',
-    'action.close',
-    'goto.dashboard',
-    'goto.settings',
-  ],
-  chat: [
-    'action.followUp',
-    'goto.dashboard',
-    'goto.agents',
-    'goto.settings',
-  ],
-  settings: [
-    'goto.dashboard',
-    'goto.agents',
-    'action.createPane',
-    'goto.settings',
-  ],
-};

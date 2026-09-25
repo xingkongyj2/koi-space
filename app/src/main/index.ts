@@ -367,7 +367,7 @@ function openShellAndWire(): BrowserWindow {
     return result;
   });
 
-  // Cmd+K is handled by the hub renderer's own keydown listener (CommandBar).
+  // Cmd+K is handled by the hub renderer's own keydown listener.
   // No before-input-event intercept needed — let the key pass through to the DOM.
 
   buildApplicationMenu();

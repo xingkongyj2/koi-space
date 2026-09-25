@@ -9,15 +9,57 @@
 --------------------------------------------------------------------------- */
 
 .hub-root {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: var(--color-bg-sunken);
+  background-color: var(--color-bg-base);
+  background-image:
+    var(--canvas-grain),
+    radial-gradient(circle, var(--canvas-dot) var(--canvas-dot-size), transparent var(--canvas-dot-fade));
+  background-size: var(--canvas-grain-tile) var(--canvas-grain-tile), var(--canvas-dot-tile) var(--canvas-dot-tile);
   color: var(--color-fg-primary);
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
+}
+
+/* Black Bear's ambient light belongs behind the whole shell, including the
+   transparent sidebar. Keep both layers below content and out of hit testing. */
+.hub-root::before,
+.hub-root::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(70px);
+}
+
+.hub-root::before {
+  width: 140px;
+  height: 140px;
+  left: 7%;
+  top: 44%;
+  background: #5a6239;
+  opacity: .12;
+}
+
+.hub-root::after {
+  width: 280px;
+  height: 300px;
+  left: 49%;
+  top: 30%;
+  background: #655370;
+  opacity: .18;
+}
+
+.hub-root > .hub-navbar,
+.hub-root > .hub-body {
+  position: relative;
+  z-index: 1;
 }
 
 /* ---------------------------------------------------------------------------
@@ -30,7 +72,7 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: var(--color-bg-sunken);
+  background: transparent;
   color: var(--color-fg-primary);
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
@@ -348,12 +390,13 @@
   display: flex;
   align-items: center;
   padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--surface-glass-border);
+  border-radius: var(--radius-md);
   font-size: var(--font-size-2xs);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--color-fg-tertiary);
-  background-color: var(--color-bg-elevated);
+  background: var(--surface-glass-bg);
   transition:
     color var(--duration-fast) var(--ease-out),
     background-color var(--duration-fast) var(--ease-out);
@@ -414,7 +457,10 @@
   display: inline-flex;
   align-items: center;
   height: 28px;
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--surface-glass-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-glass-bg);
   color: var(--color-fg-disabled);
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
@@ -427,8 +473,10 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
+  border: 1px solid var(--surface-glass-border);
   border-radius: var(--radius-md);
+  background: var(--surface-glass-bg);
+  backdrop-filter: blur(var(--surface-glass-blur));
   color: var(--color-fg-tertiary);
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
@@ -456,14 +504,10 @@
   top: calc(100% + var(--space-2));
   left: 0;
   min-width: 320px;
-  background-color: var(--color-bg-overlay);
-  background-image: linear-gradient(180deg, rgba(var(--highlight-rgb), 0.06), rgba(var(--highlight-rgb), 0));
-  border: 1px solid var(--color-border-strong);
+  background: var(--surface-raised-bg);
+  border: 1px solid var(--surface-raised-border);
   border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--highlight-rgb), 0.08),
-    0 16px 40px rgba(var(--shadow-rgb), 0.5),
-    0 4px 12px rgba(var(--shadow-rgb), 0.3);
+  box-shadow: var(--shadow-float), inset 0 1px 1px rgba(255, 255, 255, 0.08);
   z-index: var(--z-tooltip);
   overflow: hidden;
 }
@@ -770,17 +814,12 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background-color: var(--color-bg-base);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border-subtle);
-  overflow: hidden;
+  /* The pane is not itself a card: its header floats on the dotted canvas and
+     the browser inside is the card. Status lives in the header dot, not in an
+     outline around the whole thing. */
+  background: transparent;
   min-height: 0;
   max-height: 100%;
-  transition: border-color var(--duration-normal) var(--ease-out);
-}
-
-.pane--running {
-  border-color: var(--color-border-default);
 }
 
 .pane__header {
@@ -789,6 +828,8 @@
   gap: var(--space-4);
   padding: var(--space-6) var(--space-8) var(--space-4);
   flex-shrink: 0;
+  background-image: var(--surface-sheen);
+  background-repeat: no-repeat;
 }
 
 .pane__dot {
@@ -880,8 +921,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 28px;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-md);
+  border: 1px solid var(--surface-glass-border);
+  background: var(--surface-glass-bg);
   color: var(--color-fg-tertiary);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
@@ -1239,6 +1283,13 @@ button:focus:not(:focus-visible) {
   flex-direction: column;
   gap: 0;
   min-height: 0;
+  /* The card that actually holds the browser. Border + radius + background
+     only: the native WebContentsView is positioned from this element's
+     measured rect, and box-sizing is border-box, so none of this moves it. */
+  background: var(--surface-raised-bg);
+  border: 1px solid var(--surface-raised-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
 }
 
 .pane__term-wrap {
@@ -1989,7 +2040,7 @@ button:focus:not(:focus-visible) {
 }
 
 .pane__output > .followup.followup--dragover {
-  outline: 1px dashed var(--color-accent, #7dd3fc);
+  outline: 1px dashed var(--color-accent-default);
   outline-offset: 2px;
 }
 
@@ -2051,12 +2102,12 @@ button:focus:not(:focus-visible) {
 }
 
 .followup__attach-btn:hover {
-  color: var(--color-accent, #7dd3fc);
+  color: var(--color-accent-default);
 }
 
 .pane__output > .followup .followup__chevron {
   font-size: var(--font-size-sm);
-  color: #7dd3fc;
+  color: var(--color-accent-default);
   font-weight: 600;
 }
 
@@ -2089,23 +2140,22 @@ button:focus:not(:focus-visible) {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  background-color: var(--color-bg-sunken);
-  border: 1px solid rgba(var(--highlight-rgb), 0.04);
+  background:
+    radial-gradient(ellipse 42% 90% at 92% 0%, rgba(80, 131, 168, 0.24), transparent 72%),
+    radial-gradient(ellipse 58% 70% at 54% 0%, rgba(180, 124, 171, 0.18), transparent 74%),
+    linear-gradient(140deg, rgba(34, 34, 36, 0.96), rgba(39, 39, 40, 0.94));
+  border: 1px solid #505054;
   border-radius: var(--radius-lg);
   padding: var(--space-4) var(--space-6);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--highlight-rgb), 0.06),
-    0 1px 0 rgba(var(--highlight-rgb), 0.03),
-    0 4px 12px rgba(var(--shadow-rgb), 0.5),
-    0 12px 32px rgba(var(--shadow-rgb), 0.4);
+  box-shadow: var(--shadow-panel);
   transition:
     border-color var(--duration-normal) var(--ease-out),
     box-shadow var(--duration-normal) var(--ease-out);
 }
 
 .task-input__box--focused {
-  border-color: var(--color-border-default);
-  box-shadow: var(--glow-accent-sm);
+  border-color: #84c99b;
+  box-shadow: 0 0 0 1px rgba(132, 201, 155, 0.22), 0 12px 28px rgba(0, 0, 0, 0.28);
 }
 
 .task-input__box--drag {
@@ -2149,6 +2199,11 @@ button:focus:not(:focus-visible) {
 .task-input__attach:hover {
   color: var(--color-fg-primary);
   background-color: var(--color-bg-elevated);
+}
+
+.task-input__actions {
+  padding-top: var(--space-1);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .task-input__textarea {
@@ -2481,20 +2536,7 @@ button:focus:not(:focus-visible) {
   box-shadow: 0 8px 32px rgba(var(--shadow-rgb), 0.5);
 }
 
-.dashboard__bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
-  display: block;
-  /* Show the theme bg before the WebGL shader paints its first frame —
-     otherwise the canvas flashes black during mount/route swaps. */
-  background-color: var(--color-bg-base);
-}
-
-.dashboard > *:not(.dashboard__bg):not(.dashboard__drop-overlay) {
+.dashboard > *:not(.dashboard__drop-overlay) {
   position: relative;
   z-index: 1;
 }
@@ -2528,33 +2570,79 @@ button:focus:not(:focus-visible) {
 }
 
 .dashboard__stat-card {
+  /* Exact .generator-node material from black-bear/app/globals.css. */
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-5) var(--space-5) 0;
-  background-color: var(--color-bg-sunken);
-  border: 1px solid rgba(var(--highlight-rgb), 0.04);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--highlight-rgb), 0.06),
-    0 1px 0 rgba(var(--highlight-rgb), 0.03),
-    0 4px 12px rgba(var(--shadow-rgb), 0.5),
-    0 12px 32px rgba(var(--shadow-rgb), 0.4);
+  padding: 0 4px 4px;
+  min-height: 188px;
+  border: 1px solid #505054;
+  border-radius: 15px;
+  background:
+    radial-gradient(ellipse 47px 66px at 88% 12%, #5083a888, transparent),
+    radial-gradient(ellipse 80px 36px at 57% 13%, #b47cab7a, transparent),
+    linear-gradient(140deg, #222224, #272728);
+  /* Preserve the reference's 313px inner gradient height. Scaling it to this
+     shorter card would move the blooms up and change the header's colours. */
+  background-size: 100% 313px, 100% 313px, 100% 100%;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 3px #20202170, 0 15px 35px #0004;
   overflow: hidden;
-  min-height: 160px;
+}
+
+.dashboard__stat-card:hover {
+  border-color: #707073;
 }
 
 .dashboard__stat-card-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
+  height: 35px;
+  flex-shrink: 0;
+  padding: 0 13px 0 14px;
+  color: #f4f4f4;
+}
+
+.dashboard__stat-card-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+  background: var(--color-fg-tertiary);
+}
+
+.dashboard__stat-card-dot--running {
+  background: #80dca3;
+  box-shadow: 0 0 6px 2px #7dec9b28;
+}
+
+.dashboard__stat-card-dot--idle {
+  background: #e6f878;
+  box-shadow: 0 0 6px 2px #eafa7630;
+}
+
+.dashboard__stat-card-dot--total {
+  background: #8fc5e9;
+  box-shadow: 0 0 6px 2px #82c5ff30;
+}
+
+.dashboard__stat-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-5) var(--space-5) 0;
+  background: #2c2c2cf0;
+  border: 1px solid #575758;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .dashboard__stat-card-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-fg-tertiary);
-  font-weight: var(--font-weight-medium);
+  font-size: 10px;
+  color: inherit;
+  font-weight: 400;
 }
 
 .dashboard__stat-card-value {
@@ -2584,9 +2672,11 @@ button:focus:not(:focus-visible) {
    FOCUS STATES — vim j/k navigation highlight
 --------------------------------------------------------------------------- */
 
-.pane--focused {
-  border-color: var(--color-accent-default);
-  box-shadow: 0 0 0 1px var(--color-accent-default);
+/* Focus reads as a firmer neutral edge, not a coloured ring — the green outline
+   around the browser was the single loudest thing on the page. */
+.pane--focused .pane__output {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-panel), 0 0 0 1px var(--color-border-strong);
 }
 
 .list-view__row--focused {
@@ -2776,7 +2866,6 @@ button:focus:not(:focus-visible) {
   min-height: 0;
   display: flex;
   overflow: hidden;
-  background-color: var(--color-bg-base);
   color: var(--color-fg-primary);
 }
 
@@ -2912,14 +3001,10 @@ button:focus:not(:focus-visible) {
   gap: 0;
   width: 100%;
   overflow: hidden;
-  background-color: var(--color-bg-sunken);
-  border: 1px solid rgba(var(--highlight-rgb), 0.04);
+  background: var(--surface-raised-bg);
+  border: 1px solid var(--surface-raised-border);
   border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--highlight-rgb), 0.06),
-    0 1px 0 rgba(var(--highlight-rgb), 0.03),
-    0 4px 12px rgba(var(--shadow-rgb), 0.5),
-    0 12px 32px rgba(var(--shadow-rgb), 0.4);
+  box-shadow: var(--shadow-panel);
 }
 
 @media (max-width: 760px) {
@@ -3205,14 +3290,10 @@ button:focus:not(:focus-visible) {
   gap: var(--space-3);
   width: 100%;
   padding: var(--space-4) var(--space-5);
-  background-color: var(--color-bg-sunken);
-  border: 1px solid rgba(var(--highlight-rgb), 0.04);
+  background: var(--surface-raised-bg);
+  border: 1px solid var(--surface-raised-border);
   border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--highlight-rgb), 0.06),
-    0 1px 0 rgba(var(--highlight-rgb), 0.03),
-    0 4px 12px rgba(var(--shadow-rgb), 0.5),
-    0 12px 32px rgba(var(--shadow-rgb), 0.4);
+  box-shadow: var(--shadow-panel);
 }
 
 .conn-card__header {
@@ -3490,113 +3571,6 @@ button:focus:not(:focus-visible) {
 .conn-card__sub .conn-card__name--sub {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-}
-
-/* ----------------------------------------------------------------------------
-   COMMAND HINTS — persistent bottom bar showing per-screen keyboard commands
----------------------------------------------------------------------------- */
-
-.cmdhints {
-  flex: 0 0 auto;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-5);
-  background-color: rgba(125, 155, 210, 0.10);
-  border-top: 1px solid rgba(125, 155, 210, 0.22);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-fg-secondary);
-}
-
-.cmdhints__items {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.cmdhints__items::-webkit-scrollbar {
-  display: none;
-}
-
-.cmdhints__item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: transparent;
-  border: 0;
-  padding: var(--space-1) var(--space-2);
-  border-radius: 4px;
-  color: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    background-color var(--duration-fast) var(--ease-out);
-}
-
-.cmdhints__item:hover {
-  background-color: var(--color-surface-interactive-hover);
-  color: var(--color-fg-primary);
-}
-
-.cmdhints__keys {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.cmdhints__kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-fg-primary);
-  background-color: var(--color-surface-interactive-active);
-  border: 1px solid var(--color-border-subtle, rgba(var(--highlight-rgb), 0.1));
-  border-radius: 3px;
-}
-
-.cmdhints__label {
-  font-size: var(--font-size-xs);
-  color: var(--color-fg-tertiary);
-}
-
-.cmdhints__item:hover .cmdhints__label {
-  color: var(--color-fg-secondary);
-}
-
-.cmdhints__close {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  color: var(--color-fg-tertiary);
-  cursor: pointer;
-  transition:
-    color var(--duration-fast) var(--ease-out),
-    background-color var(--duration-fast) var(--ease-out);
-}
-
-.cmdhints__close:hover {
-  color: var(--color-fg-primary);
-  background-color: var(--color-surface-interactive-hover);
 }
 
 /* ---------------------------------------------------------------------------
@@ -4136,15 +4110,28 @@ button:focus:not(:focus-visible) {
 .sidebar {
   flex-shrink: 0;
   width: 200px;
+  margin: var(--space-4) 0 var(--space-4) var(--space-4);
   display: flex;
   flex-direction: column;
-  background-color: var(--color-bg-sunken);
-  border-top: 1px solid var(--color-border-subtle);
-  border-right: 1px solid var(--color-border-subtle);
-  border-top-right-radius: var(--radius-lg);
+  /* Match the rendered .model-node, including its lack of backdrop blur.
+     Blurring the 21px canvas grid by 28px makes this look opaque. */
+  border: 1px solid #454545;
+  border-radius: 15px;
+  background: #1c1d1cad;
+  box-shadow: inset 0 1px 1px #ffffff0b, 0 5px 12px #0002;
   overflow: hidden;
   font-size: var(--font-size-xs);
   position: relative;
+}
+
+/* The Model card's outer shell is the glass layer. Keep every sidebar region
+   transparent so that layer remains visible across the full menu height. */
+.sidebar__header,
+.sidebar__quick,
+.sidebar__groups,
+.sidebar__group,
+.sidebar__group-body {
+  background: transparent;
 }
 
 .sidebar__edge-toggle {
@@ -4271,7 +4258,6 @@ button:focus:not(:focus-visible) {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-3) var(--space-6);
-  border-bottom: 1px solid var(--color-border-subtle);
   min-height: 42px;
   box-sizing: border-box;
 }
@@ -4281,7 +4267,6 @@ button:focus:not(:focus-visible) {
   flex-direction: column;
   gap: 2px;
   padding: var(--space-3) var(--space-3) var(--space-2);
-  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .sidebar[data-collapsed='true'] .sidebar__quick {
@@ -4300,19 +4285,21 @@ button:focus:not(:focus-visible) {
   width: 100%;
   padding: 6px 8px;
   background: transparent;
-  border: 0;
-  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--color-fg-secondary);
   cursor: pointer;
   text-align: left;
   font-size: var(--font-size-sm);
   line-height: 1.2;
   box-sizing: border-box;
-  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), filter var(--duration-fast) var(--ease-out);
 }
 
 .sidebar__quick-row:hover {
-  background-color: var(--color-surface-interactive-hover);
+  background: linear-gradient(130deg, #222223d9, #1b1b1c8c);
+  border-color: #ffffff03;
+  box-shadow: inset 0 1px 1px #ffffff03, 0 3px 8px #00000012;
   color: var(--color-fg-primary);
 }
 
@@ -4406,18 +4393,18 @@ button:focus:not(:focus-visible) {
 }
 
 .sidebar__group-icon--active {
-  color: #3fb950;
-  background: rgba(63, 185, 80, 0.14);
+  color: var(--color-status-success);
+  background: var(--color-status-success-soft);
 }
 
 .sidebar__group-icon--done {
-  color: #58a6ff;
-  background: rgba(88, 166, 255, 0.14);
+  color: var(--color-status-info);
+  background: var(--color-status-info-soft);
 }
 
 .sidebar__group-icon--hidden {
-  color: #8b949e;
-  background: rgba(139, 148, 158, 0.14);
+  color: var(--color-fg-tertiary);
+  background: var(--color-surface-interactive);
 }
 
 .sidebar__group-chevron {
@@ -4540,8 +4527,8 @@ button:focus:not(:focus-visible) {
   width: 100%;
   padding: 4px 8px 4px 4px;
   background: transparent;
-  border: 0;
-  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--color-fg-secondary);
   cursor: pointer;
   text-align: left;
@@ -4553,7 +4540,9 @@ button:focus:not(:focus-visible) {
 }
 
 .sidebar__row:hover {
-  background-color: var(--color-surface-interactive-hover);
+  background: linear-gradient(130deg, #222223d9, #1b1b1c8c);
+  border-color: #ffffff03;
+  box-shadow: inset 0 1px 1px #ffffff03, 0 3px 8px #00000012;
   color: var(--color-fg-primary);
 }
 
@@ -4564,9 +4553,15 @@ button:focus:not(:focus-visible) {
   outline: none;
 }
 
-.sidebar__row--active {
-  background-color: var(--color-surface-interactive-active, var(--color-surface-raised));
-  color: var(--color-fg-primary);
+.sidebar__row--active,
+.sidebar__row--active:hover,
+.sidebar__quick-row--active,
+.sidebar__quick-row--active:hover {
+  /* Black Bear's selected black navigation card. */
+  background: linear-gradient(135deg, #242425, #1c1c1d);
+  border-color: #ffffff03;
+  box-shadow: inset 0 1px 1px #ffffff03, 0 3px 8px #00000012;
+  color: #e9e9e9;
 }
 
 .sidebar__row-icon {
@@ -4577,7 +4572,8 @@ button:focus:not(:focus-visible) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-raised);
+  background: rgba(23, 23, 24, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: var(--radius-sm);
 }
 
@@ -4719,11 +4715,11 @@ button:focus:not(:focus-visible) {
 }
 
 .sidebar__row-menu-item--danger {
-  color: #f85149;
+  color: var(--color-status-danger);
 }
 
 .sidebar__row-menu-item--danger:hover {
-  background: rgba(248, 81, 73, 0.12);
+  background: var(--color-status-danger-soft);
   color: #ff7a72;
 }
 

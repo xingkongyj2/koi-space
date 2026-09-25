@@ -424,7 +424,7 @@ export function OnboardingApp() {
   }, [accelerator, pillOpen, platform, recording, step]);
 
   return (
-    <div className="onboarding-container">
+    <div className="onboarding-container canvas-dots">
       <div className="onboarding-drag-region" />
 
       <div className={`onboarding-content ${step === 'intro' ? 'onboarding-content-wide' : ''}`}>

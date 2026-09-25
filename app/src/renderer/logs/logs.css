@@ -28,12 +28,13 @@ html, body {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-base);
-  /* Brighter border + outer glow so the pane stands out against dark
-     site backgrounds instead of blending into them. */
-  border: 1px solid rgba(var(--highlight-rgb), 0.14);
-  box-shadow: 0 6px 22px rgba(var(--shadow-rgb), 0.55), 0 0 0 1px rgba(125, 211, 252, 0.05);
-  border-radius: 10px;
+  /* Glass, not solid: this panel floats over whatever page the agent is on,
+     so it has to stay legible on both a black site and a white one. */
+  background: var(--surface-glass-bg);
+  border: 1px solid var(--surface-glass-border);
+  box-shadow: var(--shadow-float), inset 0 1px 1px rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(var(--surface-glass-blur));
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -263,13 +264,13 @@ html, body {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: rgba(125, 211, 252, 0.05);
+  background: var(--color-accent-muted);
   border-top: 1px solid var(--color-accent-default);
   transition: background 140ms ease;
 }
 
 .logs-followup:focus-within {
-  background: rgba(125, 211, 252, 0.10);
+  background: var(--color-accent-glow);
 }
 
 .logs-followup__chevron {
@@ -353,12 +354,12 @@ html, body {
   height: 10px;
   border-radius: 50%;
   background: var(--color-accent-default);
-  box-shadow: 0 0 0 0 rgba(125, 211, 252, 0.5);
+  box-shadow: 0 0 0 0 rgba(147, 233, 177, 0.5);
   animation: logs-pulse 1.6s ease-out infinite;
 }
 
 @keyframes logs-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(125, 211, 252, 0.5); }
-  70%  { box-shadow: 0 0 0 8px rgba(125, 211, 252, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(125, 211, 252, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(147, 233, 177, 0.5); }
+  70%  { box-shadow: 0 0 0 8px rgba(147, 233, 177, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(147, 233, 177, 0); }
 }

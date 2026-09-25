@@ -11,23 +11,18 @@
  */
 
 [data-theme="shell"] {
-  /* -- Font families -- */
-  --font-ui:      'Geist', 'Söhne', system-ui, sans-serif;
-  --font-mono:    'Berkeley Mono', 'JetBrains Mono', ui-monospace, monospace;
-  --font-display: 'Geist', 'Söhne', system-ui, sans-serif;
-
   /* -- Semantic background overrides -- */
-  --color-bg-base:     var(--slate-2);   /* #0a0a0d */
-  --color-bg-elevated: var(--slate-4);   /* #111114 */
-  --color-bg-overlay:  var(--slate-6);   /* #16161a */
-  --color-bg-sunken:   var(--slate-1);   /* #070709 */
+  --color-bg-base:     var(--slate-1);   /* #101111 — the dotted canvas */
+  --color-bg-elevated: var(--slate-4);   /* #222223 — solid cards */
+  --color-bg-overlay:  var(--slate-6);   /* #2d2d2d — menus and floats */
+  --color-bg-sunken:   var(--slate-2);   /* #171718 — recessed wells */
 
   /* -- Semantic foreground overrides -- */
   --color-fg-primary:   var(--slate-12); /* #f0f0f2 */
   --color-fg-secondary: var(--slate-11); /* #8a8f98 */
   --color-fg-tertiary:  var(--slate-10); /* #6e737d — WCAG 3.79:1 on bg-overlay */
-  --color-fg-disabled:  #3a3f48;
-  --color-fg-inverse:   var(--slate-2);  /* #0a0a0d — text on accent backgrounds */
+  --color-fg-disabled:  #4a4a4c;
+  --color-fg-inverse:   var(--accent-ink);  /* #15321e — text on accent backgrounds */
 
   /* -- Semantic border overrides -- */
   --color-border-subtle:  var(--slate-7); /* #1e1e24 */
@@ -38,10 +33,10 @@
   --color-accent-default: var(--accent-base);   /* #6D8196 */
   --color-accent-hover:   var(--accent-hover);  /* #7E92A7 */
   --color-accent-dim:     var(--accent-dim);    /* #5C7085 */
-  --color-accent-muted:   rgba(109, 129, 150, 0.10);
-  --color-accent-glow:    rgba(109, 129, 150, 0.18);
+  --color-accent-muted:   rgba(147, 233, 177, 0.10);
+  --color-accent-glow:    rgba(147, 233, 177, 0.18);
   /* backward-compat alias for older component code */
-  --color-accent-subtle:  rgba(109, 129, 150, 0.10);
+  --color-accent-subtle:  rgba(147, 233, 177, 0.10);
 
   /* -- Status overrides -- */
   --color-status-success: var(--success); /* #4ade80 */
@@ -51,7 +46,7 @@
   --color-status-info:    var(--info);    /* #60a5fa */
 
   /* -- Surface overrides -- */
-  --color-surface-glass: rgba(22, 22, 26, 0.85);
+  --color-surface-glass: rgba(38, 37, 39, 0.88);
   --color-surface-scrim: rgba(0, 0, 0, 0.60);
 
   /* -- Shell-specific tokens (no parallel in onboarding theme) -- */
@@ -59,19 +54,10 @@
   --color-tab-active-bg: var(--slate-6);  /* #16161a */
   --color-tab-hover-bg:  var(--slate-5);  /* #14141a */
   --color-pill-bg:       var(--slate-6);  /* #16161a */
-  --color-pill-border:   #2e2e38;
+  --color-pill-border:   var(--slate-7);
 
   /* -- Modal scrim -- */
   --color-modal-scrim: rgba(0, 0, 0, 0.60);
-
-  /* -- Border radii (crisp — tighter than onboarding) -- */
-  --radius-xs:   2px;
-  --radius-sm:   4px;
-  --radius-md:   6px;
-  --radius-lg:   8px;
-  --radius-xl:   12px;
-  --radius-2xl:  16px;
-  --radius-full: 9999px;
 
   /* -- Motion (snappy — shell is keyboard-first, fast feedback) -- */
   --duration-fast:     80ms;
@@ -87,16 +73,17 @@
   --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
   --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
 
-  /* -- Shadows: shell uses ZERO decorative shadows — glow only -- */
-  --shadow-xs: none;
-  --shadow-sm: none;
-  --shadow-md: none;
-  --shadow-lg: none;
-  --shadow-xl: none;
+  /* -- Shadows: cards lift on an inset top highlight, not a heavy drop, so
+     the dot grid stays readable underneath them. -- */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-sm: var(--shadow-panel);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.28);
+  --shadow-lg: var(--shadow-float);
+  --shadow-xl: 0 20px 56px rgba(0, 0, 0, 0.50);
 
-  --glow-accent-sm: 0 0 8px rgba(109, 129, 150, 0.12);
-  --glow-accent-md: 0 0 16px rgba(109, 129, 150, 0.20);
-  --glow-accent-lg: 0 0 32px rgba(109, 129, 150, 0.30);
+  --glow-accent-sm: 0 0 8px rgba(147, 233, 177, 0.14);
+  --glow-accent-md: 0 0 16px rgba(147, 233, 177, 0.22);
+  --glow-accent-lg: 0 0 32px rgba(147, 233, 177, 0.30);
   --glow-accent:    var(--glow-accent-sm);
 
   /* -- Z-index layers -- */

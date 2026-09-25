@@ -25,8 +25,8 @@ const DEFAULT_MODE: ThemeMode = 'dark';
 
 /** Hex bg colors per resolved mode — must match --color-bg-base in CSS. */
 export const WINDOW_BG: Record<ResolvedThemeMode, string> = {
-  dark:  '#131318',
-  light: '#f4f4f6',
+  dark:  '#101111',
+  light: '#f7f7f9',
 };
 
 /** Windows Controls Overlay symbol color — must contrast against WINDOW_BG. */

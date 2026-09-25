@@ -33,7 +33,7 @@ export function createOnboardingWindow(): BrowserWindow {
     minHeight: 520,
     titleBarStyle: 'hiddenInset',
     show: false,           // Show only after content loads (avoids white flash)
-    backgroundColor: '#1a1a1f',  // Match --color-bg-base before CSS loads
+    backgroundColor: '#101111',  // Match --color-bg-base before CSS loads
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

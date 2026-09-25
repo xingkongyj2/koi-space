@@ -5,7 +5,6 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  background-color: var(--color-bg-base);
   color: var(--color-fg-primary);
 }
 
@@ -14,9 +13,7 @@
   align-items: center;
   gap: 12px;
   padding: 12px 24px;
-  border-bottom: 1px solid var(--color-border-subtle);
   flex-shrink: 0;
-  background-color: var(--color-bg-base);
 }
 
 .chat-pane__back,

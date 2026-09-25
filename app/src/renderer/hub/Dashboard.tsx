@@ -7,7 +7,6 @@ import { LinearGradient } from '@visx/gradient';
 import { ParentSize } from '@visx/responsive';
 import { TaskInput } from './TaskInput';
 import type { TaskInputHandle } from './TaskInput';
-import { DashboardBackground } from './DashboardBackground';
 import { useUIStore } from './state/uiStore';
 import type { AgentSession } from './types';
 
@@ -88,9 +87,9 @@ function Sparkline({ values, gradientId, width, height, color, fillFrom, fillTo 
 }
 
 const SPARK_COLORS = {
-  running:   { line: '#9ECE6A', from: 'rgba(158, 206, 106, 0.30)', to: 'rgba(158, 206, 106, 0)' },
-  completed: { line: '#E0AF68', from: 'rgba(224, 175, 104, 0.32)', to: 'rgba(224, 175, 104, 0)' },
-  today:     { line: '#7AA2F7', from: 'rgba(122, 162, 247, 0.32)', to: 'rgba(122, 162, 247, 0)' },
+  running:   { line: '#80dca3', from: 'rgba(128, 220, 163, 0.30)', to: 'rgba(128, 220, 163, 0)' },
+  completed: { line: '#e6f878', from: 'rgba(230, 248, 120, 0.32)', to: 'rgba(230, 248, 120, 0)' },
+  today:     { line: '#8fc5e9', from: 'rgba(143, 197, 233, 0.32)', to: 'rgba(143, 197, 233, 0)' },
 };
 
 interface DashboardProps {
@@ -180,7 +179,6 @@ export function Dashboard({ sessions, onSubmitTask }: DashboardProps): React.Rea
 
   return (
     <div className={`dashboard${isDragging ? ' dashboard--dragging' : ''}`}>
-      <DashboardBackground />
       <div className="dashboard__hero">
         <TaskInput ref={taskInputRef} onSubmit={onSubmitTask} />
       </div>
@@ -189,31 +187,40 @@ export function Dashboard({ sessions, onSubmitTask }: DashboardProps): React.Rea
       <div className="dashboard__cards">
         <div className="dashboard__stat-card">
           <div className="dashboard__stat-card-head">
+            <span className="dashboard__stat-card-dot dashboard__stat-card-dot--running" aria-hidden="true" />
             <span className="dashboard__stat-card-label">Running now</span>
           </div>
+          <div className="dashboard__stat-card-body">
           <span className="dashboard__stat-card-value">{runningCount}</span>
           <div className="dashboard__stat-card-spark">
             <ParentSize>{({ width }) => <Sparkline values={runningSeries} gradientId="spark-running" width={width} height={64} color={SPARK_COLORS.running.line} fillFrom={SPARK_COLORS.running.from} fillTo={SPARK_COLORS.running.to} />}</ParentSize>
           </div>
+          </div>
         </div>
 
         <div className="dashboard__stat-card">
           <div className="dashboard__stat-card-head">
+            <span className="dashboard__stat-card-dot dashboard__stat-card-dot--idle" aria-hidden="true" />
             <span className="dashboard__stat-card-label">Idle</span>
           </div>
+          <div className="dashboard__stat-card-body">
           <span className="dashboard__stat-card-value">{idleCount}</span>
           <div className="dashboard__stat-card-spark">
             <ParentSize>{({ width }) => <Sparkline values={idleSeries} gradientId="spark-completed" width={width} height={64} color={SPARK_COLORS.completed.line} fillFrom={SPARK_COLORS.completed.from} fillTo={SPARK_COLORS.completed.to} />}</ParentSize>
           </div>
+          </div>
         </div>
 
         <div className="dashboard__stat-card">
           <div className="dashboard__stat-card-head">
+            <span className="dashboard__stat-card-dot dashboard__stat-card-dot--total" aria-hidden="true" />
             <span className="dashboard__stat-card-label">Total sessions</span>
           </div>
+          <div className="dashboard__stat-card-body">
           <span className="dashboard__stat-card-value">{sessions.length}</span>
           <div className="dashboard__stat-card-spark">
             <ParentSize>{({ width }) => <Sparkline values={totalSeries} gradientId="spark-today" width={width} height={64} color={SPARK_COLORS.today.line} fillFrom={SPARK_COLORS.today.from} fillTo={SPARK_COLORS.today.to} />}</ParentSize>
+          </div>
           </div>
         </div>
       </div>

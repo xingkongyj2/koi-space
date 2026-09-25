@@ -18,6 +18,7 @@ interface SidebarProps {
   onSelect?: (id: string) => void;
   onNewAgent?: () => void;
   onNewChat?: () => void;
+  isDashboard?: boolean;
   onSearch?: () => void;
   onRowAction?: (id: string, action: SidebarRowAction) => void;
   mode?: SidebarMode;
@@ -220,6 +221,7 @@ function SessionRow({
       <button
         type="button"
         className={`sidebar__row has-tooltip${selected ? ' sidebar__row--active' : ''}`}
+        aria-current={selected ? 'page' : undefined}
         onClick={() => onSelect?.(s.id)}
         onMouseDown={preventMouseFocus}
         tabIndex={-1}
@@ -309,7 +311,7 @@ function TabChip({
   );
 }
 
-export function Sidebar({ sessions, selectedId, onSelect, onNewAgent, onNewChat, onSearch, onRowAction, mode = 'side' }: SidebarProps): React.ReactElement {
+export function Sidebar({ sessions, selectedId, onSelect, onNewAgent, onNewChat, isDashboard = false, onSearch, onRowAction, mode = 'side' }: SidebarProps): React.ReactElement {
   const data = sessions ?? MOCK_SIDEBAR_SESSIONS;
 
   const orderedSessions = useMemo(() => orderSessionsForSidebar(data), [data]);
@@ -343,7 +345,8 @@ export function Sidebar({ sessions, selectedId, onSelect, onNewAgent, onNewChat,
         {onNewChat && (
           <button
             type="button"
-            className="sidebar__quick-row"
+            className={`sidebar__quick-row${isDashboard ? ' sidebar__quick-row--active' : ''}`}
+            aria-current={isDashboard ? 'page' : undefined}
             onClick={onNewChat}
             onMouseDown={preventMouseFocus}
             tabIndex={-1}

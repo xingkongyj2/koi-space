@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentPane } from './AgentPane';
 import { Dashboard } from './Dashboard';
 import { KeybindingsOverlay } from './KeybindingsOverlay';
-import { CommandBar } from './CommandBar';
 import { SettingsPane } from './SettingsPane';
 import { useVimKeys } from './useVimKeys';
 import { useSessionsQuery, useUpdateSession } from './useSessionsQuery';
@@ -108,9 +107,6 @@ export function HubApp(): React.ReactElement {
   // driven effect keep it in sync with the focused session.
   const gridColumns = 1;
   const [gridPage, setGridPage] = useState(0);
-  const [cmdBarVisible, setCmdBarVisible] = useState<boolean>(() => {
-    try { return window.localStorage.getItem('hub-cmdbar-visible') !== '0'; } catch { return true; }
-  });
   const [tabsPosition, setTabsPositionRaw] = useState<'side' | 'top'>(() => {
     try {
       const saved = window.localStorage.getItem('hub-tabs-position');
@@ -136,11 +132,6 @@ export function HubApp(): React.ReactElement {
     });
     return () => cancelAnimationFrame(id);
   }, [tabsPosition]);
-  const hideCmdBar = useCallback(() => {
-    setCmdBarVisible(false);
-    try { window.localStorage.setItem('hub-cmdbar-visible', '0'); } catch { /* ignore */ }
-  }, []);
-
   const restoreBrowserViewsForCurrentMode = useCallback(() => {
     window.electronAPI?.sessions?.viewsSetVisible?.(viewMode === 'grid')?.catch(() => {});
   }, [viewMode]);
@@ -479,7 +470,7 @@ export function HubApp(): React.ReactElement {
   const selectedSessionId = sessions[focusIndex]?.id ?? null;
 
   return (
-    <div className="hub-root">
+    <div className="hub-root canvas-dots">
       <Navbar
         isDashboard={viewMode === 'dashboard'}
         onGoDashboard={() => setViewMode('dashboard')}
@@ -496,6 +487,7 @@ export function HubApp(): React.ReactElement {
       <div className="hub-body" data-tabs-position={tabsPosition}>
       <Sidebar
         mode={tabsPosition}
+        isDashboard={viewMode === 'dashboard'}
         sessions={sessions}
         selectedId={viewMode === 'grid' ? selectedSessionId : viewMode === 'chat' ? chatSessionId : null}
         onSelect={(id) => {
@@ -625,16 +617,6 @@ export function HubApp(): React.ReactElement {
           <kbd className="chord-indicator__key">{vim.formatShortcut(vim.chordPrefix)}</kbd>
           <span className="chord-indicator__hint">...</span>
         </div>
-      )}
-
-      {cmdBarVisible && (
-        <CommandBar
-          screen={viewMode}
-          keybindings={vim.keybindings}
-          onClose={hideCmdBar}
-          onInvoke={(id) => vimHandlers[id]?.()}
-          formatShortcut={vim.formatShortcut}
-        />
       )}
 
       <KeybindingsOverlay

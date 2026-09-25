@@ -11,37 +11,33 @@
  */
 
 [data-theme="onboarding"] {
-  /* -- Font families -- */
-  --font-ui:      'Geist', 'Söhne', system-ui, sans-serif;
-  --font-mono:    'Berkeley Mono', 'JetBrains Mono', ui-monospace, monospace;
-  --font-display: 'Geist', 'Söhne', system-ui, sans-serif;
-
-  /* -- Semantic background (deep, cool, Linear-esque) -- */
-  --color-bg-base:     #101012;
-  --color-bg-elevated: #18181b;
-  --color-bg-overlay:  #1f1f23;
-  --color-bg-sunken:   #0a0a0c;
-  --color-bg-card:     #141416;
+  /* -- Semantic background — same neutral ladder the shell uses, so the
+     onboarding window and the hub read as one product. -- */
+  --color-bg-base:     var(--slate-1);
+  --color-bg-elevated: var(--slate-4);
+  --color-bg-overlay:  var(--slate-6);
+  --color-bg-sunken:   var(--slate-2);
+  --color-bg-card:     var(--slate-3);
 
   /* -- Semantic foreground -- */
-  --color-fg-primary:   #ededef;
-  --color-fg-secondary: #8a8a8e;
-  --color-fg-tertiary:  #5c5c63;
-  --color-fg-disabled:  #3a3a3f;
-  --color-fg-inverse:   #101012;
+  --color-fg-primary:   var(--slate-12);
+  --color-fg-secondary: var(--slate-11);
+  --color-fg-tertiary:  var(--slate-10);
+  --color-fg-disabled:  #4a4a4c;
+  --color-fg-inverse:   var(--accent-ink);
 
   /* -- Semantic border -- */
-  --color-border-subtle:  #1f1f23;
-  --color-border-default: #27272b;
-  --color-border-strong:  #35353a;
+  --color-border-subtle:  var(--slate-7);
+  --color-border-default: var(--slate-8);
+  --color-border-strong:  var(--slate-9);
 
   /* -- Accent (same base — the app's signature green/yellow) -- */
   --color-accent-default: var(--accent-base);
   --color-accent-hover:   var(--accent-hover);
   --color-accent-dim:     var(--accent-dim);
-  --color-accent-muted:   rgba(109, 129, 150, 0.10);
-  --color-accent-glow:    rgba(109, 129, 150, 0.15);
-  --color-accent-subtle:  rgba(109, 129, 150, 0.08);
+  --color-accent-muted:   rgba(147, 233, 177, 0.10);
+  --color-accent-glow:    rgba(147, 233, 177, 0.15);
+  --color-accent-subtle:  rgba(147, 233, 177, 0.08);
 
   /* -- Status -- */
   --color-status-success: var(--success);
@@ -55,8 +51,8 @@
   --color-capability-icon: var(--color-fg-tertiary);
 
   /* -- Modal surface -- */
-  --color-modal-bg:     #18181b;
-  --color-modal-border: #27272b;
+  --color-modal-bg:     var(--slate-4);
+  --color-modal-border: var(--slate-7);
   --color-modal-scrim:  rgba(0, 0, 0, 0.80);
 
   /* -- Google service brand colors (third-party) -- */
@@ -65,15 +61,6 @@
   --color-google-sheets:   #34a853;
   --color-google-drive:    #fbbc05;
   --color-google-docs:     #1967d2;
-
-  /* -- Border radii -- */
-  --radius-xs:   3px;
-  --radius-sm:   5px;
-  --radius-md:   8px;
-  --radius-lg:   10px;
-  --radius-xl:   14px;
-  --radius-2xl:  20px;
-  --radius-full: 9999px;
 
   /* -- Motion (smooth, professional — no springs) -- */
   --duration-fast:     80ms;
@@ -96,9 +83,9 @@
   --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.60);
   --shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.70);
 
-  --glow-accent-sm: 0 0 12px rgba(109, 129, 150, 0.08);
-  --glow-accent-md: 0 0 24px rgba(109, 129, 150, 0.12);
-  --glow-accent-lg: 0 0 40px rgba(109, 129, 150, 0.18);
+  --glow-accent-sm: 0 0 12px rgba(147, 233, 177, 0.08);
+  --glow-accent-md: 0 0 24px rgba(147, 233, 177, 0.12);
+  --glow-accent-lg: 0 0 40px rgba(147, 233, 177, 0.18);
   --glow-accent:    var(--glow-accent-sm);
 
   /* -- Z-index layers -- */
