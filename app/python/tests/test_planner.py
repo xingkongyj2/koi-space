@@ -4,7 +4,7 @@ import unittest
 from copy import deepcopy
 from unittest.mock import Mock
 
-from koi_agent.planner import PlanError, Planner, parse_plan
+from koi_agent.planner import EntryPoint, PlanError, Planner, parse_entry_point, parse_plan
 
 
 def step(step_id="s1", **changes):
@@ -30,6 +30,22 @@ def ask(question="请提供网址"):
 class PlannerTests(unittest.TestCase):
     def parse(self, value):
         return parse_plan(json.dumps(value, ensure_ascii=False))
+
+    def test_entry_locator_is_a_small_separate_contract(self):
+        ready_value = {"status": "ready", "url": "https://v.qq.com/", "question": ""}
+        self.assertEqual(parse_entry_point(json.dumps(ready_value)),
+                         EntryPoint("ready", url="https://v.qq.com/"))
+        ask_value = {"status": "ask", "url": "", "question": "请提供网站"}
+        self.assertEqual(parse_entry_point(json.dumps(ask_value)),
+                         EntryPoint("ask", question="请提供网站"))
+
+    def test_entry_locator_sends_only_current_request(self):
+        ai = Mock()
+        ai.chat.return_value = json.dumps({"status": "ready", "url": "https://v.qq.com/", "question": ""})
+        result = Planner(ai).locate_entry("打开腾讯视频历史记录", history=[{"type": "user_input", "text": "旧任务"}])
+        self.assertEqual(result.url, "https://v.qq.com/")
+        payload = json.loads(ai.chat.call_args.args[1])
+        self.assertEqual(payload, {"user_input": "打开腾讯视频历史记录"})
 
     def test_ready_round_trips_fixed_contract(self):
         value = ready()

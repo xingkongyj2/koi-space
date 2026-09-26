@@ -7,12 +7,14 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 import time
+from urllib.parse import urlsplit
 
 from .budget import Budget
 from .observer import Observer
-from .decision import Decision
+from .decision import Decision, DecisionResult
 from .executor import Executor
 from .validator import Validator
+from .completion import CompletionVerifier
 from .reflection import Reflection
 from .memory import Memory
 from . import protocol
@@ -20,7 +22,7 @@ from . import protocol
 class Orchestrator:
     def __init__(self, session, plan, *, budget=None, decision=None,
                  memory=None, reflection=None, observer=None, executor=None,
-                 validator=None, skills=None):
+                 validator=None, completion=None, skills=None):
         self.session = session
         self.plan = plan
         self.budget = budget or Budget()
@@ -28,9 +30,11 @@ class Orchestrator:
         self.decision = decision or Decision()
         self.executor = executor or Executor(session)
         self.validator = validator or Validator()
+        self.completion = completion or CompletionVerifier()
         self.memory = memory or Memory()
         self.reflection = reflection or Reflection()
         self.skills = skills
+        self._last_completed_url = ""
 
     @staticmethod
     def _progress(step, status: str, completed: list[str], **details) -> None:
@@ -44,11 +48,13 @@ class Orchestrator:
             **details,
         }, ensure_ascii=False))
 
-    def _complete(self, step, completed: list[str], observation) -> None:
+    def _complete(self, step, completed: list[str], observation, source="criteria") -> None:
         completed.append(step.id)
+        self._last_completed_url = observation.url
         self._progress(step, "completed", completed,
                        current_url=observation.url,
-                       success_criteria=list(step.success_criteria))
+                       success_criteria=list(step.success_criteria),
+                       verification_source=source)
 
     @protocol.traced("orchestrator.run")
     def run(self) -> str:
@@ -61,7 +67,8 @@ class Orchestrator:
                 self._progress(step, "blocked", completed, missing_dependencies=missing)
                 continue
             self._progress(step, "started", completed, start_url=step.start_url)
-            result = self._run_step(step, completed)
+            with protocol.measure("runtime.step.total", step_id=step.id):
+                result = self._run_step(step, completed)
             if result is not None:
                 self.memory.record_failure(result)
                 return result
@@ -70,24 +77,66 @@ class Orchestrator:
             self.memory.record_failure(reason)
             return reason
         self.memory.record_success(self.plan, completed)
-        return f"任务完成：{len(completed)}/{len(self.plan.steps)} 个步骤已验证通过。"
+        final_goal = self.plan.steps[-1].goal if self.plan.steps else "已完成请求"
+        result = f"任务完成：{final_goal}。"
+        if self._last_completed_url:
+            result += f" 当前页面：{self._last_completed_url}"
+        return result
 
     @protocol.traced("orchestrator.step")
     def _run_step(self, step, completed: list[str]) -> str | None:
         failures = 0
         slow = False
         advice = ""
+        interacted = False
+        last_before = None
+        last_action = None
+        last_check = None
+        last_verdict = None
+        verification_source = "criteria"
+        transitions: dict[tuple[str, str, str, str, str], int] = {}
+
+        def goal_complete(page, before=None, action=None, phase="before_decision") -> bool:
+            nonlocal last_check, last_verdict, verification_source
+            with protocol.measure("runtime.goal_check", phase=phase):
+                criteria_met = self.validator.step(page, step.success_criteria, step.start_url)
+                key = (page.url, page.snapshot, page.page_text,
+                       before.url if before else "", before.snapshot if before else "",
+                       before.page_text if before else "",
+                       action.kind if action else "", action.ref if action else "",
+                       action.value if action else "")
+                if key != last_check:
+                    last_verdict = self.completion.verify(step, before, page, action)
+                    last_check = key
+                if last_verdict is None:
+                    verification_source = "criteria"
+                    return criteria_met
+                if last_verdict != criteria_met:
+                    protocol.trace("completion.criteria.disagree", step_id=step.id,
+                                   criteria_met=criteria_met, goal_complete=last_verdict,
+                                   current_url=page.url)
+                if last_verdict:
+                    verification_source = "goal_verifier"
+                return last_verdict
+
+        def page_key(url: str) -> str:
+            parsed = urlsplit(url)
+            return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
         while self.budget.allow():
             self.budget.consume_step()
             protocol.set_context(iteration=self.budget.steps)
             protocol.trace("orchestrator.iteration", budget=self.budget.snapshot(), failures=failures, slow=slow, advice=advice)
-            observation = self.observer.capture()
+            with protocol.measure("runtime.observe", phase="before_decision"):
+                observation = self.observer.capture()
+            page_observed_at = time.monotonic()
             # The first observation may already satisfy a navigation step.
             # Verify before asking Jev or a text model for another action.
-            if self.validator.step(observation, step.success_criteria, step.start_url):
-                self._complete(step, completed, observation)
+            if goal_complete(observation, last_before, last_action):
+                self._complete(step, completed, observation, verification_source)
                 protocol.log(f"flow=verify step={step.id} status=passed source=pre_decision")
                 return None
+            decision_started = time.monotonic()
             skill = self.skills.match(step.goal, observation.url) if self.skills else None
             if skill:
                 protocol.log(f"flow=decision step={step.id} route=skill")
@@ -95,16 +144,27 @@ class Orchestrator:
                 decision = type("SkillDecision", (), {"actions": actions, "route": "skill", "confidence": 1.0})()
             else:
                 decision = self.decision.choose(
-                    step.goal, observation, step.start_url, slow=slow, advice=advice
+                    step.goal, observation, step.start_url if not interacted else "",
+                    slow=slow, advice=advice,
+                    force_entry=(step.success_criteria == (f"url_prefix:{step.start_url}",))
                 )
+            protocol.timing("runtime.decision", decision_started, route=decision.route)
+            # Treat every browser interaction as a new planning boundary.  A
+            # previously chosen sequence can become invalid as soon as the
+            # page changes, so the next loop must capture and analyze again.
+            if len(decision.actions) > 1:
+                protocol.trace("orchestrator.reanalyze_after_action",
+                               discarded_actions=len(decision.actions) - 1)
+                decision = DecisionResult(decision.actions[:1], decision.confidence,
+                                          decision.route, getattr(decision, "rationale", ""))
             protocol.log(
                 f"flow=decision step={step.id} route={decision.route} "
                 f"confidence={decision.confidence:.2f} actions={len(decision.actions)}"
             )
             protocol.trace("orchestrator.actions", route=decision.route, confidence=decision.confidence, actions=decision.actions)
             if not decision.actions:
-                if self.validator.step(observation, step.success_criteria, step.start_url):
-                    self._complete(step, completed, observation)
+                if goal_complete(observation, last_before, last_action):
+                    self._complete(step, completed, observation, verification_source)
                     protocol.log(f"flow=verify step={step.id} status=passed")
                     return None
                 failures += 1
@@ -122,8 +182,16 @@ class Orchestrator:
                     protocol.notify(f"步骤需要用户确认：{step.goal}", "blocking")
                     return f"等待用户确认：{step.goal}"
                 try:
-                    result = self.executor.execute(action)
+                    target_label = next((element.get("text", "") for element in observation.elements
+                                         if element.get("ref") == action.ref), "")
+                    protocol.timing("browser.action.page_observed_to_dispatch", page_observed_at,
+                                    action=action.kind, route=decision.route,
+                                    target=action.ref or (action.value if action.kind == "open" else ""),
+                                    target_label=target_label)
+                    with protocol.measure("runtime.execute", action=action.kind):
+                        result = self.executor.execute(action)
                 except Exception as exc:  # executor turns operational errors into reflection input
+                    interacted = interacted or action.kind != "open"
                     failed = True
                     self.budget.failure()
                     advice = self.reflection.advise(step.goal, observation, str(exc))
@@ -147,33 +215,23 @@ class Orchestrator:
                     if result.ok:
                         pass
                     else:
+                        interacted = interacted or action.kind != "open"
                         failed = True
                         self.budget.failure()
                         advice = self.reflection.advise(step.goal, observation, result.preview)
                         self._progress(step, "retry", completed, current_url=observation.url,
                                        error=result.preview, advice=advice)
                         break
-                after = self.observer.capture()
+                interacted = True
+                last_before, last_action = observation, action
+                with protocol.measure("runtime.observe", phase="after_action", action=action.kind):
+                    after = self.observer.capture()
                 if not self.validator.action(observation, after, action):
-                    # Clicks, fills and navigation can dispatch asynchronous
-                    # page updates after the command has returned. Give the
-                    # page a short settle window before classifying a no-op.
-                    if action.kind in {"open", "click", "fill", "press", "scroll"}:
-                        time.sleep(0.8)
-                        settled = self.observer.capture()
-                        if self.validator.action(observation, settled, action):
-                            after = settled
-                        else:
-                            after = settled
-                    if self.validator.action(observation, after, action):
-                        observation = after
-                        continue
                     # A successful browser command is still progress even when
                     # the page has not exposed a visible change yet. This is
                     # common for input events, autocomplete menus and async
-                    # navigation. Keep the fresh observation and let the next
-                    # decision advance the task; only command errors consume
-                    # the failure budget.
+                    # navigation. Start the next observation immediately;
+                    # only command errors consume the failure budget.
                     protocol.trace("orchestrator.action.uncertain", action=action,
                                    reason="command succeeded but page snapshot did not change",
                                    current_url=after.url)
@@ -183,11 +241,25 @@ class Orchestrator:
                     observation = after
                     continue
                 observation = after
-            if not failed and self.validator.step(observation, step.success_criteria, step.start_url):
-                self._complete(step, completed, observation)
+            if not failed and goal_complete(observation, last_before, last_action, phase="after_action"):
+                self._complete(step, completed, observation, verification_source)
                 protocol.log(f"flow=verify step={step.id} status=passed")
                 return None
             if not failed:
+                # Repeating the same navigation between two pages is a cycle,
+                # not progress.  Stop before it consumes the entire budget.
+                if last_before and last_action and page_key(last_before.url) != page_key(observation.url):
+                    acted_on = next((element.get("text", "") for element in last_before.elements
+                                     if element.get("ref") == last_action.ref), "")
+                    transition = (page_key(last_before.url), last_action.kind,
+                                  acted_on, last_action.value, page_key(observation.url))
+                    transitions[transition] = transitions.get(transition, 0) + 1
+                    if transitions[transition] >= 2:
+                        protocol.trace("orchestrator.cycle_detected", transition=transition,
+                                       count=transitions[transition])
+                        self._progress(step, "failed", completed, current_url=observation.url,
+                                       reason="页面往返循环，未能确认目标完成")
+                        return f"步骤 {step.id} 停止：页面往返循环，未能确认目标完成"
                 # The actions completed successfully but the step's final
                 # criterion is not visible yet. This is normal multi-action
                 # progress, so do not convert it into a failure.

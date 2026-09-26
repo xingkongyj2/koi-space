@@ -135,12 +135,20 @@ export function adaptSession(session: AgentSession): {
   toolCallCount: number;
   elapsedMs: number;
 } {
-  // turn_usage events are persisted for audit + session-total roll-up in the
-  // main process; they have no row in the UI log so we drop them here.
+  // Python keeps its step-by-step trace in app/python/log. The chat is a
+  // conversation surface: show the request and final answer, while keeping
+  // the persisted events intact for history, diagnostics and follow-ups.
   const visibleWithIdx: Array<{ e: Exclude<HlEvent, { type: 'turn_usage' }>; rawIdx: number }> = [];
   for (let i = 0; i < session.output.length; i++) {
     const e = session.output[i];
     if (e.type === 'turn_usage') continue;
+    if (session.engine === 'python') {
+      const isFinal = e.type === 'user_input' || e.type === 'done' || e.type === 'error';
+      const isPendingQuestion = e.type === 'notify' && e.level === 'blocking'
+        && !session.output.slice(i + 1).some((later) => later.type === 'done'
+          || later.type === 'error' || later.type === 'user_input');
+      if (!isFinal && !isPendingQuestion) continue;
+    }
     visibleWithIdx.push({ e, rawIdx: i });
   }
   const visibleOutput = visibleWithIdx.map((v) => v.e);

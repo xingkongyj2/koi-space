@@ -4,8 +4,10 @@ from __future__ import annotations
 from . import protocol
 
 import json
+import time
 import urllib.request
 import urllib.error
+from urllib.parse import urlsplit
 
 from .config import Provider
 
@@ -18,13 +20,18 @@ class ModelError(RuntimeError):
 def _request_json(request: urllib.request.Request, body: dict, *, provider_name: str, timeout: float) -> dict:
     # Request is logged only as its type; never serialize authentication headers.
     protocol.trace("model.request", url=request.full_url, body=body, provider=provider_name, timeout=timeout)
+    network_started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
-            protocol.trace("model.response.raw", status=response.status, body=raw)
+            status = response.status
     except urllib.error.HTTPError as exc:
         protocol.trace("model.response.http_error", status=exc.code, body=exc.read().decode("utf-8", errors="replace"))
         raise
+    finally:
+        protocol.timing("model.http.network", network_started, provider=provider_name,
+                        endpoint=urlsplit(request.full_url).path)
+    protocol.trace("model.response.raw", status=status, body=raw)
     data = json.loads(raw)
     protocol.trace("model.response.parsed", data=data)
     return data
@@ -83,6 +90,7 @@ class JevDecision:
         self.provider = provider
         self.text_model = text_model
 
+    @protocol.timed("decision.jev.total")
     @protocol.traced("model.jev")
     def choose(self, goal: str, observation) -> dict:
         # TypeSafe System One selects from a finite set of observed actions.
@@ -149,8 +157,9 @@ class JevDecision:
             {"Content-Type": "application/json", "Authorization": f"Bearer {self.provider.api_key}"},
         )
         try:
-            data = _request_json(request, body, provider_name=self.provider.name,
-                                 timeout=self.provider.timeout)
+            with protocol.measure("decision.jev.request", model=self.provider.model):
+                data = _request_json(request, body, provider_name=self.provider.name,
+                                     timeout=self.provider.timeout)
         except Exception as exc:
             raise ModelError(f"Jev systemone request failed: {exc}") from exc
 
@@ -169,10 +178,11 @@ class JevDecision:
             result["target"] = target["ref"]
         if operation == "TYPE_TEXT":
             prompt = json.dumps({"goal": goal, "field": target["text"]}, ensure_ascii=False)
-            raw = self.text_model.chat(
-                'Return only JSON with one key: {"text":"value to enter"}. Never include credentials.',
-                prompt,
-            )
+            with protocol.measure("decision.jev.type_text_model_request"):
+                raw = self.text_model.chat(
+                    'Return only JSON with one key: {"text":"value to enter"}. Never include credentials.',
+                    prompt,
+                )
             value = json.loads(raw).get("text")
             if not isinstance(value, str) or not value.strip():
                 raise ModelError("text model returned no field value")

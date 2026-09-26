@@ -132,20 +132,22 @@ class TaskHistoryTests(unittest.TestCase):
         self.assertEqual(failure["budget"]["remaining_steps"], 0)
         self.assertEqual(failure["completed_steps"], [])
 
-    def test_real_execution_and_observations_reach_next_planning_turn(self):
+    def test_real_execution_reaches_next_planning_turn_and_observations_stay_in_log(self):
         history = []
         with redirect_stdout(io.StringIO()), protocol.capture_events(history):
             result = Orchestrator(FakeSession(), navigation_plan(), memory=Mock()).run()
         self.assertIn("任务完成", result)
         calls = [event for event in history if event["type"] == "tool_call"]
         results = [event for event in history if event["type"] == "tool_result"]
-        observations = [json.loads(event["text"]) for event in history
-                        if event["type"] == "thinking" and json.loads(event["text"])["kind"] == "observation"]
         self.assertEqual(calls[0]["name"], "browser.open")
         self.assertEqual(calls[0]["args"]["value"], "https://v.qq.com/")
         self.assertTrue(results[0]["ok"])
+        log_entries = [json.loads(line) for line in protocol.LOG_PATH.read_text().splitlines()]
+        observations = [entry for entry in log_entries if entry.get("stage") == "observer.summary"]
         self.assertIn("Play", observations[0]["diff"])
         self.assertEqual(observations[-1]["url"], "https://v.qq.com/")
+        self.assertFalse(any(event["type"] == "thinking" and '"kind": "observation"' in event["text"]
+                             for event in history))
         received, _ = self.run_turn("继续", history, Plan("ask", True, question="接下来做什么？"))
         self.assertEqual(received[1][:-1], history)
 

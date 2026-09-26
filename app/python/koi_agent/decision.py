@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from . import protocol
 from .executor import Action
@@ -26,9 +27,14 @@ class Decision:
 
     @protocol.traced("decision.choose")
     def choose(
-        self, goal, observation, start_url="", slow=False, advice=""
+        self, goal, observation, start_url="", slow=False, advice="", force_entry=False
     ) -> DecisionResult:
-        if start_url and not observation.url.startswith(start_url.rstrip("/")):
+        # A step's start_url is a way into the site, not the only valid page.
+        # Detail/result paths on the same site are often the desired progress.
+        current_host = urlsplit(observation.url).hostname
+        entry_host = urlsplit(start_url).hostname if start_url else None
+        if start_url and (not current_host or current_host != entry_host or
+                          (force_entry and not observation.url.startswith(start_url.rstrip("/")))):
             return DecisionResult(
                 (Action("open", start_url, expected="URL changed"),),
                 1.0,
@@ -74,6 +80,9 @@ class Decision:
                 protocol.trace("decision.model.raw", data=raw)
                 data = json.loads(raw)
                 protocol.trace("decision.model.parsed", data=data)
+                # A page can change after every click/fill.  Keep exactly one
+                # action per decision so the orchestrator observes the fresh
+                # page and asks again instead of replaying a stale sequence.
                 actions = tuple(
                     Action(
                         str(item["kind"]),
@@ -82,9 +91,9 @@ class Decision:
                         str(item.get("expected", "")),
                         bool(item.get("sensitive")),
                     )
-                    for item in data.get("actions", [])[:10]
+                    for item in data.get("actions", [])
                     if item.get("kind") in {"open", "click", "fill", "press", "wait", "scroll"}
-                )
+                )[:1]
                 return DecisionResult(
                     actions,
                     float(data.get("confidence", 0.5)),

@@ -1,7 +1,5 @@
-"""Code-first verification for actions and planner completion criteria."""
+"""Deterministic checks for browser actions and planner criteria."""
 from __future__ import annotations
-
-import re
 
 from . import protocol
 
@@ -9,7 +7,8 @@ from . import protocol
 class Validator:
     @protocol.traced("validator.action")
     def action(self, before, after, action) -> bool:
-        changed = before.url != after.url or before.snapshot != after.snapshot
+        changed = (before.url != after.url or before.snapshot != after.snapshot
+                   or before.page_text != after.page_text)
         passed = action.kind in {"wait", "scroll"} or changed
         protocol.log(
             f"flow=validate action={action.kind} "
@@ -19,9 +18,12 @@ class Validator:
 
     @protocol.traced("validator.step")
     def step(self, observation, criteria, start_url="") -> bool:
-        text = f"{observation.url}\n{observation.snapshot}".lower()
-        if start_url and not observation.url.startswith(start_url.rstrip("/")):
-            return False
+        """Check planned conditions without treating the entry URL as a final URL.
+
+        A separate completion verifier can resolve inaccurate planned criteria
+        against the actual page and action evidence.
+        """
+        text = f"{observation.url}\n{observation.snapshot}\n{observation.page_text}".lower()
         for criterion in criteria:
             criterion = criterion.strip()
             if not criterion:
@@ -37,7 +39,7 @@ class Validator:
                     return False
             elif lower.startswith("text_contains:"):
                 expected = criterion.split(":", 1)[1].strip().lower()
-                if expected not in observation.snapshot.lower():
+                if expected not in text:
                     return False
             elif lower.startswith("count >="):
                 try:

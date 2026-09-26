@@ -6,6 +6,7 @@ to SQLite and streamed to the renderer. One JSON object per line, no other
 stdout output — anything else on stdout is dropped by the parser.
 
 Diagnostics and emitted events are saved under the Python root's log directory.
+Timing rows also go to a per-task ``*.timing.log`` for quick inspection.
 stdout remains exclusively the event protocol.
 """
 
@@ -30,6 +31,30 @@ from typing import Any
 _STARTED_AT = time.monotonic()
 LOG_DIR = Path(__file__).resolve().parent.parent / "log"
 LOG_PATH = LOG_DIR / f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{os.getpid()}.jsonl"
+_TIMING_LABELS = {
+    "task.total": "任务总耗时",
+    "planning.entry.model_request": "规划①定位网址·模型请求",
+    "planning.entry.total": "规划①定位网址·总耗时",
+    "planning.entry.browser_bind": "绑定浏览器标签页",
+    "planning.entry.browser_open": "打开入口页面",
+    "planning.full.model_request": "规划②拆分任务·模型请求",
+    "planning.full.total": "规划②拆分任务·总耗时",
+    "planning.full.wait_after_browser_open": "页面打开后等待规划",
+    "planning.full.parallel_wall": "页面打开与规划并行总耗时",
+    "runtime.orchestrator.total": "执行层总耗时",
+    "runtime.step.total": "子任务总耗时",
+    "runtime.observe": "观察页面",
+    "runtime.goal_check": "判断目标是否完成",
+    "runtime.decision": "选择下一步动作",
+    "runtime.execute": "执行动作总耗时",
+    "browser.action.page_observed_to_dispatch": "观察页面到发出动作",
+    "browser.action.command": "浏览器命令耗时",
+    "decision.jev.request": "Jev 接口请求",
+    "decision.jev.total": "Jev 总耗时",
+    "decision.jev.type_text_model_request": "Jev 填写内容模型请求",
+    "verification.model_request": "完成判断模型请求",
+    "model.http.network": "模型 HTTP 网络往返",
+}
 _CONTEXT: ContextVar[dict] = ContextVar("log_context", default={})
 _HISTORY: ContextVar[list[dict[str, Any]] | None] = ContextVar("task_history", default=None)
 _CALLS = count(1)
@@ -69,6 +94,36 @@ def trace(stage: str, **data: Any) -> None:
     _record("trace", stage=stage, **data)
 
 
+def timing(stage: str, started_at: float, **data: Any) -> float:
+    """Record a prominent local-only wall-clock duration in milliseconds."""
+    now = time.monotonic()
+    ms = round((now - started_at) * 1000, 2)
+    _record("timing", stage=stage, ms=ms,
+            since_start_ms=round((now - _STARTED_AT) * 1000, 2), **data)
+    return ms
+
+
+@contextmanager
+def measure(stage: str, **data: Any):
+    """Time a layer even when it fails, without adding a frontend event."""
+    started_at = time.monotonic()
+    try:
+        yield
+    finally:
+        timing(stage, started_at, **data)
+
+
+def timed(stage: str):
+    """Decorator for whole-layer timing, including failure paths."""
+    def decorate(function):
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            with measure(stage):
+                return function(*args, **kwargs)
+        return wrapped
+    return decorate
+
+
 def trace_exception(stage: str, exc: Exception) -> None:
     trace(stage, error=str(exc), error_type=type(exc).__name__, traceback=traceback.format_exc())
 
@@ -104,6 +159,19 @@ def traced(stage: str):
 
 def _format_readable(entry: dict) -> str:
     stage = entry.get("stage", entry["kind"])
+    if entry["kind"] == "timing":
+        label = _TIMING_LABELS.get(stage)
+        display_stage = f"{stage}（{label}）" if label else stage
+        context = " ".join(f"{key}={entry[key]}" for key in
+                           ("session_id", "step_id", "iteration") if key in entry)
+        details = " ".join(f"{key}={value}" for key, value in entry.items()
+                           if key not in {"time", "pid", "kind", "stage", "ms", "since_start_ms", "session_id",
+                                          "step_id", "iteration", "call_id", "parent_call_id"})
+        return ("\n" + ">" * 24 + " [TIMING] " + ">" * 24 + "\n"
+                + f"{entry['time']} | t+{entry['since_start_ms']:,.2f} ms | "
+                + f"{display_stage} | {entry['ms']:,.2f} ms\n"
+                + " | ".join(part for part in (context, details) if part) + "\n"
+                + "<" * 58 + "\n\n")
     header = f"[{entry['time']}] {stage}"
     for key in ("session_id", "step_id", "iteration", "call_id"):
         if key in entry:
@@ -142,8 +210,12 @@ def _record(kind: str, **data: Any) -> None:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, default=_json_value) + "\n")
+        readable = _format_readable(entry)
         with LOG_PATH.with_suffix(".log").open("a", encoding="utf-8") as handle:
-            handle.write(_format_readable(entry))
+            handle.write(readable)
+        if kind == "timing":
+            with LOG_PATH.with_suffix(".timing.log").open("a", encoding="utf-8") as handle:
+                handle.write(readable)
     except (OSError, TypeError, ValueError) as exc:
         # Keep the task/event protocol alive if the installation is read-only.
         print(f"[koi-agent] cannot write {LOG_PATH}: {exc}; {entry!r}", file=sys.stderr, flush=True)

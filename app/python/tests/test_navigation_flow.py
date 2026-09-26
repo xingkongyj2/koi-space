@@ -1,6 +1,7 @@
 """Regression coverage for already-open and newly-opened navigation goals."""
 import json
 import unittest
+from unittest.mock import patch
 
 from koi_agent.budget import Budget
 from koi_agent.observer import Observation
@@ -25,7 +26,7 @@ class FakeSession:
 
 
 class SettlingSession(FakeSession):
-    """The first snapshot is unchanged; the page updates after settling."""
+    """The first post-click snapshot is unchanged; the next one updates."""
     def __init__(self):
         super().__init__("https://example.com/")
         self.snapshots = 0
@@ -36,7 +37,7 @@ class SettlingSession(FakeSession):
             return type("Result", (), {"ok": True, "stdout": "✓ Done", "preview": "ok"})()
         if args[0] == "snapshot":
             self.snapshots += 1
-            body = "before" if self.snapshots == 1 else "after click"
+            body = "before" if self.snapshots <= 2 else "after click"
             return type("Result", (), {"ok": True, "stdout": body, "preview": body})()
         return type("Result", (), {"ok": True, "stdout": "", "preview": "ok"})()
 
@@ -76,12 +77,26 @@ class NavigationFlowTests(unittest.TestCase):
         self.assertIn("任务完成", result)
         self.assertEqual([command for command in session.commands if command[0] == "open"], [["open", "https://v.qq.com/"]])
 
+    def test_explicit_navigation_opens_from_another_path_on_same_site(self):
+        target = "https://v.qq.com/biu/u/history/"
+        session = FakeSession("https://v.qq.com/other")
+        plan = parse_plan(json.dumps({
+            "status": "ready", "needs_browser": True, "question": "", "direct_answer": "",
+            "steps": [{"id": "s1", "goal": "打开历史记录", "success_criteria": [f"url_prefix:{target}"],
+                       "depends_on": [], "start_url": target,
+                       "needs_user_confirmation": False, "risk": "low", "parallel_group": ""}],
+        }))
+        result = Orchestrator(session, plan, budget=Budget()).run()
+        self.assertIn("任务完成", result)
+        self.assertEqual([command for command in session.commands if command[0] == "open"],
+                         [["open", target]])
+
     def test_snapshot_ref_is_extracted(self):
         from koi_agent.observer import Observer
         elements = list(Observer._elements('- button "Play" [ref=e1]'))
         self.assertEqual(elements, [{"ref": "@e1", "text": 'button "Play"'}])
 
-    def test_successful_click_is_allowed_to_settle_before_noop_failure(self):
+    def test_successful_click_rechecks_without_fixed_settle_delay(self):
         from koi_agent.decision import DecisionResult
         from koi_agent.executor import Action
         session = SettlingSession()
@@ -92,11 +107,42 @@ class NavigationFlowTests(unittest.TestCase):
                         "depends_on": [], "start_url": "https://example.com/",
                         "needs_user_confirmation": False, "risk": "low", "parallel_group": ""}],
         }))
-        result = Orchestrator(
-            session, plan, budget=Budget(max_steps=5, max_failures=1),
-            decision=type("Decision", (), {"choose": lambda *_args, **_kwargs: DecisionResult((Action("click", ref="@e1"),), 1.0, "test")})(),
-        ).run()
+        with patch("time.sleep") as sleep:
+            result = Orchestrator(
+                session, plan, budget=Budget(max_steps=5, max_failures=1),
+                decision=type("Decision", (), {"choose": lambda *_args, **_kwargs: DecisionResult((Action("click", ref="@e1"),), 1.0, "test")})(),
+            ).run()
+        sleep.assert_not_called()
         self.assertIn("任务完成", result)
+        self.assertEqual(session.snapshots, 3)
+
+    def test_entry_url_does_not_restrict_the_result_page(self):
+        result = Observation("https://example.com/items/42", "", "订单详情", "", True)
+        self.assertTrue(Validator().step(
+            result, ("text_contains:订单详情",), "https://example.com/orders/"
+        ))
+
+    def test_full_page_text_is_available_for_completion_without_polluting_action_refs(self):
+        from koi_agent.observer import Observer
+
+        class PageSession:
+            def __init__(self):
+                self.commands = []
+
+            def current_url(self):
+                return "https://example.com/orders/42"
+
+            def run(self, args, timeout=30):
+                self.commands.append(args)
+                body = ('- button "返回" [ref=e1]' if "-i" in args
+                        else '- heading "订单详情"\n- text "已发货"')
+                return type("Result", (), {"ok": True, "stdout": body})()
+
+        session = PageSession()
+        observation = Observer(session, include_full=True).capture()
+        self.assertEqual([element["ref"] for element in observation.elements], ["@e1"])
+        self.assertTrue(Validator().step(observation, ("text_contains:已发货",)))
+        self.assertEqual(session.commands, [["snapshot"], ["snapshot", "-i"]])
 
 
 if __name__ == "__main__":

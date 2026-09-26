@@ -51,8 +51,12 @@ class Executor:
         try:
             result = self.session.run(commands[action.kind])
         except Exception as exc:
+            protocol.timing("browser.action.command", started, action=action.kind,
+                            target=action.ref or (action.value if action.kind == "open" else ""))
             protocol.tool_result(name, False, str(exc), (time.monotonic() - started) * 1000)
             raise
+        protocol.timing("browser.action.command", started, action=action.kind,
+                        target=action.ref or (action.value if action.kind == "open" else ""))
         preview = "<redacted>" if action.sensitive else result.preview
         protocol.tool_result(name, result.ok, preview, (time.monotonic() - started) * 1000)
         return result
