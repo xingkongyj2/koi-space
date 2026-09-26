@@ -1,10 +1,14 @@
 # Python 后端调试日志
 
-每次 agent 进程运行生成 `app/python/log/agent-<UTC时间>-<PID>.jsonl`。
+每次 agent 进程运行在 `app/python/log/` 生成两份同名日志：
+
+- `agent-<UTC时间>-<PID>.log`：直接阅读，带时间和阶段标题、记录分隔线、缩进 JSON；多行文本和模型 JSON 字符串在下方单独展开。
+- `agent-<UTC时间>-<PID>.jsonl`：保留原始字段和类型，供程序或 jq 分析。
+
 路径相对 Python 包的位置解析，不依赖启动目录或 Electron userData。
 新任务自动生效，运行中的任务需要重新启动。
 
-每行是一个 JSON 对象。`time` 是 UTC 时间，`session_id` 是任务 ID；
+JSONL 中每行是一个 JSON 对象。`time` 是 UTC 时间，`session_id` 是任务 ID；
 进入执行步骤后还有 `step_id` 和 `iteration`。`call_id` 和
 `parent_call_id` 关联嵌套调用。阶段的 `.start` 记录输入，`.end`
 记录返回值和耗时 `ms`，`.error` 记录异常及 traceback。
@@ -40,7 +44,7 @@
 在仓库根目录实时查看某次运行（替换文件名）：
 
 ```sh
-tail -f app/python/log/agent-<UTC时间>-<PID>.jsonl
+tail -f app/python/log/agent-<UTC时间>-<PID>.log
 ```
 
 使用 jq 筛选某任务的阶段和返回结果：

@@ -22,6 +22,17 @@ class ProtocolLogTests(unittest.TestCase):
             self.assertEqual(entries[0]["message"], message)
             self.assertEqual(entries[1]["event"], json.loads(stdout.getvalue()))
             self.assertEqual(stderr.getvalue(), "")
+            readable = path.with_suffix(".log").read_text()
+            self.assertIn('  "kind": "diagnostic"', readable)
+            self.assertIn("--- message ---\n" + message, readable)
+            self.assertIn('"summary": "完成"', readable)
+
+    def test_readable_model_json_and_nested_multiline_fields(self):
+        entry = {"time": "2026-09-26", "kind": "trace", "stage": "model.response.raw", "session_id": "s1", "body": '{"actions":[{"kind":"click"}]}', "inputs": {"snapshot": "line one\nline two"}}
+        formatted = protocol._format_readable(entry)
+        self.assertIn("model.response.raw | session_id=s1", formatted)
+        self.assertIn('--- body ---\n{\n  "actions": [', formatted)
+        self.assertIn("--- inputs.snapshot ---\nline one\nline two", formatted)
 
     def test_log_failure_does_not_break_event_protocol(self):
         with patch.object(Path, "mkdir", side_effect=PermissionError("read only")), contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()) as stderr:

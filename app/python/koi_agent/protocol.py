@@ -81,6 +81,39 @@ def traced(stage: str):
     return decorate
 
 
+def _format_readable(entry: dict) -> str:
+    stage = entry.get("stage", entry["kind"])
+    header = f"[{entry['time']}] {stage}"
+    for key in ("session_id", "step_id", "iteration", "call_id"):
+        if key in entry:
+            header += f" | {key}={entry[key]}"
+    # Normalize dataclasses once so nested fields can also be rendered as text.
+    normalized = json.loads(json.dumps(entry, ensure_ascii=False, default=_json_value))
+    blocks = []
+
+    def expand(value, path=""):
+        if isinstance(value, dict):
+            return {key: expand(item, f"{path}.{key}" if path else key) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item, f"{path}[{index}]") for index, item in enumerate(value)]
+        if isinstance(value, str):
+            # Raw model bodies often contain JSON encoded inside a string.
+            display = value
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, (dict, list)):
+                    display = json.dumps(parsed, ensure_ascii=False, indent=2)
+            except (ValueError, TypeError):
+                pass
+            if "\n" in display:
+                blocks.append(f"--- {path} ---\n{display}")
+                return f"[见下方 {path}]"
+        return value
+
+    body = json.dumps(expand(normalized), ensure_ascii=False, indent=2)
+    return "\n".join(["=" * 88, header, body, *blocks]) + "\n\n"
+
+
 def _record(kind: str, **data: Any) -> None:
     """One file per agent process, independent of cwd and Electron userData."""
     entry = {"time": datetime.now(timezone.utc).isoformat(), "pid": os.getpid(), **_CONTEXT.get(), "kind": kind, **data}
@@ -88,6 +121,8 @@ def _record(kind: str, **data: Any) -> None:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, default=_json_value) + "\n")
+        with LOG_PATH.with_suffix(".log").open("a", encoding="utf-8") as handle:
+            handle.write(_format_readable(entry))
     except (OSError, TypeError, ValueError) as exc:
         # Keep the task/event protocol alive if the installation is read-only.
         print(f"[koi-agent] cannot write {LOG_PATH}: {exc}; {entry!r}", file=sys.stderr, flush=True)
