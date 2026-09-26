@@ -26,7 +26,15 @@ class TracingTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.path = Path(directory.name) / "trace.jsonl"
+        self.path = Path(directory.name) / "trace.log"
+        self.entries = []
+        original = protocol._record
+        def record(kind, **data):
+            self.entries.append({**protocol._CONTEXT.get(), "kind": kind, **data})
+            original(kind, **data)
+        recorder = patch.object(protocol, "_record", side_effect=record)
+        recorder.start()
+        self.addCleanup(recorder.stop)
         patcher = patch.object(protocol, "LOG_PATH", self.path)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -35,19 +43,38 @@ class TracingTests(unittest.TestCase):
         self.provider = Provider("test", "https://example.com/v1", "secret-not-for-logs", "test-model")
 
     def records(self, stage):
-        return [entry for entry in map(json.loads, self.path.read_text().splitlines()) if entry.get("stage") == stage]
+        return [entry for entry in self.entries if entry.get("stage") == stage]
 
-    def test_model_raw_extracted_and_normalized_plan_are_distinct(self):
+    def test_model_request_and_final_plan_share_one_block(self):
         plan = navigation_plan().to_dict()
         text = json.dumps(plan)
         raw = json.dumps({"output": [{"type": "message", "content": [{"text": text}]}], "padding": "x" * 16000})
         with patch("urllib.request.urlopen", return_value=Response(raw.encode())):
             result = Planner(ai=OpenAICompatible(self.provider)).plan("open site")
-        self.assertEqual(self.records("model.response.raw")[0]["body"], raw)
-        self.assertEqual(self.records("model.responses.end")[0]["result"], text)
-        self.assertEqual(self.records("planner.json.decoded")[0]["data"], plan)
-        self.assertEqual(self.records("planner.parse.end")[0]["result"]["steps"][0]["success_criteria"], list(result.steps[0].success_criteria))
+        entry = self.records("planner.plan")[0]
+        self.assertEqual(entry["requests"][0]["result"], text)
+        self.assertEqual(entry["result"].steps, result.steps)
+        self.assertEqual(len(self.entries), 1)
+        self.assertNotIn("padding", self.path.read_text())
         self.assertNotIn(self.provider.api_key, self.path.read_text())
+
+    def test_both_planning_requests_share_input_output_and_timing_blocks(self):
+        entry_text = '{"status":"ready","url":"https://example.com/","question":""}'
+        plan_text = json.dumps(navigation_plan().to_dict())
+        responses = [Response(json.dumps({"output_text": text}).encode())
+                     for text in (entry_text, plan_text)]
+        planner = Planner(OpenAICompatible(self.provider))
+        with patch("urllib.request.urlopen", side_effect=responses):
+            planner.locate_entry("open site")
+            planner.plan("open site")
+        self.assertEqual(len(self.entries), 2)
+        for entry, expected in zip(self.entries, (entry_text, plan_text)):
+            self.assertEqual(len(entry["requests"]), 1)
+            request = entry["requests"][0]
+            self.assertEqual(request["result"], expected)
+            self.assertIn("open site", request["request"]["body"]["input"])
+            self.assertGreaterEqual(entry["request_timings"][0]["ms"], 0)
+        self.assertEqual(list(self.path.parent.iterdir()), [self.path])
 
     def test_system_instructions_are_separate_from_complete_model_input(self):
         with patch("urllib.request.urlopen", return_value=Response(b'{"output_text":"ok"}')) as request:
@@ -57,12 +84,13 @@ class TracingTests(unittest.TestCase):
         self.assertEqual(body["input"], "complete history")
         self.assertFalse(body["enable_thinking"])
 
-    def test_malformed_response_keeps_raw_body_and_traceback(self):
+    def test_malformed_response_keeps_body_and_error(self):
         with patch("urllib.request.urlopen", return_value=Response(b"not json")):
             with self.assertRaises(ModelError):
                 OpenAICompatible(self.provider).chat("system", "task")
-        self.assertEqual(self.records("model.response.raw")[0]["body"], "not json")
-        self.assertIn("JSONDecodeError", self.records("model.http.error")[0]["traceback"])
+        self.assertEqual(self.records("model.responses")[0]["response"], "not json")
+        self.assertIn("not json", self.path.read_text())
+        self.assertIn("error", self.records("model.responses")[0])
         self.assertNotIn("call_id", protocol._CONTEXT.get())
 
     def test_http_failure_body_is_preserved(self):
@@ -70,8 +98,8 @@ class TracingTests(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=error):
             with self.assertRaises(ModelError):
                 OpenAICompatible(self.provider).chat("system", "task")
-        self.assertEqual(self.records("model.response.http_error")[0]["status"], 429)
-        self.assertIn("retry later", self.records("model.response.http_error")[0]["body"])
+        self.assertEqual(self.records("model.responses")[0]["response"]["status"], 429)
+        self.assertIn("retry later", self.records("model.responses")[0]["response"]["body"])
 
     def test_quota_rejection_reports_actionable_cause(self):
         body = b'{"error":{"code":"PERMISSION_DENIED","message":"Free quota exhausted. Disable use free tier only."}}'
@@ -87,25 +115,24 @@ class TracingTests(unittest.TestCase):
         raw = {"answers": {"operation": {"choice": "CLICK", "confidence": 0.9}, "click_target": {"choice": "1"}}}
         with patch("urllib.request.urlopen", return_value=Response(json.dumps(raw).encode())):
             decision = Decision(jev=JevDecision(self.provider)).choose("click", observation)
-        self.assertEqual(self.records("model.jev.end")[0]["result"]["target"], "@e1")
+        self.assertEqual(self.records("decision.choose")[0]["requests"][0]["result"]["target"], "@e1")
         self.assertEqual(decision.actions[0].ref, "@e1")
         value = {"actions": [{"kind": "unsupported"}, {"kind": "click", "ref": "@e1"}]}
         ai = Mock()
         ai.chat.return_value = json.dumps(value)
         Decision(ai=ai).choose("click", observation)
         self.assertEqual(json.loads(ai.chat.call_args.args[1])["goal"], "click")
-        self.assertEqual(len(self.records("decision.model.parsed")[0]["data"]["actions"]), 2)
-        self.assertEqual(len(self.records("decision.choose.end")[-1]["result"]["actions"]), 1)
+        self.assertEqual(len(self.records("decision.choose")[-1]["result"].actions), 1)
 
     def test_execution_layers_share_step_and_iteration(self):
         Orchestrator(FakeSession(), navigation_plan()).run()
-        execute = self.records("executor.execute.start")[0]
-        for stage in ("observer.capture.end", "decision.choose.end", "executor.command", "validator.action.end", "validator.step.end"):
+        execute = self.records("executor.execute")[0]
+        for stage in ("observer.capture", "decision.choose", "executor.execute", "validator.action", "validator.step"):
             entry = self.records(stage)[0]
             self.assertEqual(entry["session_id"], "test-session")
             self.assertEqual(entry["step_id"], "s1")
             self.assertEqual(entry["iteration"], 1)
-        self.assertEqual(self.records("executor.execute.end")[0]["call_id"], execute["call_id"])
+        self.assertEqual(self.records("executor.execute")[0]["call_id"], execute["call_id"])
         self.assertNotIn("step_id", protocol._CONTEXT.get())
 
     def test_caught_decision_failure_logs_fallback(self):
@@ -114,8 +141,7 @@ class TracingTests(unittest.TestCase):
         ai.chat.return_value = "invalid json"
         result = Decision(ai=ai).choose("test", observation)
         self.assertEqual(result.route, "none")
-        self.assertEqual(self.records("decision.model.raw")[0]["data"], "invalid json")
-        self.assertIn("JSONDecodeError", self.records("decision.model.fallback")[0]["traceback"])
+        self.assertEqual(self.records("decision.choose")[0]["errors"][0]["stage"], "decision.model.fallback")
 
     def test_reflection_calls_the_same_ai_method(self):
         ai = Mock()

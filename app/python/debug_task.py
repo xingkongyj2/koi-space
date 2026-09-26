@@ -80,14 +80,14 @@ def find_app(explicit: str | None = None) -> tuple[Path, dict]:
 
 
 def print_task_log(session_id: str, started: float) -> None:
-    for path in sorted(protocol.LOG_DIR.glob("agent-*.jsonl"), reverse=True):
-        if path.stat().st_mtime < started - 2:
+    for path in sorted(protocol.LOG_DIR.glob("agent-*.log"), reverse=True):
+        if path.name.endswith(".timing.log") or path.stat().st_mtime < started - 2:
             continue
         with path.open(encoding="utf-8") as handle:
             for _ in range(3):
                 line = handle.readline()
                 if session_id in line:
-                    print(f"Python 可读日志：{path.with_suffix('.log')}", flush=True)
+                    print(f"Python 可读日志：{path}", flush=True)
                     return
     print(f"Python 日志目录：{protocol.LOG_DIR}（尚未找到该任务的日志）", flush=True)
 

@@ -42,55 +42,35 @@ browser_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 如果要连接已运行、开启 CDP 的浏览器，设置 `cdp_port` 和 `target_id`，
 并保持 `browser_path`、`user_data_dir` 为 `None`；这种方式不会关闭已有浏览器。
 
-每次 agent 进程运行在 `app/python/log/` 生成两份同名日志：
+每次 agent 进程运行只在 `app/python/log/` 生成一份格式化日志：
+`agent-<UTC时间>-<PID>.log`。不再生成 JSONL 或单独的 timing 日志。
 
-- `agent-<UTC时间>-<PID>.log`：直接阅读，带时间和阶段标题、记录分隔线、缩进 JSON；多行文本和模型 JSON 字符串在下方单独展开。
-- `agent-<UTC时间>-<PID>.jsonl`：保留原始字段和类型，供程序或 jq 分析。
+日志标签使用中文，模型原文、网页内容和实际命令参数保持原样。
+每层结束时输出一个块，标题写清层名和总耗时，正文合并最终输入、输出、
+模型请求及请求耗时。多行网页内容和模型文本在块内展开。异常也在同一块中记录。
 
-路径相对 Python 包的位置解析，不依赖启动目录或 Electron userData。
-新任务自动生效，运行中的任务需要重新启动。
-
-JSONL 中每行是一个 JSON 对象。`time` 是 UTC 时间，`session_id` 是任务 ID；
-进入执行步骤后还有 `step_id` 和 `iteration`。`call_id` 和
-`parent_call_id` 关联嵌套调用。阶段的 `.start` 记录输入，`.end`
-记录返回值和耗时 `ms`，`.error` 记录异常及 traceback。
-
-| stage | 内容 |
+| 层 | 保留内容 |
 | --- | --- |
-| `task.received` | 任务输入 |
-| `task.configuration` | 使用的模型和运行预算，不包含 API key |
-| `planner.plan.start` | 规划输入 |
-| `model.request` | 模型地址、请求体和超时，不包含认证头 |
-| `model.response.raw` | 完整 HTTP 响应文本及状态码 |
-| `model.response.parsed` | 解析后的响应 JSON |
-| `model.responses.end` | 从响应中提取的模型文本 |
-| `planner.json.decoded` | 模型文本解析成的原始计划 JSON |
-| `planner.parse.end` / `planner.plan.end` | 校验、规范化后的计划 |
-| `model.jev.end` | Jev 选择映射到页面引用后的结果 |
-| `decision.model.raw` / `decision.model.parsed` | 文本决策原文及解析结果 |
-| `decision.choose.end` | 过滤、转换后的动作和置信度 |
-| `observer.capture.end` | 页面快照、差异和元素列表 |
-| `executor.command` | 实际执行的命令参数 |
-| `browser.run.end` / `browser.cli.end` | 浏览器返回，包括完整 stdout/stderr |
-| `validator.action.end` / `validator.step.end` | 动作和步骤校验结果；`unchanged` 表示命令成功但页面暂未显示变化，不等于动作失败 |
-| `reflection.advise.end` | 反思建议 |
-| `orchestrator.iteration` | 当前预算、失败次数和重试建议 |
-| `orchestrator.step.exhausted` | 预算或重试耗尽时的状态 |
-| `*.fallback` | 被捕获后继续降级执行的异常 |
+| 规划层 · ①入口定位 | 输入、定位模型请求体与输出、请求耗时、最终入口 |
+| 规划层 · ②任务拆分 | 输入、规划模型请求体与输出、请求耗时、最终计划；修复请求同块保留 |
+| 观察层 | 网页网址、内容、交互元素和变化、耗时 |
+| 决策层 | 输入、JEV 请求与请求耗时、最终动作；使用文本模型时同样保留请求 |
+| 执行层 · 本轮命令 | 动作输入、实际命令序列（含清空和聚焦）、执行结果、耗时 |
+| 验证层 / 验收层 | 输入和最终校验结果；模型验收请求同块保留 |
+| 反思层 / 技能层 / 记忆层 | 最终输入、输出和耗时，仅实际调用时记录 |
+| 执行层 · 子任务 / 最终结果 | 子任务输入、最终结果和总耗时 |
+| 任务层 | 任务输入、最终消息和总耗时 |
 
-`kind=event` 保存发给界面的事件，`kind=diagnostic` 保存原有诊断消息。
-结构化 trace 不额外截断字段；模型输入本身的快照长度限制仍然保留，
-完整观察结果可查看 `observer.capture.end`。日志会包含任务正文、页面内容
-和填入表单的数据，目前不会自动轮转或清理。`log/` 已被 Git 忽略。
+不再单独打印层级 start/end、HTTP 原文/解析/提取副本、浏览器底层调用、
+中间 flow 诊断和每条界面事件。失败的模型请求保留响应内容，便于检查错误原因。
+界面的 NDJSON 事件协议与任务历史照常保留。
+
+标题中的 `session_id`、`step_id` 和 `iteration` 对应任务、子步骤和执行轮次。
+模型认证头不写入日志。路径不依赖启动目录或 Electron userData。
+新任务自动生效，运行中的任务需要重新启动。日志目录已被 Git 忽略，旧日志不会自动删除。
 
 在仓库根目录实时查看某次运行（替换文件名）：
 
 ```sh
 tail -f app/python/log/agent-<UTC时间>-<PID>.log
-```
-
-使用 jq 筛选某任务的阶段和返回结果：
-
-```sh
-jq 'select(.session_id == "任务ID") | {time, stage, step_id, iteration, call_id, result, data, error}' app/python/log/agent-*.jsonl
 ```

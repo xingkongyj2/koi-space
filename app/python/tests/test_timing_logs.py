@@ -17,14 +17,18 @@ class TimingLogTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.log_path = Path(temporary.name) / "agent.jsonl"
+        self.log_path = Path(temporary.name) / "agent.log"
+        self.entries = []
+        original = protocol._record
+        def record(kind, **data):
+            self.entries.append({"kind": kind, **data})
+            original(kind, **data)
+        recorder = patch.object(protocol, "_record", side_effect=record)
+        recorder.start()
+        self.addCleanup(recorder.stop)
         patcher = patch.object(protocol, "LOG_PATH", self.log_path)
         patcher.start()
         self.addCleanup(patcher.stop)
-
-    def timings(self):
-        return [json.loads(line) for line in self.log_path.read_text().splitlines()
-                if json.loads(line).get("kind") == "timing"]
 
     def test_planner_requests_have_separate_prominent_durations(self):
         ai = Mock()
@@ -39,19 +43,15 @@ class TimingLogTests(unittest.TestCase):
         planner.locate_entry("打开 example.com")
         planner.plan("打开 example.com")
 
-        rows = self.timings()
-        self.assertEqual([row["stage"] for row in rows], [
-            "planning.entry.model_request", "planning.full.model_request",
-            "planning.full.total",
-        ])
-        self.assertTrue(all(row["ms"] >= 0 and row["since_start_ms"] >= 0 for row in rows))
-        self.assertEqual([row["attempt"] for row in rows[:2]], [1, 1])
-        readable = self.log_path.with_suffix(".log").read_text()
-        self.assertEqual(readable.count("[TIMING]"), 3)
-        self.assertIn("planning.full.model_request", readable)
-        timing_only = self.log_path.with_suffix(".timing.log").read_text()
-        self.assertEqual(timing_only.count("[TIMING]"), 3)
-        self.assertNotIn("planner.plan.start", timing_only)
+        self.assertEqual([entry["stage"] for entry in self.entries],
+                         ["planner.locate_entry", "planner.plan"])
+        self.assertEqual([entry["request_timings"][0]["stage"] for entry in self.entries],
+                         ["planning.entry.model_request", "planning.full.model_request"])
+        self.assertTrue(all(entry["ms"] >= 0 for entry in self.entries))
+        readable = self.log_path.read_text()
+        self.assertIn("规划层 · ①入口定位", readable)
+        self.assertIn("规划层 · ②任务拆分", readable)
+        self.assertEqual(list(self.log_path.parent.iterdir()), [self.log_path])
 
     def test_jev_and_click_have_separate_durations(self):
         provider = Provider("decision", "https://api.example.com", "jev", "key")
@@ -70,11 +70,16 @@ class TimingLogTests(unittest.TestCase):
         with patch.object(protocol, "tool_call"), patch.object(protocol, "tool_result"):
             Executor(session).execute(Action("click", ref="@e1"))
 
-        rows = {row["stage"]: row for row in self.timings()}
-        self.assertIn("decision.jev.request", rows)
-        self.assertIn("decision.jev.total", rows)
-        self.assertEqual(rows["browser.action.command"]["action"], "click")
-        self.assertEqual(rows["browser.action.command"]["target"], "@e1")
+        jev, execute = self.entries
+        self.assertEqual(jev["request_timings"][0]["stage"], "decision.jev.request")
+        self.assertEqual(jev["result"]["target"], "@e1")
+        self.assertEqual(execute["commands"], [["click", "@e1"]])
+        self.assertGreaterEqual(execute["ms"], 0)
+        readable = self.log_path.read_text()
+        for label in ("输入", "输出", "命令", "请求耗时", "耗时", "决策层 · JEV 请求"):
+            self.assertIn(label, readable)
+        self.assertNotIn('"request_timings"', readable)
+
 
 
 if __name__ == "__main__":

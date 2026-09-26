@@ -5,8 +5,8 @@ into an `HlEvent` (see `app/src/shared/session-schemas.ts`), which is persisted
 to SQLite and streamed to the renderer. One JSON object per line, no other
 stdout output — anything else on stdout is dropped by the parser.
 
-Diagnostics and emitted events are saved under the Python root's log directory.
-Timing rows also go to a per-task ``*.timing.log`` for quick inspection.
+Layer inputs, outputs and timings share one readable file under the Python
+root's log directory. Intermediate diagnostics are not persisted.
 stdout remains exclusively the event protocol.
 """
 
@@ -17,7 +17,6 @@ import os
 import sys
 import time
 import inspect
-import traceback
 from contextvars import ContextVar
 from contextlib import contextmanager
 from copy import deepcopy
@@ -28,32 +27,78 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
-_STARTED_AT = time.monotonic()
 LOG_DIR = Path(__file__).resolve().parent.parent / "log"
-LOG_PATH = LOG_DIR / f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{os.getpid()}.jsonl"
-_TIMING_LABELS = {
-    "task.total": "任务总耗时",
-    "planning.entry.model_request": "规划①定位网址·模型请求",
-    "planning.entry.total": "规划①定位网址·总耗时",
-    "planning.entry.browser_bind": "绑定浏览器标签页",
-    "planning.entry.browser_open": "打开入口页面",
-    "planning.full.model_request": "规划②拆分任务·模型请求",
-    "planning.full.total": "规划②拆分任务·总耗时",
-    "planning.full.wait_after_browser_open": "页面打开后等待规划",
-    "planning.full.parallel_wall": "入口定位、页面打开与规划并行总耗时",
-    "runtime.orchestrator.total": "执行层总耗时",
-    "runtime.step.total": "子任务总耗时",
-    "runtime.observe": "观察页面",
-    "runtime.goal_check": "判断目标是否完成",
-    "runtime.decision": "选择下一步动作",
-    "runtime.execute": "执行动作总耗时",
-    "browser.action.page_observed_to_dispatch": "观察页面到发出动作",
-    "browser.action.command": "浏览器命令耗时",
-    "decision.jev.request": "Jev 接口请求",
-    "decision.jev.total": "Jev 总耗时",
-    "decision.jev.type_text_model_request": "Jev 填写内容模型请求",
-    "verification.model_request": "完成判断模型请求",
-    "model.http.network": "模型 HTTP 网络往返",
+LOG_PATH = LOG_DIR / f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{os.getpid()}.log"
+_LAYERS = {
+    "task.run": "任务层",
+    "planner.locate_entry": "规划层 · ①入口定位",
+    "planner.plan": "规划层 · ②任务拆分",
+    "orchestrator.run": "执行层 · 最终结果",
+    "orchestrator.step": "执行层 · 子任务",
+    "observer.capture": "观察层 · 网页内容",
+    "decision.choose": "决策层",
+    "executor.execute": "执行层 · 本轮命令",
+    "validator.action": "验证层 · 动作结果",
+    "validator.step": "验证层 · 步骤结果",
+    "reflection.advise": "反思层",
+    "completion.verify": "验收层",
+    "skills.match": "技能层 · 匹配",
+    "skills.save": "技能层 · 保存",
+    "memory.write": "记忆层",
+    "model.responses": "模型请求",
+    "model.jev": "决策层 · JEV 请求",
+}
+_FRAME: ContextVar[dict | None] = ContextVar("log_frame", default=None)
+_REQUEST_STAGES = {
+    "planning.entry.model_request", "planning.full.model_request",
+    "decision.jev.request", "decision.jev.type_text_model_request",
+    "verification.model_request",
+}
+_STAGE_LABELS = {
+    **_LAYERS,
+    "planning.entry.model_request": "规划层 · 入口定位模型请求",
+    "planning.full.model_request": "规划层 · 任务拆分模型请求",
+    "decision.jev.request": "决策层 · JEV 请求",
+    "decision.jev.type_text_model_request": "决策层 · 填写内容模型请求",
+    "verification.model_request": "验收层 · 模型请求",
+    "decision.jev.fallback": "决策层 · JEV 失败后降级",
+    "decision.model.fallback": "决策层 · 模型失败后降级",
+    "reflection.model.fallback": "反思层 · 模型失败后降级",
+    "completion.model.unavailable": "验收层 · 模型不可用",
+    "planner.repair": "规划层 · 修正计划",
+    "planner.entry_locator.repair": "规划层 · 修正入口",
+
+}
+_FIELD_LABELS = {
+    "inputs": "输入", "result": "输出", "ms": "耗时（毫秒）",
+    "requests": "模型请求", "request": "请求", "request_timings": "请求耗时",
+    "commands": "命令", "errors": "错误", "error": "错误原因",
+    "error_type": "错误类型", "response": "响应", "messages": "最终消息",
+    "task": "任务输入", "stage": "阶段", "layer": "所属层",
+    "session_id": "任务编号", "step_id": "步骤编号", "iteration": "轮次",
+    "url": "网址", "title": "页面标题", "snapshot": "网页交互内容",
+    "page_text": "网页全文", "diff": "页面变化", "changed": "是否变化",
+    "elements": "交互元素", "ref": "元素引用", "text": "文本",
+    "goal": "目标", "step": "步骤", "steps": "步骤列表", "id": "编号",
+    "status": "状态", "needs_browser": "是否需要浏览器", "question": "追问",
+    "direct_answer": "直接答复", "success_criteria": "验收条件",
+    "depends_on": "依赖步骤", "start_url": "入口网址", "parallel_group": "并行组",
+    "needs_user_confirmation": "是否需要用户确认", "risk": "风险",
+    "user_input": "用户输入", "history": "历史", "context": "上下文",
+    "completed": "已完成步骤", "criteria": "校验条件", "observation": "网页观察",
+    "before": "操作前网页", "after": "操作后网页", "action": "动作",
+    "actions": "动作列表", "kind": "类型", "value": "参数", "expected": "预期结果",
+    "sensitive": "是否敏感", "route": "决策来源", "confidence": "置信度",
+    "operation": "操作", "target": "目标元素", "ok": "是否成功",
+    "args": "命令参数", "stdout": "标准输出", "stderr": "错误输出",
+    "code": "退出码", "preview": "结果预览", "attempt": "请求次数",
+    "reason": "原因", "model": "模型", "provider": "模型服务",
+    "provider_name": "模型服务", "body": "请求体", "timeout": "超时（秒）",
+    "instructions": "系统提示词", "input": "输入", "system": "系统提示词",
+    "enable_thinking": "是否启用思考", "summary": "总结", "iterations": "执行轮数",
+    "message": "消息", "type": "类型", "event": "最终事件", "level": "级别",
+    "advice": "反思建议", "recent_action": "上一次动作", "action_history": "动作历史",
+    "force_reasoning": "是否强制推理", "skills": "技能", "memory": "记忆",
 }
 _CONTEXT: ContextVar[dict] = ContextVar("log_context", default={})
 _HISTORY: ContextVar[list[dict[str, Any]] | None] = ContextVar("task_history", default=None)
@@ -84,22 +129,41 @@ def capture_events(history: list[dict[str, Any]]):
 
 def _json_value(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
-        return asdict(value)
+        to_dict = getattr(value, "to_dict", None)
+        return to_dict() if callable(to_dict) else asdict(value)
     if isinstance(value, Path):
         return str(value)
     return f"<{type(value).__name__}>"
 
 
 def trace(stage: str, **data: Any) -> None:
-    _record("trace", stage=stage, **data)
+    """Fold useful request/command details into the enclosing layer."""
+    frame = _FRAME.get()
+    if frame is None:
+        return
+    if stage == "task.received":
+        frame["task"] = data["task"]
+    elif stage == "model.request":
+        frame["request"] = data
+    elif stage == "model.response.raw":
+        frame["response"] = data.get("body")
+    elif stage == "model.response.parsed":
+        # Keep only one representation of the response.
+        frame["response"] = data.get("data")
+    elif stage == "model.response.http_error":
+        frame["response"] = data
+    elif stage == "executor.command":
+        frame.setdefault("commands", []).append(data["command"])
+    elif "error" in data:
+        frame.setdefault("errors", []).append({"stage": stage, "error": data["error"]})
 
 
 def timing(stage: str, started_at: float, **data: Any) -> float:
-    """Record a prominent local-only wall-clock duration in milliseconds."""
-    now = time.monotonic()
-    ms = round((now - started_at) * 1000, 2)
-    _record("timing", stage=stage, ms=ms,
-            since_start_ms=round((now - _STARTED_AT) * 1000, 2), **data)
+    """Merge request durations into the final layer record."""
+    ms = round((time.monotonic() - started_at) * 1000, 2)
+    frame = _FRAME.get()
+    if frame is not None and stage in _REQUEST_STAGES:
+        frame.setdefault("request_timings", []).append({"stage": stage, "ms": ms, **data})
     return ms
 
 
@@ -125,16 +189,18 @@ def timed(stage: str):
 
 
 def trace_exception(stage: str, exc: Exception) -> None:
-    trace(stage, error=str(exc), error_type=type(exc).__name__, traceback=traceback.format_exc())
+    trace(stage, error=str(exc), error_type=type(exc).__name__)
 
 
 def traced(stage: str):
-    """Log layer boundaries, preserving nested call/step correlation on errors."""
+    """Write one completed input/output/time block per layer or request."""
     def decorate(function):
         signature = inspect.signature(function)
 
         @wraps(function)
         def wrapped(*args, **kwargs):
+            if stage not in _LAYERS:
+                return function(*args, **kwargs)
             inputs = dict(signature.bind(*args, **kwargs).arguments)
             inputs.pop("self", None)
             context = _CONTEXT.get()
@@ -142,16 +208,30 @@ def traced(stage: str):
             if "step" in inputs and hasattr(inputs["step"], "id"):
                 extra["step_id"] = inputs["step"].id
             token = _CONTEXT.set({**context, **extra})
+            parent = _FRAME.get()
+            frame = {}
+            frame_token = _FRAME.set(frame)
             started = time.monotonic()
+            output = {}
             try:
-                trace(f"{stage}.start", inputs=inputs)
-                result = function(*args, **kwargs)
-                trace(f"{stage}.end", result=result, ms=round((time.monotonic() - started) * 1000, 2))
-                return result
+                output["result"] = function(*args, **kwargs)
+                return output["result"]
             except Exception as exc:
-                trace(f"{stage}.error", error=str(exc), error_type=type(exc).__name__, traceback=traceback.format_exc(), ms=round((time.monotonic() - started) * 1000, 2))
+                output.update(error=str(exc), error_type=type(exc).__name__)
                 raise
             finally:
+                if stage.startswith("model.") and "error" not in output:
+                    frame.pop("response", None)
+                if "request" in frame:
+                    # The actual request contains the complete model input.
+                    inputs = {}
+                entry = dict(stage=stage, layer=_LAYERS[stage], inputs=inputs,
+                             **output, **frame, ms=round((time.monotonic() - started) * 1000, 2))
+                if stage.startswith("model.") and parent is not None:
+                    parent.setdefault("requests", []).append(entry)
+                else:
+                    _record("layer", **entry)
+                _FRAME.reset(frame_token)
                 _CONTEXT.reset(token)
         return wrapped
     return decorate
@@ -159,30 +239,24 @@ def traced(stage: str):
 
 def _format_readable(entry: dict) -> str:
     stage = entry.get("stage", entry["kind"])
-    if entry["kind"] == "timing":
-        label = _TIMING_LABELS.get(stage)
-        display_stage = f"{stage}（{label}）" if label else stage
-        context = " ".join(f"{key}={entry[key]}" for key in
-                           ("session_id", "step_id", "iteration") if key in entry)
-        details = " ".join(f"{key}={value}" for key, value in entry.items()
-                           if key not in {"time", "pid", "kind", "stage", "ms", "since_start_ms", "session_id",
-                                          "step_id", "iteration", "call_id", "parent_call_id"})
-        return ("\n" + ">" * 24 + " [TIMING] " + ">" * 24 + "\n"
-                + f"{entry['time']} | t+{entry['since_start_ms']:,.2f} ms | "
-                + f"{display_stage} | {entry['ms']:,.2f} ms\n"
-                + " | ".join(part for part in (context, details) if part) + "\n"
-                + "<" * 58 + "\n\n")
-    header = f"[{entry['time']}] {stage}"
-    for key in ("session_id", "step_id", "iteration", "call_id"):
+    header = f"[{entry['time']}] {entry.get('layer', stage)} | 耗时 {entry.get('ms', 0):,.2f} 毫秒"
+    for key in ("session_id", "step_id", "iteration"):
         if key in entry:
-            header += f" | {key}={entry[key]}"
+            header += f" | {_FIELD_LABELS.get(key, key)}={entry[key]}"
     # Normalize dataclasses once so nested fields can also be rendered as text.
-    normalized = json.loads(json.dumps(entry, ensure_ascii=False, default=_json_value))
+    # Header already carries timing and correlation; do not repeat metadata.
+    details = {key: value for key, value in entry.items()
+               if key not in {"time", "pid", "kind", "stage", "layer", "ms",
+                              "session_id", "step_id", "iteration", "call_id", "parent_call_id"}}
+    normalized = json.loads(json.dumps(details, ensure_ascii=False, default=_json_value))
     blocks = []
 
     def expand(value, path=""):
         if isinstance(value, dict):
-            return {key: expand(item, f"{path}.{key}" if path else key) for key, item in value.items()}
+            return {_FIELD_LABELS.get(key, key): expand(
+                _STAGE_LABELS.get(item, item) if key == "stage" and isinstance(item, str) else item,
+                f"{path}.{_FIELD_LABELS.get(key, key)}" if path else _FIELD_LABELS.get(key, key))
+                for key, item in value.items()}
         if isinstance(value, list):
             return [expand(item, f"{path}[{index}]") for index, item in enumerate(value)]
         if isinstance(value, str):
@@ -209,13 +283,7 @@ def _record(kind: str, **data: Any) -> None:
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False, default=_json_value) + "\n")
-        readable = _format_readable(entry)
-        with LOG_PATH.with_suffix(".log").open("a", encoding="utf-8") as handle:
-            handle.write(readable)
-        if kind == "timing":
-            with LOG_PATH.with_suffix(".timing.log").open("a", encoding="utf-8") as handle:
-                handle.write(readable)
+            handle.write(_format_readable(entry))
     except (OSError, TypeError, ValueError) as exc:
         # Keep the task/event protocol alive if the installation is read-only.
         print(f"[koi-agent] cannot write {LOG_PATH}: {exc}; {entry!r}", file=sys.stderr, flush=True)
@@ -225,7 +293,12 @@ def _emit(event: dict[str, Any]) -> None:
     history = _HISTORY.get()
     if history is not None:
         history.append(deepcopy(event))
-    _record("event", event=event)
+    if event["type"] in {"done", "error", "notify"}:
+        frame = _FRAME.get()
+        if frame is not None:
+            frame.setdefault("messages", []).append(event)
+        else:
+            _record("event", event=event)
     sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -255,5 +328,6 @@ def done(summary: str, iterations: int) -> None:
 
 
 def log(message: str) -> None:
-    """Persist full diagnostics locally without sending them to Electron."""
-    _record("diagnostic", elapsed=round(time.monotonic() - _STARTED_AT, 3), message=message)
+    """Compatibility hook for intermediate diagnostics, now omitted."""
+    # Intermediate flow diagnostics are intentionally omitted.
+    pass

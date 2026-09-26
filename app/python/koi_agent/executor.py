@@ -42,7 +42,6 @@ class Executor:
         protocol.log(
             f"flow=execute action={action.kind} ref={action.ref or '-'}"
         )
-        protocol.trace("executor.command", command=commands[action.kind])
         name = f"browser.{action.kind}"
         action_data = asdict(action)
         if action.sensitive:
@@ -51,6 +50,7 @@ class Executor:
         started = time.monotonic()
         try:
             if action.kind == "type":
+                protocol.trace("executor.command", command=["fill", action.ref, ""])
                 cleared = self.session.run(["fill", action.ref, ""])
                 if not cleared.ok:
                     protocol.tool_result(name, False, cleared.preview,
@@ -58,11 +58,13 @@ class Executor:
                     return cleared
             if action.kind == "press" and action.ref:
                 # agent-browser press addresses the focused control, not a ref.
+                protocol.trace("executor.command", command=["focus", action.ref])
                 focused = self.session.run(["focus", action.ref])
                 if not focused.ok:
                     protocol.tool_result(name, False, focused.preview,
                                          (time.monotonic() - started) * 1000)
                     return focused
+            protocol.trace("executor.command", command=commands[action.kind])
             result = self.session.run(commands[action.kind])
         except Exception as exc:
             protocol.timing("browser.action.command", started, action=action.kind,

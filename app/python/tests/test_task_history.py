@@ -142,10 +142,10 @@ class TaskHistoryTests(unittest.TestCase):
         self.assertEqual(calls[0]["name"], "browser.open")
         self.assertEqual(calls[0]["args"]["value"], "https://v.qq.com/")
         self.assertTrue(results[0]["ok"])
-        log_entries = [json.loads(line) for line in protocol.LOG_PATH.read_text().splitlines()]
-        observations = [entry for entry in log_entries if entry.get("stage") == "observer.summary"]
-        self.assertIn("Play", observations[0]["diff"])
-        self.assertEqual(observations[-1]["url"], "https://v.qq.com/")
+        readable = protocol.LOG_PATH.read_text()
+        self.assertIn("观察层 · 网页内容", readable)
+        self.assertIn("Play", readable)
+        self.assertIn("https://v.qq.com/", readable)
         self.assertFalse(any(event["type"] == "thinking" and '"kind": "observation"' in event["text"]
                              for event in history))
         received, _ = self.run_turn("继续", history, Plan("ask", True, question="接下来做什么？"))
