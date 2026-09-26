@@ -2,7 +2,32 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from typing import Any
+
+
+def execution_context(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Recover structured state from prior agent events, preserving full history separately."""
+    context: dict[str, Any] = {}
+    for event in events:
+        if event.get("type") != "thinking":
+            continue
+        try:
+            value = json.loads(event.get("text", ""))
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        if value.get("kind") == "planner_plan" and isinstance(value.get("plan"), dict):
+            context["previous_plan"] = value["plan"]
+            if value["plan"].get("status") == "ready":
+                context["active_plan"] = value["plan"]
+                context.pop("execution_progress", None)
+        elif value.get("kind") == "task_progress":
+            context["execution_progress"] = value
+            if value.get("current_url"):
+                context["entry_url"] = value["current_url"]
+    return context
 
 
 def task_history(task: dict[str, Any], user_input: str) -> list[dict[str, Any]]:

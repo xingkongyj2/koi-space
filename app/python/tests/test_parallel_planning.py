@@ -1,6 +1,7 @@
 """The entry page opens while full task planning is still in flight."""
 from contextlib import redirect_stdout
 import io
+import json
 from pathlib import Path
 import tempfile
 from threading import Event
@@ -14,6 +15,44 @@ from koi_agent.planner import EntryPoint, Plan, Step
 
 
 class ParallelPlanningTests(unittest.TestCase):
+    def test_follow_up_rebinds_existing_page_without_reopening_entry(self):
+        current_url = "https://example.com/orders/new"
+        previous = Plan("ready", True, steps=(Step(
+            "s1", "创建订单", ("text_contains:订单已创建",), start_url="https://example.com/",
+        ),))
+        history = [
+            {"type": "user_input", "text": "在订单网站创建订单"},
+            {"type": "thinking", "text": json.dumps({"kind": "planner_plan", "plan": previous.to_dict()})},
+            {"type": "thinking", "text": json.dumps({"kind": "task_progress", "step_id": "s1", "status": "waiting_confirmation", "current_url": current_url, "completed_steps": []})},
+            {"type": "thinking", "text": json.dumps({"kind": "planner_plan", "plan": Plan("ask", True, question="需要几件？").to_dict()})},
+            {"type": "user_input", "text": "两件"},
+        ]
+        settings = Settings(Provider("planner", "https://example.com", "key", "model"),
+                            Provider("decision", "", "", ""))
+        from unittest.mock import Mock
+        session = Mock()
+        session.current_url.return_value = current_url
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(protocol, "LOG_PATH", Path(temporary) / "agent.jsonl"), \
+             patch.object(entrypoint, "load_settings", return_value=settings), \
+             patch.object(entrypoint.Planner, "locate_entry") as locator, \
+             patch.object(entrypoint.Planner, "plan", return_value=previous) as planner, \
+             patch.object(entrypoint.browser, "log_environment"), \
+             patch.object(entrypoint.browser, "BrowserSession", return_value=session), \
+             patch.object(entrypoint, "Orchestrator") as orchestrator, \
+             redirect_stdout(io.StringIO()):
+            orchestrator.return_value.run.return_value = "任务完成"
+            self.assertEqual(entrypoint.run_task({"browser": {"cdpPort": 9222, "targetId": "target"}},
+                                                "两件", "test", history), 0)
+        locator.assert_not_called()
+        session.run.assert_not_called()
+        session.bind.assert_called_once()
+        context = planner.call_args.kwargs["context"]
+        self.assertTrue(context["resume"])
+        self.assertEqual(context["current_url"], current_url)
+        self.assertEqual(context["active_plan"], previous.to_dict())
+        self.assertEqual(context["execution_progress"]["status"], "waiting_confirmation")
+
     def test_model_requests_overlap_and_entry_opens_before_plan_finishes(self):
         locator_started = Event()
         planner_started = Event()

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 
 from . import protocol
@@ -26,10 +26,20 @@ class Decision:
         self.ai = ai
         self.jev = jev
 
+    @staticmethod
+    def _input_action(action, observation):
+        if action.kind != "fill":
+            return action
+        label = next((item.get("text", "") for item in observation.elements
+                      if item.get("ref") == action.ref), "").lower()
+        if any(token in label for token in ("combobox", "autocomplete", "回车键选中", "上下键进行选择")):
+            return Action("type", action.value, action.ref, action.expected, action.sensitive)
+        return action
+
     @protocol.traced("decision.choose")
     def choose(
         self, goal, observation, start_url="", slow=False, advice="", force_entry=False,
-        success_criteria=(), recent_action=None,
+        success_criteria=(), recent_action=None, force_reasoning=False, action_history=(),
     ) -> DecisionResult:
         # A step's start_url is a way into the site, not the only valid page.
         # Detail/result paths on the same site are often the desired progress.
@@ -44,13 +54,15 @@ class Decision:
                 "open start URL",
             )
 
-        if self.jev:
+        if self.jev and not force_reasoning:
             try:
                 value = self.jev.choose(
                     goal,
                     observation,
                     success_criteria=success_criteria,
                     recent_action=recent_action,
+                    action_history=action_history,
+                    advice=advice,
                 )
                 if value["operation"] in {"DONE", "BLOCKED"}:
                     return DecisionResult(
@@ -61,7 +73,7 @@ class Decision:
                         value["operation"],
                     )
                 return DecisionResult(
-                    (self._jev_action(value),),
+                    (self._input_action(self._jev_action(value), observation),),
                     float(value.get("confidence", 0.8)),
                     "jev",
                     "typed choice",
@@ -81,6 +93,8 @@ class Decision:
                         "snapshot": observation.snapshot[:12000],
                         "advice": advice,
                         "slow": slow,
+                        "recent_actions": list(action_history),
+                        "recent_action": asdict(recent_action) if recent_action is not None else None,
                     },
                     ensure_ascii=False,
                 )
@@ -100,8 +114,9 @@ class Decision:
                         bool(item.get("sensitive")),
                     )
                     for item in data.get("actions", [])
-                    if item.get("kind") in {"open", "click", "fill", "press", "wait", "scroll"}
+                    if item.get("kind") in {"open", "click", "fill", "type", "press", "wait", "scroll"}
                 )[:1]
+                actions = tuple(self._input_action(action, observation) for action in actions)
                 return DecisionResult(
                     actions,
                     float(data.get("confidence", 0.5)),
@@ -124,6 +139,7 @@ class Decision:
             "SELECT": "click",
             "SCROLL": "scroll",
             "WAIT": "wait",
+            "PRESS": "press",
         }
         return Action(
             kinds.get(operation, "wait"),

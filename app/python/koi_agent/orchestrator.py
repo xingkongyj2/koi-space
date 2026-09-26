@@ -6,6 +6,7 @@ injected through the dedicated components, which keeps the loop testable.
 from __future__ import annotations
 from dataclasses import asdict
 import json
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -95,6 +96,24 @@ class Orchestrator:
         last_verdict = None
         verification_source = "criteria"
         transitions: dict[tuple[str, str, str, str, str], int] = {}
+        no_progress = 0
+        action_history = []
+        last_state = None
+        state_transitions = {}
+        cycle_recovery = False
+
+        def state_key(page):
+            # Ref renumbering is not business progress.
+            text = re.sub(r"\[ref=[\w-]+\]", "", page.snapshot + "\n" + page.page_text)
+            return page.url, text
+
+        def control_key(page):
+            # Dynamic banners and ref renumbering must not hide a form cycle.
+            lines = [re.sub(r"\[ref=[\w-]+\]", "", line).strip()
+                     for line in page.snapshot.splitlines()]
+            controls = tuple(line for line in lines if re.search(
+                r"\b(textbox|searchbox|combobox|listbox|option|spinbutton|checkbox|radio|button)\b", line))
+            return page.url, controls or tuple(lines)
 
         def needs_model_verification() -> bool:
             """Return whether page evidence needs semantic completion review.
@@ -157,6 +176,8 @@ class Orchestrator:
             with protocol.measure("runtime.observe", phase="before_decision"):
                 observation = self.observer.capture()
             page_observed_at = time.monotonic()
+            if last_state is not None and state_key(observation) != last_state:
+                no_progress = 0  # Allow asynchronous changes to settle.
             # The first observation only uses cheap deterministic acceptance.
             # Semantic completion is checked after an action or when JEV
             # explicitly proposes DONE.
@@ -182,6 +203,8 @@ class Orchestrator:
                     force_entry=(step.success_criteria == (f"url_prefix:{step.start_url}",)),
                     success_criteria=step.success_criteria,
                     recent_action=last_action,
+                    force_reasoning=no_progress >= 2 or cycle_recovery,
+                    action_history=action_history[-6:],
                 )
             protocol.timing("runtime.decision", decision_started, route=decision.route)
             # Treat every browser interaction as a new planning boundary.  A
@@ -286,6 +309,22 @@ class Orchestrator:
                 last_before, last_action = observation, action
                 with protocol.measure("runtime.observe", phase="after_action", action=action.kind):
                     after = self.observer.capture()
+                changed = state_key(observation) != state_key(after)
+                no_progress = 0 if changed else no_progress + 1
+                last_state = state_key(after)
+                action_history.append({"action": asdict(action), "page_changed": changed,
+                                       "before_controls": control_key(observation)[1],
+                                       "after_controls": control_key(after)[1]})
+                target_label = next((element.get("text", "") for element in observation.elements
+                                     if element.get("ref") == action.ref), "")
+                transition = (control_key(observation), action.kind, target_label,
+                              action.value, control_key(after))
+                state_transitions[transition] = state_transitions.get(transition, 0) + 1
+                repeated = state_transitions[transition]
+                if repeated >= 2 and transition[0] != transition[-1]:
+                    cycle_recovery = True
+                    protocol.trace("orchestrator.control_cycle_detected", count=repeated,
+                                   action=action, before=control_key(observation), after=control_key(after))
                 if not self.validator.action(observation, after, action):
                     # A successful browser command is still progress even when
                     # the page has not exposed a visible change yet. This is
@@ -311,6 +350,14 @@ class Orchestrator:
                 protocol.log(f"flow=verify step={step.id} status=passed")
                 return None
             if not failed:
+                if cycle_recovery and repeated >= 3:
+                    self._progress(step, "failed", completed, current_url=observation.url,
+                                   reason="同一控件状态与动作反复出现，恢复尝试仍未解除循环")
+                    return f"步骤 {step.id} 停止：控件状态往返循环，恢复尝试未能解除阻塞"
+                if no_progress >= 5:
+                    self._progress(step, "failed", completed, current_url=observation.url,
+                                   reason="连续动作无可观察进展，恢复尝试未能解除阻塞")
+                    return f"步骤 {step.id} 停止：连续动作无可观察进展，恢复尝试未能解除阻塞"
                 # Repeating the same navigation between two pages is a cycle,
                 # not progress.  Stop before it consumes the entire budget.
                 if last_before and last_action and page_key(last_before.url) != page_key(observation.url):
@@ -330,6 +377,16 @@ class Orchestrator:
                 # progress, so do not convert it into a failure.
                 slow = True
                 advice = "动作已执行但步骤尚未完成；继续观察当前页面并选择下一步。"
+                if no_progress >= 2 or cycle_recovery:
+                    advice = ("连续动作未产生可观察变化。请分析最近动作和当前页面，"
+                              "改用其他可验证的动作，不要重复无效点击或等待；"
+                              "检查输入联想候选是否确认、弹层是否阻挡以及是否缺少必要信息。"
+                              "仅在有加载证据时等待，不猜测业务参数。")
+                    if cycle_recovery:
+                        advice = ("控件状态正在往返循环，页面变化不代表业务进展。"
+                                  "请检查动作历史中改变了哪个字段、候选是否匹配目标；"
+                                  "不要重复导致错误选项的按键。改用明确匹配的候选或其他交互方式。"
+                                  "不要把轮播变化当成进展，不猜测业务参数。")
                 self._progress(step, "progressing", completed,
                                current_url=observation.url, advice=advice)
                 continue

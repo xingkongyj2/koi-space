@@ -17,7 +17,7 @@ class Action:
 
 
 class Executor:
-    ALLOWED = {"open", "click", "fill", "press", "wait", "scroll"}
+    ALLOWED = {"open", "click", "fill", "type", "press", "wait", "scroll"}
 
     def __init__(self, session) -> None:
         self.session = session
@@ -34,7 +34,8 @@ class Executor:
             "open": ["open", action.value],
             "click": ["click", action.ref],
             "fill": ["fill", action.ref, action.value],
-            "press": ["press", action.ref, action.value],
+            "type": ["type", action.ref, action.value],
+            "press": ["press", action.value],
             "wait": ["wait", action.value or "500"],
             "scroll": ["scroll", action.value or "down"],
         }
@@ -49,6 +50,19 @@ class Executor:
         protocol.tool_call(name, action_data, protocol.current_iteration())
         started = time.monotonic()
         try:
+            if action.kind == "type":
+                cleared = self.session.run(["fill", action.ref, ""])
+                if not cleared.ok:
+                    protocol.tool_result(name, False, cleared.preview,
+                                         (time.monotonic() - started) * 1000)
+                    return cleared
+            if action.kind == "press" and action.ref:
+                # agent-browser press addresses the focused control, not a ref.
+                focused = self.session.run(["focus", action.ref])
+                if not focused.ok:
+                    protocol.tool_result(name, False, focused.preview,
+                                         (time.monotonic() - started) * 1000)
+                    return focused
             result = self.session.run(commands[action.kind])
         except Exception as exc:
             protocol.timing("browser.action.command", started, action=action.kind,

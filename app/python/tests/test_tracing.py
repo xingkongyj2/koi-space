@@ -73,6 +73,15 @@ class TracingTests(unittest.TestCase):
         self.assertEqual(self.records("model.response.http_error")[0]["status"], 429)
         self.assertIn("retry later", self.records("model.response.http_error")[0]["body"])
 
+    def test_quota_rejection_reports_actionable_cause(self):
+        body = b'{"error":{"code":"PERMISSION_DENIED","message":"Free quota exhausted. Disable use free tier only."}}'
+        error = HTTPError("https://example.com", 403, "Forbidden", {}, io.BytesIO(body))
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(ModelError, "免费额度已耗尽") as raised:
+                OpenAICompatible(self.provider).chat("system", "task")
+        self.assertIn("HTTP 403", str(raised.exception))
+        self.assertIn("PERMISSION_DENIED", str(raised.exception))
+
     def test_jev_mapping_and_decision_filtering_are_visible(self):
         observation = Observation("https://example.com", "", "page", "", False, ({"ref": "@e1", "text": "button"},))
         raw = {"answers": {"operation": {"choice": "CLICK", "confidence": 0.9}, "click_target": {"choice": "1"}}}

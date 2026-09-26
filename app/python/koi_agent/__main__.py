@@ -14,8 +14,8 @@ from .config import load_settings
 from .completion import CompletionVerifier
 from .decision import Decision
 from .executor import Action, Executor
-from .history import task_history
-from .models import JevDecision, OpenAICompatible
+from .history import execution_context, task_history
+from .models import JevDecision, ModelError, OpenAICompatible
 from .memory import Memory
 from .observer import Observer
 from .orchestrator import Orchestrator
@@ -106,8 +106,27 @@ def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) 
     )
 
     planner = Planner(ai=planner_client)
+    restored = execution_context(history)
+    previous = restored.get("active_plan", {})
 
-    if planner_client:
+    if planner_client and previous.get("status") == "ready" and previous.get("needs_browser"):
+        # Rebind the existing task tab after the Python process restarts.
+        # Never reopen the homepage merely because the user replied.
+        try:
+            cdp_port, target_id = browser_target(task)
+            browser.log_environment()
+            session = browser.BrowserSession(session_id, cdp_port, target_id)
+            with protocol.measure("planning.resume.browser_bind"):
+                session.bind()
+            current_url = session.current_url()
+            restored.update({"current_url": current_url, "resume": True})
+            if current_url.startswith(("https://", "http://")):
+                restored.update({"entry_url": current_url, "entry_locator": "completed"})
+            plan = planner.plan(user_input, history=history, context=restored)
+        except (ValueError, PlanError, browser.BindingLost) as exc:
+            protocol.error(f"flow=resume failed: {exc}")
+            return 0
+    elif planner_client:
         # The short locator and full task planner make independent model
         # requests.  Open the page as soon as the locator returns; execution
         # waits for both the page and the full plan.
@@ -234,6 +253,9 @@ def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) 
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except ModelError as exc:
+        protocol.error(f"模型服务请求失败：{exc}")
+        sys.exit(0)
     except Exception as exc:  # Last resort: never leave the task hanging.
         protocol.log(f"unhandled exception: {exc!r}")
         protocol.error(f"agent crashed: {exc}")

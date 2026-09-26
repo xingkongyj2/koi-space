@@ -39,13 +39,14 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(parse_entry_point(json.dumps(ask_value)),
                          EntryPoint("ask", question="请提供网站"))
 
-    def test_entry_locator_sends_only_current_request(self):
+    def test_entry_locator_includes_history_for_follow_up_replies(self):
         ai = Mock()
         ai.chat.return_value = json.dumps({"status": "ready", "url": "https://v.qq.com/", "question": ""})
         result = Planner(ai).locate_entry("打开腾讯视频历史记录", history=[{"type": "user_input", "text": "旧任务"}])
         self.assertEqual(result.url, "https://v.qq.com/")
         payload = json.loads(ai.chat.call_args.args[1])
-        self.assertEqual(payload, {"user_input": "打开腾讯视频历史记录"})
+        self.assertEqual(payload, {"user_input": "打开腾讯视频历史记录",
+                                   "history": [{"type": "user_input", "text": "旧任务"}]})
 
     def test_ready_round_trips_fixed_contract(self):
         value = ready()
