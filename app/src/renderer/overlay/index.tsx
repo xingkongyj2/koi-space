@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { AiControlEffect } from '@/renderer/components/ai-control-effect';
 import type { TakeoverModeState } from '@/preload/overlay';
 import './overlay.css';
+import { PagePreparing } from '../shared/PagePreparing';
 
 declare global {
   interface Window {
@@ -33,7 +34,7 @@ function Overlay(): React.ReactElement {
 
   return (
     <>
-      {!active && <div className="overlay-idle-label">Browser not started yet</div>}
+      {!active && <div className="overlay-idle-label"><PagePreparing /></div>}
       <AiControlEffect
         enabled={active}
         title="AI 正在控制"

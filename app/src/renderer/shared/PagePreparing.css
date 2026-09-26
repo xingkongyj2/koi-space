@@ -1,0 +1,28 @@
+.page-preparing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  overflow: hidden;
+  isolation: isolate;
+  color: #dee3df;
+  font: 15px/1.5 system-ui, sans-serif;
+}
+.page-preparing .page-preparing__particles { position: absolute; }
+.page-preparing__label {
+  position: relative;
+  z-index: 41;
+  padding: 12px 22px;
+  border: 1px solid #ffffff14;
+  border-radius: 12px;
+  background: #181b19d9;
+  backdrop-filter: blur(8px);
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+@media (prefers-color-scheme: light) {
+  .page-preparing { color: #48514b; }
+  .page-preparing__label { background: #f4f6f4e6; border-color: #00000014; }
+}

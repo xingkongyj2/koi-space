@@ -4,17 +4,17 @@ import { useEffect, useRef } from 'react';
 import './ai-control-effect.css';
 
 /** A transparent, viewport-sized effect. All pointer events pass through it. */
-export default function ParticleWave({ className = '' }: { className?: string }) {
+export default function ParticleWave({ className = '', showGlow = true }: { className?: string; showGlow?: boolean }) {
   const particlesRef = useRef<HTMLCanvasElement>(null);
   const glowRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const particles = particlesRef.current;
     const glow = glowRef.current;
-    if (!particles || !glow) return;
+    if (!particles) return;
     const ctx = particles.getContext('2d');
-    const rim = glow.getContext('2d');
-    if (!ctx || !rim) return;
+    const rim = showGlow ? glow?.getContext('2d') : null;
+    if (!ctx) return;
 
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let width = 0;
@@ -42,16 +42,18 @@ export default function ParticleWave({ className = '' }: { className?: string })
     }
 
     function resize() {
-      width = window.innerWidth;
-      height = window.innerHeight;
+      width = particles!.parentElement?.clientWidth || window.innerWidth;
+      height = particles!.parentElement?.clientHeight || window.innerHeight;
       const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
       particles!.width = Math.round(width * ratio);
       particles!.height = Math.round(height * ratio);
       ctx!.setTransform(ratio, 0, 0, ratio, 0, 0);
       // The soft glow needs fewer pixels than the crisp particle layer.
-      glow!.width = Math.ceil(width / 2);
-      glow!.height = Math.ceil(height / 2);
-      rim!.setTransform(0.5, 0, 0, 0.5, 0, 0);
+      if (glow && rim) {
+        glow.width = Math.ceil(width / 2);
+        glow.height = Math.ceil(height / 2);
+        rim.setTransform(0.5, 0, 0, 0.5, 0, 0);
+      }
       const spacing = Math.max(10, Math.sqrt(width * height / 14000));
       points = [];
       for (let y = spacing / 2; y < height; y += spacing) {
@@ -69,9 +71,9 @@ export default function ParticleWave({ className = '' }: { className?: string })
     }
 
     function paint(time: number) {
-      if (!ctx || !rim) return;
+      if (!ctx) return;
       ctx.clearRect(0, 0, width, height);
-      rim.clearRect(0, 0, width, height);
+      rim?.clearRect(0, 0, width, height);
 
       // Opposite edges share expansion space, keeping the center visually open.
       // No orbit, fixed pulse period, constant-width stroke, or saturated outline.
@@ -88,7 +90,7 @@ export default function ParticleWave({ className = '' }: { className?: string })
         (0.15 + 0.85 * (1 - verticalBias)) * verticalBudget,
         (0.15 + 0.85 * (1 - horizontalBias)) * horizontalBudget,
       ];
-      for (let side = 0; side < 4; side++) {
+      for (let side = 0; rim && side < 4; side++) {
         const length = side % 2 === 0 ? width : height;
         const profile: { along: number; depth: number }[] = [];
         for (let along = -32; along <= length + 32; along += 16) {
@@ -181,19 +183,22 @@ export default function ParticleWave({ className = '' }: { className?: string })
     }
     resize();
     resume();
+    const observer = new ResizeObserver(resize);
+    if (particles.parentElement) observer.observe(particles.parentElement);
     window.addEventListener('resize', resize);
     document.addEventListener('visibilitychange', resume);
     motion.addEventListener('change', resume);
     return () => {
       cancelAnimationFrame(frame);
+      observer.disconnect();
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', resume);
       motion.removeEventListener('change', resume);
     };
-  }, []);
+  }, [showGlow]);
 
   return <div className={`particle-wave ${className}`.trim()} aria-hidden="true">
-    <canvas ref={glowRef} className="particle-wave-glow" />
+    {showGlow && <canvas ref={glowRef} className="particle-wave-glow" />}
     <canvas ref={particlesRef} className="particle-wave-dots" />
   </div>;
 }

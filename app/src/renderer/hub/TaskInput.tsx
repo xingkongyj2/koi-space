@@ -33,6 +33,8 @@ interface TaskInputProps {
   onSubmit: (input: TaskInputSubmission) => void;
   placeholder?: string;
   showAttachmentButton?: boolean;
+  variant?: 'default' | 'borderless';
+  compact?: boolean;
   /** Optional content rendered inside the input box, above the textarea
    *  and below the chips row. Used by the chat composer to host the quoted-
    *  text preview so it visually extends the box rather than floating
@@ -67,7 +69,7 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function TaskInput({ onSubmit, topSlot, showAttachmentButton = true, placeholder = INPUT_PLACEHOLDER }, ref) {
+export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function TaskInput({ onSubmit, topSlot, showAttachmentButton = true, variant = 'default', compact = false, placeholder = INPUT_PLACEHOLDER }, ref) {
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
   const [attachments, setAttachments] = useState<TaskInputAttachment[]>([]);
@@ -92,7 +94,7 @@ export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function Ta
 
   useLayoutEffect(() => {
     resizeTextarea();
-  }, [resizeTextarea, value]);
+  }, [resizeTextarea, value, compact]);
 
   useEffect(() => {
     window.addEventListener('resize', resizeTextarea);
@@ -229,7 +231,7 @@ export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function Ta
   }, []);
 
   return (
-    <div className="task-input">
+    <div className={`task-input${variant === 'borderless' ? ' task-input--borderless' : ''}${compact ? ' task-input--compact' : ''}`}>
       <div
         className={`task-input__box${focused ? ' task-input__box--focused' : ''}${dragActive ? ' task-input__box--drag' : ''}`}
         onClick={focusTextareaOnBoxClick}

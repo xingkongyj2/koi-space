@@ -111,6 +111,12 @@ function pushStateIfChanged(entry: OverlayEntry, mode: OverlayMode, subtitle: st
   if (!unchanged) pushState(entry);
 }
 
+/** Switch the effect after the actual browser document becomes ready. */
+export function setMode(sessionId: string, mode: OverlayMode): void {
+  const entry = entries.get(sessionId);
+  if (entry) pushStateIfChanged(entry, mode, entry.subtitle);
+}
+
 export function show(
   sessionId: string,
   window: BrowserWindow,

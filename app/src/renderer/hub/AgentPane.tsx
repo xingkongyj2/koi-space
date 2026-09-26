@@ -6,6 +6,7 @@ import { closeAppPopup, openAnchoredAppPopup } from '../shared/appPopup';
 import type { AgentSession, OutputEntry } from './types';
 import { useBrowserCard } from './useBrowserCard';
 import { STATUS_LABEL } from './constants';
+import { PagePreparing } from '../shared/PagePreparing';
 
 function friendlyError(raw: string): string {
   const lower = raw.toLowerCase();
@@ -663,14 +664,17 @@ export function AgentPane({ session, focused, browserFullscreen = false, onToggl
     if (rect.width <= 2 || rect.height <= 2) return null;
     const fullWidth = Math.round(rect.width);
     const slotWidth = fullWidth;
-    // The joined frame has no border between title and content; only inset
-    // the native page at the sides and bottom.
-    const border = 2;
+    // Read the frame's actual insets: fullscreen removes the border entirely.
+    const style = window.getComputedStyle(el);
+    const left = parseFloat(style.borderLeftWidth) || 0;
+    const right = parseFloat(style.borderRightWidth) || 0;
+    const top = parseFloat(style.borderTopWidth) || 0;
+    const bottom = parseFloat(style.borderBottomWidth) || 0;
     return {
-      x: Math.round(rect.x) + border,
-      y: Math.round(rect.y),
-      width: slotWidth - border * 2,
-      height: Math.round(rect.height) - border,
+      x: Math.round(rect.x + left),
+      y: Math.round(rect.y + top),
+      width: Math.round(rect.width - left - right),
+      height: Math.round(rect.height - top - bottom),
       slotWidth,
     };
   }, []);
@@ -996,7 +1000,7 @@ export function AgentPane({ session, focused, browserFullscreen = false, onToggl
       >
 
       {frameRect && (showErrorUi || browserDead || browserMissing || session.status === 'draft' || endedWithoutBrowser) && (() => {
-        const isStarting = !showErrorUi && !browserDead && !browserMissing && session.status === 'draft';
+        const isStarting = !showErrorUi && !browserDead && (session.status === 'draft' || (session.status === 'running' && !session.primarySite));
         const browserLine = browserDead
           ? 'Browser ended'
           : browserMissing
@@ -1025,16 +1029,13 @@ export function AgentPane({ session, focused, browserFullscreen = false, onToggl
                   <ErrorIcon />
                 </div>
               )}
-              <span className="pane__browser-starting-row">
+              <div className="pane__browser-starting-row">
                 {isStarting ? (
-                  <>
-                    <span className="pane__spinner" />
-                    <span>Browser starting…</span>
-                  </>
+                  <PagePreparing />
                 ) : (
                   <span>{primaryLine}</span>
                 )}
-              </span>
+              </div>
               {subLine && primaryLine !== subLine && (
                 <span className="pane__browser-subline">{subLine}</span>
               )}

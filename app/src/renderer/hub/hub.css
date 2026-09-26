@@ -5139,13 +5139,13 @@ button:focus:not(:focus-visible) {
   line-height: 1.2;
   text-align: center;
 }
-.new-session-page__composer .task-input { padding: 0; }
-.new-session-page__composer .task-input__box {
+.task-input--borderless { padding: 0; }
+.task-input--borderless .task-input__box {
   padding: 20px 24px 16px;
   border: 0;
   box-shadow: none;
 }
-.new-session-page__composer .task-input__textarea {
+.task-input--borderless .task-input__textarea {
   min-height: 144px;
   max-height: 320px;
   margin: 0;
@@ -5157,14 +5157,14 @@ button:focus:not(:focus-visible) {
   color: #f4f4f4;
   caret-color: #f4f4f4;
 }
-.new-session-page__composer .task-input__textarea::placeholder {
+.task-input--borderless .task-input__textarea::placeholder {
   font: inherit;
   letter-spacing: inherit;
   color: #bcbec4;
   opacity: 1;
 }
-.new-session-page__composer .task-input__actions { border-top: 0; padding-top: 0; }
-.new-session-page__composer .task-input__send:disabled {
+.task-input--borderless .task-input__actions { border-top: 0; padding-top: 0; }
+.task-input--borderless .task-input__send:disabled {
   background-color: #414145;
   color: #dedee1;
 }
@@ -5315,3 +5315,16 @@ button:focus:not(:focus-visible) {
 .hub-navbar--centered .hub-navbar__nav-button svg,
 .hub-navbar--centered .hub-navbar__task-entry svg,
 .hub-navbar--centered .hub-navbar__settings-button svg { width: 13px; height: 13px; }
+
+/* Session composer shares the home input's material and typography. */
+.workspace-split__chat .chat-composer { padding: 12px 0 0; }
+.workspace-split__chat .chat-transcript { padding-bottom: 220px; }
+.hub-root--browser-fullscreen .browser-card-title,
+.hub-root--browser-fullscreen .browser-card .pane__output { border: 0; box-shadow: none; }
+
+/* Compact geometry for conversation inputs; home keeps its larger composer. */
+.task-input--borderless.task-input--compact .task-input__box { padding: 14px 16px 12px; }
+.task-input--borderless.task-input--compact .task-input__textarea {
+  min-height: 72px;
+  max-height: clamp(72px, 24vh, 180px);
+}

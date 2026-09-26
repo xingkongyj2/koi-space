@@ -210,6 +210,7 @@ const sessionManager = new SessionManager(path.join(app.getPath('userData'), 'se
 // the browser-harness-js runtime it replaced.
 bootstrapHarness();
 const browserPool = new BrowserPool();
+const browserPagesReady = new Set<string>();
 const sessionScreencast = new SessionScreencast(browserPool);
 let interruptBrowserSessionFromShortcut: ((sessionId: string) => boolean) | null = null;
 const resourceMonitorContext: ResourceMonitorContext = {
@@ -219,12 +220,29 @@ const resourceMonitorContext: ResourceMonitorContext = {
 // Push browser-gone notifications to the shell renderer so the UI can stop
 // showing "Browser starting…" when a WebContents is destroyed or crashes.
 browserPool.setOnCreate((sessionId) => {
+  browserPagesReady.delete(sessionId);
+  const page = browserPool.getWebContents(sessionId);
+  page?.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (!isMainFrame || isInPlace || browserPool.getWebContents(sessionId) !== page) return;
+    browserPagesReady.delete(sessionId);
+    takeoverOverlay.setMode(sessionId, 'idle');
+  });
+  page?.on('dom-ready', () => {
+    if (browserPool.getWebContents(sessionId) !== page) return;
+    const url = page.getURL();
+    if (!url || url === 'about:blank') return;
+    browserPagesReady.add(sessionId);
+    if (sessionManager.getSession(sessionId)?.status === 'running') {
+      takeoverOverlay.setMode(sessionId, 'active');
+    }
+  });
   mainLogger.info('main.sessions.browserAttached', { sessionId });
   if (shellWindow && !shellWindow.isDestroyed()) {
     shellWindow.webContents.send('sessions:browser-attached', sessionId);
   }
 });
 browserPool.setOnGone((sessionId) => {
+  browserPagesReady.delete(sessionId);
   if (shellWindow && !shellWindow.isDestroyed()) {
     shellWindow.webContents.send('sessions:browser-gone', sessionId);
   }
@@ -1724,7 +1742,8 @@ app.whenReady().then(async () => {
     // resolves it rather than trusting the caller so a page can't label
     // somebody else's session.
     const subtitle = (sessionManager.getSession(validatedId)?.prompt ?? '').slice(0, 120);
-    takeoverOverlay.show(validatedId, shellWindow, bounds, mode ?? 'idle', subtitle);
+    const effectMode = mode === 'active' && browserPagesReady.has(validatedId) ? 'active' : 'idle';
+    takeoverOverlay.show(validatedId, shellWindow, bounds, effectMode, subtitle);
     // The browser view was attached before us most of the time; reraise to
     // guarantee our overlay paints above it.
     takeoverOverlay.reraise(validatedId, shellWindow);

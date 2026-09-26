@@ -17,7 +17,7 @@ body {
 }
 
 body[data-mode='idle'] {
-  background: #131318;
+  background: #151716;
 }
 
 @media (prefers-color-scheme: light) {

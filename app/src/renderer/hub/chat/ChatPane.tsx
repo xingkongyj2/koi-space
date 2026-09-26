@@ -259,6 +259,10 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit, showBrowserPrev
           </p>
         )}
         <TaskInput
+          variant="borderless"
+          compact
+          showAttachmentButton={false}
+          placeholder="想让小K帮你干什么？"
           ref={taskInputRef}
           onSubmit={onSubmit}
           topSlot={quotedText ? (
