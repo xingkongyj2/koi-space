@@ -7,6 +7,7 @@ import json
 import time
 import urllib.request
 import urllib.error
+from dataclasses import asdict
 from urllib.parse import urlsplit
 
 from .config import Provider
@@ -92,7 +93,7 @@ class JevDecision:
 
     @protocol.timed("decision.jev.total")
     @protocol.traced("model.jev")
-    def choose(self, goal: str, observation) -> dict:
+    def choose(self, goal: str, observation, *, success_criteria=(), recent_action=None) -> dict:
         # TypeSafe System One selects from a finite set of observed actions.
         # It does not implement OpenAI's /responses endpoint or generate text.
         elements = list(observation.elements)
@@ -108,7 +109,7 @@ class JevDecision:
         operations = {
             "CLICK": "Click one of the observed interactive elements.",
             "WAIT": "Wait for the page to finish loading.",
-            "DONE": "The goal is already visibly satisfied.",
+            "DONE": "All supplied acceptance criteria are visibly satisfied and the user goal is complete.",
             "BLOCKED": "No safe supported action can make progress.",
         }
         if text_targets and self.text_model:
@@ -118,7 +119,12 @@ class JevDecision:
             "operation": {
                 "type": "choice",
                 "criteria": operations,
-                "instructions": {"goal": goal, "rules": "Choose one safe next action; do not invent a target."},
+                "instructions": {
+                    "goal": goal,
+                    "acceptance_criteria": list(success_criteria),
+                    "recent_action": asdict(recent_action) if recent_action is not None else None,
+                    "rules": "Choose DONE only when the acceptance criteria and visible goal evidence are satisfied; otherwise choose one safe next action. Do not invent a target or claim hidden side effects.",
+                },
             },
             "click_target": {
                 "type": "choice",
@@ -147,7 +153,8 @@ class JevDecision:
                     {"index": index, "label": element["text"], "operations": ["CLICK"]}
                     for index, element in click_targets.items()
                 ],
-                "recent_actions": [],
+                "recent_actions": ([asdict(recent_action)] if recent_action is not None else []),
+                "acceptance_criteria": list(success_criteria),
             },
             "questions": questions,
         }

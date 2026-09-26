@@ -6,7 +6,6 @@ import sys
 import time
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from urllib.parse import urlsplit
 
 from . import browser, protocol
@@ -52,27 +51,6 @@ def emit_plan(plan: Plan) -> None:
     # Persist the validated contract, not just a step count: a later planning
     # turn needs the prior goals, URLs, dependencies and clarification question.
     protocol.thinking(json.dumps({"kind": "planner_plan", "plan": plan.to_dict()}, ensure_ascii=False))
-
-
-def align_entry_url(plan: Plan, entry_url: str) -> Plan:
-    """Make the authoritative fast-located URL the first navigation target.
-
-    The full planner is intentionally running at the same time, so its best
-    guess can differ from the locator's result.  We preserve its goals and
-    acceptance conditions while replacing only the first page to open.
-    """
-    if plan.status != "ready" or not plan.steps or not entry_url:
-        return plan
-    first = plan.steps[0]
-    if first.start_url == entry_url:
-        return plan
-    protocol.trace("planner.entry_url.aligned", planned=first.start_url, located=entry_url)
-    criteria = tuple(
-        f"url_prefix:{entry_url}" if criterion == f"url_prefix:{first.start_url}" else criterion
-        for criterion in first.success_criteria
-    )
-    steps = (replace(first, start_url=entry_url, success_criteria=criteria), *plan.steps[1:])
-    return replace(plan, steps=steps)
 
 
 def open_entry(session: browser.BrowserSession, entry: EntryPoint) -> bool:
@@ -185,7 +163,9 @@ def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) 
             except browser.BindingLost as exc:
                 protocol.error(f"flow=bind failed: {exc}")
                 return 0
-            plan = align_entry_url(plan, entry.url)
+            # Keep the two parallel results independent.  The locator's page
+            # open is an early browser warm-up; the full plan remains
+            # authoritative for step goals, start URLs and acceptance criteria.
     else:
         # Keep the deterministic no-model/PyCharm path unchanged: it can still
         # open an explicitly supplied URL through the regular plan contract.

@@ -28,14 +28,14 @@ PLANNER_SYSTEM_PROMPT = """
 - parallel_group 默认 ""；仅彼此无直接或间接依赖且不争用可变状态的步骤可同组（如 p1），调度以 depends_on 为准。
 
 验收与授权
-- success_criteria 为非空字符串数组，只用 url_prefix:<完整HTTP(S) URL>、url_contains:<非空片段>、text_contains:<非空页面文字>。选有依据、与目标结果相关的最少条件；不编造路径、文案或结果，不假定入口标题在最终页仍可见。完整交付要求写入 goal，由执行器结合实际页面复核。
+- success_criteria 为非空数组。兼容字符串形式 url_prefix:<完整HTTP(S) URL>、url_contains:<非空片段>、text_contains:<非空页面文字>；复杂目标优先使用结构化条件 {"type":"url_prefix|url_contains|text_contains|element_text|element_count_at_least|goal_state","value":"..."}，数组中的条件全部满足才算通过。选有依据、与目标结果相关的最少条件；不编造路径、文案或结果，不假定入口标题在最终页仍可见。goal_state 用于需要模型结合目标和页面判断的复合交付，不能单独宣称隐藏结果已发生。
 - 纯打开网址只给一步，条件仅为 url_prefix:<start_url>。搜索、提取、比较、提交等任务不能仅用到达首页作为验收。
 - 登录、验证码交给用户，不索取密码或验证码。支付、发送、删除等敏感操作未经明确确认时 needs_user_confirmation=true；同一动作、对象及金额/内容等参数已确认且未变则 false，不重复确认。“继续”不授权新敏感操作。
 - risk：浏览/搜索 low，登录 medium，支付/发送/删除 high；已确认不降低风险。
 
 输出
 只输出紧凑 JSON，无 Markdown、解释或额外字段；以下键必须齐全，类型不变：
-{"status":"ready","needs_browser":true,"question":"","direct_answer":"","steps":[{"id":"s1","goal":"打开 https://example.com/","success_criteria":["url_prefix:https://example.com/"],"depends_on":[],"start_url":"https://example.com/","needs_user_confirmation":false,"risk":"low","parallel_group":""}]}
+{"status":"ready","needs_browser":true,"question":"","direct_answer":"","steps":[{"id":"s1","goal":"打开 https://example.com/","success_criteria":[{"type":"url_prefix","value":"https://example.com/"}],"depends_on":[],"start_url":"https://example.com/","needs_user_confirmation":false,"risk":"low","parallel_group":""}]}
 status 仅允许：
 - ready：needs_browser=true，question=""，direct_answer=""，steps 非空。
 - ask：needs_browser 按任务是否需浏览器填写，question 非空，direct_answer=""，steps=[]。
@@ -63,7 +63,7 @@ ENTRY_LOCATOR_SYSTEM_PROMPT = """
 class Step:
     id: str
     goal: str
-    success_criteria: tuple[str, ...]
+    success_criteria: tuple[Any, ...]
     depends_on: tuple[str, ...] = ()
     start_url: str = ""
     needs_user_confirmation: bool = False
@@ -156,10 +156,49 @@ def _string(value: Any, label: str, *, nonempty=False) -> str:
     return value.strip()
 
 
+CRITERION_TYPES = {
+    "url_prefix", "url_contains", "text_contains", "element_text",
+    "element_count_at_least", "goal_state",
+}
+
+
 def _strings(value: Any, label: str, *, nonempty=False) -> tuple[str, ...]:
     if not isinstance(value, list) or (nonempty and not value):
         raise PlanError(f"{label} must be {'a nonempty' if nonempty else 'an'} array")
     return tuple(_string(item, label, nonempty=True) for item in value)
+
+
+def _criteria(value: Any, label: str) -> tuple[Any, ...]:
+    """Validate legacy string and structured acceptance criteria."""
+    if not isinstance(value, list) or not value:
+        raise PlanError(f"{label} must be a nonempty array")
+    result: list[Any] = []
+    for index, item in enumerate(value, 1):
+        item_label = f"{label}[{index}]"
+        if isinstance(item, str):
+            criterion = _string(item, item_label, nonempty=True)
+            kind, separator, criterion_value = criterion.partition(":")
+            if kind not in {"url_prefix", "url_contains", "text_contains"} or not separator or not criterion_value.strip():
+                raise PlanError(f"{item_label} must use url_prefix:, url_contains: or text_contains: with a value")
+            if kind == "url_prefix":
+                _url(criterion_value.strip(), f"{item_label} url_prefix")
+            result.append(criterion)
+            continue
+        if not isinstance(item, dict) or set(item) != {"type", "value"}:
+            raise PlanError(f"{item_label} must be a legacy criterion string or an object with exactly type and value")
+        kind = _string(item["type"], f"{item_label}.type", nonempty=True)
+        if kind not in CRITERION_TYPES:
+            raise PlanError(f"{item_label}.type is unsupported")
+        criterion_value = item["value"]
+        if kind == "element_count_at_least":
+            if type(criterion_value) is not int or criterion_value < 1:
+                raise PlanError(f"{item_label}.value must be a positive integer")
+        else:
+            criterion_value = _string(criterion_value, f"{item_label}.value", nonempty=True)
+            if kind == "url_prefix":
+                _url(criterion_value, f"{item_label}.value")
+        result.append({"type": kind, "value": criterion_value})
+    return tuple(result)
 
 
 def _url(value: str, label: str) -> None:
@@ -218,13 +257,7 @@ def parse_plan(text: str) -> Plan:
             raise PlanError(f"{label}.depends_on must reference unique earlier steps; no self, unknown, forward or cyclic dependencies")
         start_url = _string(item["start_url"], f"{label}.start_url", nonempty=True)
         _url(start_url, f"{label}.start_url")
-        criteria = _strings(item["success_criteria"], f"{label}.success_criteria", nonempty=True)
-        for criterion in criteria:
-            kind, separator, value = criterion.partition(":")
-            if kind not in {"url_prefix", "url_contains", "text_contains"} or not separator or not value.strip():
-                raise PlanError(f"{label}.success_criteria must use url_prefix:, url_contains: or text_contains: with a value")
-            if kind == "url_prefix":
-                _url(value.strip(), f"{label}.success_criteria url_prefix")
+        criteria = _criteria(item["success_criteria"], f"{label}.success_criteria")
         confirmation = item["needs_user_confirmation"]
         if type(confirmation) is not bool:
             raise PlanError(f"{label}.needs_user_confirmation must be a boolean")

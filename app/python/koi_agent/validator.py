@@ -25,7 +25,36 @@ class Validator:
         """
         text = f"{observation.url}\n{observation.snapshot}\n{observation.page_text}".lower()
         for criterion in criteria:
-            criterion = criterion.strip()
+            if isinstance(criterion, dict):
+                kind = str(criterion.get("type", "")).strip().lower()
+                value = criterion.get("value")
+                if kind == "goal_state":
+                    # This criterion intentionally requires semantic/model
+                    # verification; deterministic page checks cannot prove it.
+                    return False
+                if kind == "url_prefix":
+                    expected = str(value).strip().rstrip("/").lower()
+                    if not observation.url.lower().startswith(expected):
+                        return False
+                elif kind == "url_contains":
+                    if str(value).lower() not in observation.url.lower():
+                        return False
+                elif kind == "text_contains":
+                    if str(value).lower() not in text:
+                        return False
+                elif kind == "element_text":
+                    expected = str(value).lower()
+                    if not any(expected in str(element.get("text", "")).lower()
+                               for element in observation.elements):
+                        return False
+                elif kind == "element_count_at_least":
+                    if len(observation.elements) < int(value):
+                        return False
+                else:
+                    return False
+                continue
+
+            criterion = str(criterion).strip()
             if not criterion:
                 return False
             lower = criterion.lower()

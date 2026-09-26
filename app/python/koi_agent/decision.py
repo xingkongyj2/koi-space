@@ -18,6 +18,7 @@ class DecisionResult:
     confidence: float
     route: str
     rationale: str = ""
+    terminal: str = ""
 
 
 class Decision:
@@ -27,7 +28,8 @@ class Decision:
 
     @protocol.traced("decision.choose")
     def choose(
-        self, goal, observation, start_url="", slow=False, advice="", force_entry=False
+        self, goal, observation, start_url="", slow=False, advice="", force_entry=False,
+        success_criteria=(), recent_action=None,
     ) -> DecisionResult:
         # A step's start_url is a way into the site, not the only valid page.
         # Detail/result paths on the same site are often the desired progress.
@@ -44,13 +46,19 @@ class Decision:
 
         if self.jev:
             try:
-                value = self.jev.choose(goal, observation)
+                value = self.jev.choose(
+                    goal,
+                    observation,
+                    success_criteria=success_criteria,
+                    recent_action=recent_action,
+                )
                 if value["operation"] in {"DONE", "BLOCKED"}:
                     return DecisionResult(
                         (),
                         float(value.get("confidence", 0)),
                         "jev",
                         value["operation"].lower(),
+                        value["operation"],
                     )
                 return DecisionResult(
                     (self._jev_action(value),),

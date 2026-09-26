@@ -68,8 +68,11 @@ class ParallelPlanningTests(unittest.TestCase):
 
         self.assertEqual(opened_before_plan, [True])
         executed_plan = orchestrator.call_args.args[1]
-        self.assertEqual(executed_plan.steps[0].start_url, located_url)
-        self.assertEqual(executed_plan.steps[0].success_criteria, (f"url_prefix:{located_url}",))
+        # The fast locator only warms up the browser.  The full planner's
+        # contract remains authoritative and is passed through unchanged.
+        self.assertEqual(executed_plan.steps[0].start_url, "https://wrong.example/")
+        self.assertEqual(executed_plan.steps[0].success_criteria,
+                         ("url_prefix:https://wrong.example/",))
 
     def test_plan_that_finishes_first_waits_for_the_entry_url(self):
         plan_finished = Event()
@@ -114,7 +117,8 @@ class ParallelPlanningTests(unittest.TestCase):
             self.assertEqual(entrypoint.run_task(task, "打开目标页面", "test", []), 0)
 
         self.assertEqual(opened_urls, [located_url])
-        self.assertEqual(orchestrator.call_args.args[1].steps[0].start_url, located_url)
+        self.assertEqual(orchestrator.call_args.args[1].steps[0].start_url,
+                         "https://example.com/guess")
 
 
 if __name__ == "__main__":

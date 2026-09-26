@@ -96,10 +96,37 @@ class Orchestrator:
         verification_source = "criteria"
         transitions: dict[tuple[str, str, str, str, str], int] = {}
 
-        def goal_complete(page, before=None, action=None, phase="before_decision") -> bool:
+        def needs_model_verification() -> bool:
+            """Return whether page evidence needs semantic completion review.
+
+            URL-only acceptance is deterministic.  Text-only and goal-state
+            criteria are deliberately treated as ambiguous because a label can
+            remain visible before the requested action has finished.
+            """
+            if step.risk in {"medium", "high"} or step.needs_user_confirmation:
+                return True
+            if len(step.success_criteria) > 1:
+                return True
+            for criterion in step.success_criteria:
+                if isinstance(criterion, dict):
+                    if criterion.get("type") in {"text_contains", "goal_state"}:
+                        return True
+                elif str(criterion).lower().startswith("text_contains:"):
+                    return True
+            return False
+
+        def deterministic_completion_allowed() -> bool:
+            """Avoid finishing on a weak legacy text criterion at step entry."""
+            return not needs_model_verification()
+
+        def goal_complete(page, before=None, action=None, phase="before_decision",
+                          allow_model=False) -> bool:
             nonlocal last_check, last_verdict, verification_source
             with protocol.measure("runtime.goal_check", phase=phase):
                 criteria_met = self.validator.step(page, step.success_criteria, step.start_url)
+                if not allow_model:
+                    verification_source = "criteria"
+                    return criteria_met
                 key = (page.url, page.snapshot, page.page_text,
                        before.url if before else "", before.snapshot if before else "",
                        before.page_text if before else "",
@@ -130,9 +157,15 @@ class Orchestrator:
             with protocol.measure("runtime.observe", phase="before_decision"):
                 observation = self.observer.capture()
             page_observed_at = time.monotonic()
-            # The first observation may already satisfy a navigation step.
-            # Verify before asking Jev or a text model for another action.
-            if goal_complete(observation, last_before, last_action):
+            # The first observation only uses cheap deterministic acceptance.
+            # Semantic completion is checked after an action or when JEV
+            # explicitly proposes DONE.
+            if (goal_complete(
+                    observation,
+                    last_before,
+                    last_action,
+                    allow_model=interacted and needs_model_verification(),
+                ) and (interacted or deterministic_completion_allowed())):
                 self._complete(step, completed, observation, verification_source)
                 protocol.log(f"flow=verify step={step.id} status=passed source=pre_decision")
                 return None
@@ -146,7 +179,9 @@ class Orchestrator:
                 decision = self.decision.choose(
                     step.goal, observation, step.start_url if not interacted else "",
                     slow=slow, advice=advice,
-                    force_entry=(step.success_criteria == (f"url_prefix:{step.start_url}",))
+                    force_entry=(step.success_criteria == (f"url_prefix:{step.start_url}",)),
+                    success_criteria=step.success_criteria,
+                    recent_action=last_action,
                 )
             protocol.timing("runtime.decision", decision_started, route=decision.route)
             # Treat every browser interaction as a new planning boundary.  A
@@ -156,17 +191,42 @@ class Orchestrator:
                 protocol.trace("orchestrator.reanalyze_after_action",
                                discarded_actions=len(decision.actions) - 1)
                 decision = DecisionResult(decision.actions[:1], decision.confidence,
-                                          decision.route, getattr(decision, "rationale", ""))
+                                          decision.route, getattr(decision, "rationale", ""),
+                                          getattr(decision, "terminal", ""))
             protocol.log(
                 f"flow=decision step={step.id} route={decision.route} "
                 f"confidence={decision.confidence:.2f} actions={len(decision.actions)}"
             )
             protocol.trace("orchestrator.actions", route=decision.route, confidence=decision.confidence, actions=decision.actions)
-            if not decision.actions:
-                if goal_complete(observation, last_before, last_action):
+            terminal = getattr(decision, "terminal", "")
+            if terminal == "DONE":
+                accepted = goal_complete(
+                    observation,
+                    last_before,
+                    last_action,
+                    phase="jev_done",
+                    allow_model=needs_model_verification(),
+                )
+                if accepted:
                     self._complete(step, completed, observation, verification_source)
-                    protocol.log(f"flow=verify step={step.id} status=passed")
+                    protocol.log(f"flow=verify step={step.id} status=passed source=jev_done")
                     return None
+                protocol.trace("orchestrator.done_rejected",
+                               step_id=step.id,
+                               reason="JEV DONE did not pass the completion gate",
+                               current_url=observation.url)
+                failures += 1
+                self.budget.failure()
+                advice = self.reflection.advise(step.goal, observation, "JEV claimed DONE but acceptance was not proven")
+                self._progress(step, "retry", completed, current_url=observation.url,
+                               error="JEV DONE 未通过完成验收", advice=advice)
+                slow = True
+                continue
+            if terminal == "BLOCKED":
+                self._progress(step, "failed", completed, current_url=observation.url,
+                               reason="JEV 报告没有安全可执行的动作")
+                return f"步骤 {step.id} 失败：JEV 报告没有安全可执行的动作"
+            if not decision.actions:
                 failures += 1
                 self.budget.failure()
                 advice = self.reflection.advise(step.goal, observation, "no action")
@@ -241,7 +301,12 @@ class Orchestrator:
                     observation = after
                     continue
                 observation = after
-            if not failed and goal_complete(observation, last_before, last_action, phase="after_action"):
+            if (not failed and goal_complete(
+                    observation,
+                    last_before,
+                    last_action,
+                    phase="after_action",
+                    allow_model=needs_model_verification())):
                 self._complete(step, completed, observation, verification_source)
                 protocol.log(f"flow=verify step={step.id} status=passed")
                 return None

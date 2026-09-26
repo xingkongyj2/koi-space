@@ -78,7 +78,10 @@ class CompletionFlowTests(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     summary = Orchestrator(
                         Mock(), Plan("ready", True, steps=(step,)),
-                        observer=SequenceObserver(before, after), executor=executor,
+                        # The first completion check happens after the action;
+                        # the next loop receives a fresh observation before the
+                        # second (successful) semantic verdict.
+                        observer=SequenceObserver(before, after, after), executor=executor,
                         decision=decision, completion=CompletionVerifier(ai),
                         memory=Mock(), budget=Budget(max_steps=4),
                     ).run()
@@ -106,7 +109,7 @@ class CompletionFlowTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             summary = Orchestrator(
                 Mock(), Plan("ready", True, steps=(step,)),
-                observer=SequenceObserver(before, after), executor=executor,
+                observer=SequenceObserver(before, after, after), executor=executor,
                 decision=decision, completion=CompletionVerifier(ai),
                 memory=Mock(), budget=Budget(max_steps=4),
             ).run()

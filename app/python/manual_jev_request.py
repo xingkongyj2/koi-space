@@ -128,10 +128,10 @@ if __name__ == "__main__":
     MODEL = current.model          # 或手动改成 "jev-latest"
     TIMEOUT = current.timeout
 
-    # 默认精确重放你给出的日志中耗时 7.75 秒的第二次 Jev 请求。
-    # 想改用下方模拟页面时，改成 False。两种模式都只发送一次请求。
-    USE_RECORDED_REQUEST = True
-    RECORDED_LOG = Path(__file__).resolve().parent / "log" / "agent-20260926T101925121322Z-20524.jsonl"
+    # 默认使用下面可直接修改的模拟数据，不依赖任何旧日志文件。
+    # 若要重放真实请求，改成 True，并填写实际存在的 .jsonl 日志路径。
+    USE_RECORDED_REQUEST = False
+    RECORDED_LOG = Path(__file__).resolve().parent / "log" / "agent-20260926T113115813705Z-41619.log"
     RECORDED_CALL_NUMBER = 2
 
     GOAL = "在历史记录列表中查找标题包含“灵境行者”的条目，并点击进入播放页以继续观看"
@@ -147,10 +147,15 @@ if __name__ == "__main__":
     }
 
     if USE_RECORDED_REQUEST:
+        if not RECORDED_LOG.is_file():
+            raise SystemExit(f"找不到日志：{RECORDED_LOG}\n请修改 RECORDED_LOG，或将 USE_RECORDED_REQUEST 改为 False 使用模拟数据。")
         BODY = body_from_log(RECORDED_LOG, RECORDED_CALL_NUMBER)
         BODY["model"] = MODEL
         print(f"重放日志：{RECORDED_LOG.name}，第 {RECORDED_CALL_NUMBER} 次 Jev 请求")
     else:
         BODY = build_simulated_body(GOAL, SIMULATED_OBSERVATION, MODEL)
         print("使用 SIMULATED_OBSERVATION 模拟页面")
+    print("\n")
+    print(BODY)
+    print("\n")
     request_once(BASE_URL, API_KEY, BODY, TIMEOUT)
