@@ -340,6 +340,31 @@ describe('BrowserPool — attach/detach', () => {
     expect(pool.getStats().sessions[0].attached).toBe(false);
   });
 
+  it('hands a visible browser to a space preview without detaching, resizing or navigating', async () => {
+    const view = pool.create('s1')!;
+    const wc = view.webContents;
+    const { setFrameRate } = instrumentLifecycle(view);
+    const load = vi.spyOn(wc, 'loadURL');
+    const zoom = vi.spyOn(wc, 'setZoomFactor');
+    const bounds = { x: 100, y: 50, width: 800, height: 600 };
+    pool.attachToWindow('s1', win, bounds);
+    zoom.mockClear();
+
+    pool.temporarilyDetachAll(win);
+    expect(setFrameRate).toHaveBeenLastCalledWith(60);
+    expect(await pool.parkForPreview('s1', win)).toEqual({ ok: true, parkedByUs: false });
+    expect(pool.getWebContents('s1')).toBe(wc);
+    expect(view.getBounds()).toEqual({ x: 1199, y: 899, width: 800, height: 600 });
+    expect(win.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+    expect(zoom).not.toHaveBeenCalled();
+
+    pool.reattachAll(win);
+    expect(view.getBounds()).toEqual(bounds);
+    expect(pool.getWebContents('s1')).toBe(wc);
+    expect(win.contentView.children).toEqual([view]);
+  });
+
   it('keeps visible previews live through idle transitions and throttles again on release', async () => {
     const view = pool.create('s1');
     const { setFrameRate } = instrumentLifecycle(view!);

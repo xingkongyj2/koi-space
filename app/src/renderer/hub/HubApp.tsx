@@ -38,7 +38,7 @@ export function HubApp(): React.ReactElement {
   // every other view-mode consumer); we just extend it with 'chat'.
   const chatSessionId = useUIStore((s) => s.chatSessionId);
   const setChatSession = useUIStore((s) => s.setChatSession);
-  const keepBrowserParkedForChatRef = useRef(false);
+  const keepBrowserParkedForPreviewRef = useRef(false);
 
   useEffect(() => {
     console.log('[HubApp] sessions changed', { count: sessions.length, ts: Date.now(), ids: sessions.map((s) => s.id.slice(0, 8)) });
@@ -60,7 +60,9 @@ export function HubApp(): React.ReactElement {
   const setViewMode = useCallback((mode: ViewMode) => {
     setBrowserFullscreen(false);
     const shouldShowBrowserViews = mode === 'grid';
-    keepBrowserParkedForChatRef.current = mode === 'chat';
+    // Both preview screens consume the existing live browser. Keep it attached
+    // offscreen so switching views doesn't interrupt visibility or page animation.
+    keepBrowserParkedForPreviewRef.current = mode === 'chat' || mode === 'space';
     if (!shouldShowBrowserViews) {
       window.electronAPI?.sessions?.viewsSetVisible?.(false)?.catch(() => {});
     }
@@ -74,7 +76,7 @@ export function HubApp(): React.ReactElement {
       try { window.localStorage.setItem('hub-view-mode', mode); } catch { /* ignore */ }
     }
   }, []);
-  const shouldDetachBrowserOnPaneUnmount = useCallback(() => !keepBrowserParkedForChatRef.current, []);
+  const shouldDetachBrowserOnPaneUnmount = useCallback(() => !keepBrowserParkedForPreviewRef.current, []);
   // Submitting a task opens its browser and conversation side by side.
   const enterBrowser = useCallback((id: string) => {
     console.log('[HubApp] enterBrowser', { id });

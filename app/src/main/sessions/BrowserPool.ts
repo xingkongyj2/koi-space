@@ -785,14 +785,9 @@ export class BrowserPool {
         entry.view.setBounds(this.getPreviewParkBounds(window, width, height));
         entry.parked = true;
         parked += 1;
-        try {
-          entry.view.webContents.setFrameRate(entry.idleFreezeEligible ? IDLE_FRAME_RATE : THROTTLED_FRAME_RATE);
-        } catch (err) {
-          browserLogger.warn('BrowserPool.temporarilyDetachAll.frameRate.error', {
-            sessionId: entry.sessionId,
-            error: (err as Error).message,
-          });
-        }
+        // Parking preserves the compositor and viewport during the handoff to
+        // live previews. Do not throttle that handoff to a detached-page rate.
+        this.applyFrameRate(entry);
       }
     }
     browserLogger.info('BrowserPool.temporarilyDetachAll', { parked });
