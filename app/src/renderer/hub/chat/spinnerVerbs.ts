@@ -31,62 +31,62 @@ export interface SpinnerPreset {
 
 export const PRESETS: Readonly<Record<Exclude<SpinnerPresetId, 'custom'>, SpinnerPreset>> = {
   classic: {
-    label: 'Classic',
-    description: 'Just "Working".',
-    verbs: ['Working'],
+    label: '经典',
+    description: '只显示“处理中”。',
+    verbs: ['处理中'],
   },
   playful: {
-    label: 'Playful',
-    description: 'Whimsical gerunds that rotate while the agent runs.',
+    label: '趣味',
+    description: '任务运行时轮流显示轻松有趣的提示词。',
     verbs: [
-      'Brewing',
-      'Pondering',
-      'Conjuring',
-      'Whisking',
-      'Forging',
-      'Hatching',
-      'Tinkering',
-      'Simmering',
-      'Wrangling',
-      'Spelunking',
-      'Noodling',
-      'Marinating',
-      'Untangling',
-      'Percolating',
-      'Doodling',
+      '冲泡中',
+      '思索中',
+      '施法中',
+      '搅拌中',
+      '锻造中',
+      '孵化中',
+      '调试中',
+      '慢炖中',
+      '整理中',
+      '探索中',
+      '构思中',
+      '酝酿中',
+      '梳理中',
+      '过滤中',
+      '描绘中',
     ],
   },
   cafe: {
-    label: 'Cafe',
-    description: 'Espresso bar vibes.',
-    verbs: ['Brewing', 'Steeping', 'Frothing', 'Pressing', 'Drizzling', 'Whisking', 'Pouring', 'Tamping', 'Grinding'],
+    label: '咖啡馆',
+    description: '像在咖啡馆制作一杯咖啡。',
+    verbs: ['冲泡中', '浸泡中', '打泡中', '压萃中', '淋注中', '搅拌中', '倾注中', '压粉中', '研磨中'],
   },
   wizard: {
-    label: 'Wizard',
-    description: 'Arcane and overconfident.',
-    verbs: ['Conjuring', 'Enchanting', 'Divining', 'Scrying', 'Summoning', 'Incanting', 'Bewitching', 'Channeling'],
+    label: '魔法',
+    description: '充满魔法气息的提示词。',
+    verbs: ['施法中', '附魔中', '占卜中', '洞察中', '召唤中', '吟诵中', '变幻中', '引导中'],
   },
   lab: {
-    label: 'Lab',
-    description: 'Lab-coat earnest.',
-    verbs: ['Calibrating', 'Synthesizing', 'Analyzing', 'Hypothesizing', 'Computing', 'Modelling', 'Refining', 'Measuring'],
+    label: '实验室',
+    description: '实验室风格的研究提示词。',
+    verbs: ['校准中', '合成中', '分析中', '推演中', '计算中', '建模中', '优化中', '测量中'],
   },
   cosmic: {
-    label: 'Cosmic',
-    description: 'Space-opera dramatic.',
-    verbs: ['Orbiting', 'Warping', 'Aligning', 'Charting', 'Navigating', 'Stargazing', 'Refracting', 'Drifting'],
+    label: '宇宙',
+    description: '宇宙探索风格的提示词。',
+    verbs: ['环绕中', '跃迁中', '对齐中', '绘制中', '导航中', '观测中', '折射中', '漂移中'],
   },
   forge: {
-    label: 'Forge',
-    description: 'Hammer-and-anvil verbs.',
-    verbs: ['Forging', 'Hammering', 'Tempering', 'Quenching', 'Smelting', 'Annealing', 'Shaping', 'Polishing'],
+    label: '锻造',
+    description: '像锻造作品一样完成任务。',
+    verbs: ['锻造中', '锤炼中', '回火中', '淬火中', '熔炼中', '退火中', '塑形中', '打磨中'],
   },
 };
 
 export const DEFAULT_CUSTOM_VERBS: ReadonlyArray<string> = [
-  'Working',
-  'Thinking',
-  'Cooking',
+  '处理中',
+  '思考中',
+  '酝酿中',
 ];
 
 export const MIN_CYCLE_MS = 600;
@@ -129,10 +129,10 @@ export const useSpinnerVerbsStore = create<SpinnerVerbsState>()(
   ),
 );
 
-/** Resolve the active verb list. Falls back to ['Working'] if custom is empty. */
+/** Resolve the active verb list. Falls back to ['处理中'] if custom is empty. */
 export function selectActiveVerbs(state: SpinnerVerbsState): ReadonlyArray<string> {
   if (state.presetId === 'custom') {
-    return state.customVerbs.length > 0 ? state.customVerbs : ['Working'];
+    return state.customVerbs.length > 0 ? state.customVerbs : ['处理中'];
   }
   return PRESETS[state.presetId].verbs;
 }
@@ -152,7 +152,7 @@ export function useCyclingVerb(): string {
   const cycleMs = useSpinnerVerbsStore((s) => s.cycleMs);
 
   const verbs = (() => {
-    if (presetId === 'custom') return customVerbs.length > 0 ? customVerbs : ['Working'];
+    if (presetId === 'custom') return customVerbs.length > 0 ? customVerbs : ['处理中'];
     return PRESETS[presetId].verbs;
   })();
 
@@ -172,5 +172,5 @@ export function useCyclingVerb(): string {
     return () => window.clearInterval(id);
   }, [verbs, cycleMs]);
 
-  return verbs[idx] ?? 'Working';
+  return verbs[idx] ?? '处理中';
 }

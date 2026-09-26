@@ -72,9 +72,9 @@ function SegmentedControl<T extends string>({ value, options, onChange, ariaLabe
 }
 
 const APPEARANCE_OPTIONS: ReadonlyArray<SegmentedOption<ThemeMode>> = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System', hint: 'Follow your operating system' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+  { value: 'system', label: '跟随系统', hint: '使用操作系统的外观设置' },
 ];
 
 function AppearanceSection(): React.ReactElement {
@@ -82,18 +82,18 @@ function AppearanceSection(): React.ReactElement {
   return (
     <div className="settings-card">
       <SettingsRow
-        label="Theme"
+        label="主题"
         sublabel={
           mode === 'system'
-            ? `Following your system (${resolved}).`
-            : 'Choose how Browser Use looks across windows.'
+            ? `跟随系统（${resolved === 'dark' ? '深色' : '浅色'}）。`
+            : '设置所有窗口的外观主题。'
         }
       >
         <SegmentedControl
           value={mode}
           options={APPEARANCE_OPTIONS}
           onChange={setMode}
-          ariaLabel="Theme"
+          ariaLabel="主题"
         />
       </SettingsRow>
     </div>
@@ -125,7 +125,7 @@ function SpinnerVerbsSection(): React.ReactElement {
   ];
 
   const activePreview = presetId === 'custom'
-    ? (customVerbs.length > 0 ? customVerbs : ['Working'])
+    ? (customVerbs.length > 0 ? customVerbs : ['处理中'])
     : SPINNER_VERB_PRESETS[presetId].verbs;
 
   const commitDraft = (): void => {
@@ -137,26 +137,26 @@ function SpinnerVerbsSection(): React.ReactElement {
   return (
     <div className="settings-card">
       <SettingsRow
-        label="Spinner verb"
-        sublabel="The word shown next to the busy spinner. Cycles through the list while the agent runs."
+        label="运行提示词"
+        sublabel="任务运行时，在加载动画旁轮流显示这些提示词。"
       >
         <select
           className="settings-pane__select"
           value={presetId}
           onChange={(e) => setPreset(e.target.value as SpinnerPresetId)}
-          aria-label="Spinner verb preset"
+          aria-label="运行提示词预设"
         >
           {presetOptions.map(([id, preset]) => (
             <option key={id} value={id}>{preset.label}</option>
           ))}
-          <option value="custom">Custom</option>
+          <option value="custom">自定义</option>
         </select>
       </SettingsRow>
 
       <SettingsRow
-        label="Preview"
+        label="预览"
         sublabel={presetId === 'custom'
-          ? `${activePreview.length} custom verb${activePreview.length === 1 ? '' : 's'}.`
+          ? `${activePreview.length} 个自定义提示词。`
           : SPINNER_VERB_PRESETS[presetId].description}
       >
         <div className="settings-pane__value" style={{ maxWidth: 320, textAlign: 'right' }}>
@@ -166,15 +166,15 @@ function SpinnerVerbsSection(): React.ReactElement {
 
       {presetId === 'custom' && (
         <SettingsRow
-          label="Custom verbs"
-          sublabel={'One verb per line. Blank lines are ignored. Falls back to "Working" if empty.'}
+          label="自定义提示词"
+          sublabel={'每行填写一个提示词，忽略空行；未填写时显示“处理中”。'}
         >
           <textarea
             className="settings-pane__textarea"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commitDraft}
-            placeholder={'Brewing\nCooking\nThinking'}
+            placeholder={'准备中\n处理中\n思考中'}
             rows={6}
             spellCheck={false}
             style={{ minWidth: 260, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}
@@ -183,8 +183,8 @@ function SpinnerVerbsSection(): React.ReactElement {
       )}
 
       <SettingsRow
-        label="Cycle interval"
-        sublabel={`How long each verb stays visible (${(cycleMs / 1000).toFixed(1)}s).`}
+        label="切换间隔"
+        sublabel={`每个提示词显示 ${(cycleMs / 1000).toFixed(1)} 秒。`}
       >
         <input
           type="range"
@@ -193,7 +193,7 @@ function SpinnerVerbsSection(): React.ReactElement {
           step={100}
           value={cycleMs}
           onChange={(e) => setCycleMs(Number(e.target.value))}
-          aria-label="Spinner verb cycle interval"
+          aria-label="提示词切换间隔"
           style={{ width: 200 }}
         />
       </SettingsRow>
@@ -264,32 +264,38 @@ function AppSection(): React.ReactElement {
     : updateStatusEvent.status === 'downloading'
       ? '18%'
       : '0%';
-  const updateStatus = updateStatusEvent.message ?? (
+  const updateStatus = updateStatusEvent.status === 'error'
+    ? '更新失败，请稍后重试。'
+    : updateStatusEvent.status === 'unavailable'
+      ? '当前环境暂不支持应用内更新。'
+      : updateStatusEvent.status === 'downloading'
+        ? `正在下载更新${typeof downloadProgress === 'number' ? `（${Math.round(downloadProgress)}%）` : '…'}`
+        : (
     !info
-      ? 'Checking latest version...'
+      ? '正在检测最新版本…'
       : updateReady
-        ? 'Update is ready to install.'
+        ? '更新已下载，可以重启安装。'
         : updateBusy
-          ? 'Checking for updates...'
+          ? '正在检查更新…'
           : onLatest
-            ? 'You are on the latest version.'
+            ? '当前已是最新版本。'
             : info.latestVersion
-              ? `Latest version is ${info.latestVersion}.`
+              ? `最新版本为 ${info.latestVersion}。`
               : canDownloadUpdate
-                ? 'Checks on startup and every hour.'
-                : 'In-app updates are available in packaged release builds.'
+                ? '启动时及每小时自动检查更新。'
+                : '应用内更新仅适用于正式发布版本。'
   );
   const buttonLabel = !info || checking
-    ? 'Checking...'
+    ? '检查中…'
     : installing
-      ? 'Restarting...'
+      ? '重启中…'
       : updateReady
-        ? 'Restart to install'
+        ? '重启并安装'
         : onLatest
-          ? 'On latest'
+          ? '已是最新版本'
           : canDownloadUpdate
-            ? 'Download update'
-            : 'Unavailable';
+            ? '下载更新'
+            : '暂不可用';
 
   useEffect(() => {
     let cancelled = false;
@@ -305,7 +311,7 @@ function AppSection(): React.ReactElement {
       .catch(() => {
         if (cancelled) return;
         setInfo(null);
-        setUpdateStatusEvent({ status: 'error', message: 'Could not read update status.' });
+        setUpdateStatusEvent({ status: 'error', message: '无法读取更新状态。' });
       });
 
     const unsubscribe = api?.onUpdateStatus((nextStatus) => {
@@ -322,7 +328,7 @@ function AppSection(): React.ReactElement {
   const handleDownloadLatest = useCallback(async () => {
     if (!api || checking || installing || onLatest || updateBusy || updateReady || !canDownloadUpdate) return;
     setChecking(true);
-    setUpdateStatusEvent({ status: 'checking', message: 'Checking for updates...' });
+    setUpdateStatusEvent({ status: 'checking', message: '正在检查更新…' });
     try {
       const result = await api.downloadLatest();
       setUpdateStatusEvent((current) => (
@@ -331,7 +337,7 @@ function AppSection(): React.ReactElement {
       const next = await api.getInfo();
       setInfo(next);
     } catch {
-      setUpdateStatusEvent({ status: 'error', message: 'Could not start the in-app update check. Please try again later.' });
+      setUpdateStatusEvent({ status: 'error', message: '无法检查更新，请稍后重试。' });
     } finally {
       setChecking(false);
     }
@@ -348,7 +354,7 @@ function AppSection(): React.ReactElement {
       }));
       if (!result.ok) setInstalling(false);
     } catch {
-      setUpdateStatusEvent({ status: 'error', message: 'Could not restart to install the update.' });
+      setUpdateStatusEvent({ status: 'error', message: '无法重启安装更新，请稍后重试。' });
       setInstalling(false);
     }
   }, [api, installing, updateReady]);
@@ -359,16 +365,16 @@ function AppSection(): React.ReactElement {
     <div className="settings-card">
       <div className="settings-pane__row">
         <div>
-          <div className="settings-pane__label">Version</div>
+          <div className="settings-pane__label">版本</div>
           <div className="settings-pane__sublabel">
-            {info ? `Browser Use ${info.version}` : 'Detecting version...'}
+            {info ? `Browser Use ${info.version}` : '正在检测版本…'}
           </div>
         </div>
         {info && <span className="settings-pane__value">v{info.version}</span>}
       </div>
       <div className="settings-pane__row">
         <div>
-          <div className="settings-pane__label">Updates</div>
+          <div className="settings-pane__label">应用更新</div>
           <div className="settings-pane__sublabel">
             {updateStatus}
           </div>
@@ -387,81 +393,6 @@ function AppSection(): React.ReactElement {
           disabled={updateActionDisabled}
         >
           {buttonLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-type TabsPosition = 'side' | 'top';
-
-function readTabsPosition(): TabsPosition {
-  try {
-    return window.localStorage.getItem('hub-tabs-position') === 'top' ? 'top' : 'side';
-  } catch {
-    return 'side';
-  }
-}
-
-function LayoutSection(): React.ReactElement {
-  const [position, setPosition] = useState<TabsPosition>(readTabsPosition);
-
-  const choose = useCallback((next: TabsPosition) => {
-    setPosition(next);
-    try { window.localStorage.setItem('hub-tabs-position', next); } catch { /* ignore */ }
-    // HubApp listens for this and dispatches pane:layout-change AFTER React
-    // commits the new DOM, so AgentPane re-measures the correct bounds.
-    window.dispatchEvent(new CustomEvent('hub:tabs-position-change', { detail: { position: next } }));
-  }, []);
-
-  return (
-    <div className="settings-card layout-section">
-      <div className="layout-section__header">
-        <div className="settings-pane__label">Tab layout</div>
-        <div className="settings-pane__sublabel">
-          Pick where the agent session tabs live. Top reclaims sidebar width for the browser viewport.
-        </div>
-      </div>
-      <div className="layout-picker" role="radiogroup" aria-label="Tab layout">
-        <button
-          type="button"
-          role="radio"
-          aria-checked={position === 'side'}
-          className={`layout-picker__card${position === 'side' ? ' layout-picker__card--selected' : ''}`}
-          onClick={() => choose('side')}
-        >
-          <div className="layout-picker__mockup layout-picker__mockup--side" aria-hidden="true">
-            <div className="layout-picker__mockup-header" />
-            <div className="layout-picker__mockup-tabs">
-              <span className="layout-picker__mockup-row layout-picker__mockup-row--active" />
-              <span className="layout-picker__mockup-row" />
-              <span className="layout-picker__mockup-row" />
-              <span className="layout-picker__mockup-row" />
-            </div>
-            <div className="layout-picker__mockup-viewport" />
-          </div>
-          <div className="layout-picker__label">Side</div>
-          <div className="layout-picker__desc">Vertical sidebar on the left. Roomy session labels.</div>
-        </button>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={position === 'top'}
-          className={`layout-picker__card${position === 'top' ? ' layout-picker__card--selected' : ''}`}
-          onClick={() => choose('top')}
-        >
-          <div className="layout-picker__mockup layout-picker__mockup--top" aria-hidden="true">
-            <div className="layout-picker__mockup-header" />
-            <div className="layout-picker__mockup-tabs">
-              <span className="layout-picker__mockup-chip layout-picker__mockup-chip--active" />
-              <span className="layout-picker__mockup-chip" />
-              <span className="layout-picker__mockup-chip" />
-              <span className="layout-picker__mockup-chip" />
-            </div>
-            <div className="layout-picker__mockup-viewport" />
-          </div>
-          <div className="layout-picker__label">Top</div>
-          <div className="layout-picker__desc">Horizontal terminal-style strip. Wider browser viewport.</div>
         </button>
       </div>
     </div>
@@ -492,14 +423,14 @@ function PrivacySection(): React.ReactElement {
       setTelemetry(res.telemetry);
       toast.show({
         variant: 'success',
-        title: res.telemetry ? 'Telemetry enabled' : 'Telemetry disabled',
+        title: res.telemetry ? '已开启匿名使用统计' : '已关闭匿名使用统计',
       });
     } catch {
       setTelemetry(!next); // revert
       toast.show({
         variant: 'error',
-        title: 'Could not save setting',
-        message: 'Telemetry change could not be saved. Please try again.',
+        title: '无法保存设置',
+        message: '无法保存使用统计设置，请重试。',
       });
     } finally {
       setSaving(false);
@@ -510,8 +441,8 @@ function PrivacySection(): React.ReactElement {
     <div className="settings-card">
       <div className="settings-pane__row">
         <div>
-          <div className="settings-pane__label">Allow telemetry to help us make this app better</div>
-          <div className="settings-pane__sublabel">Anonymous only — app version, OS, feature usage, and crash reports.</div>
+          <div className="settings-pane__label">允许匿名使用统计，帮助改进应用</div>
+          <div className="settings-pane__sublabel">仅收集匿名信息，包括应用版本、操作系统、功能使用情况和崩溃报告。</div>
         </div>
         <button
           className="settings-pane__toggle"
@@ -527,14 +458,14 @@ function PrivacySection(): React.ReactElement {
 
       <div className="settings-pane__row">
         <div>
-          <div className="settings-pane__label">System notifications</div>
-          <div className="settings-pane__sublabel">Managed by your operating system.</div>
+          <div className="settings-pane__label">系统通知</div>
+          <div className="settings-pane__sublabel">由操作系统管理通知权限。</div>
         </div>
         <button
           className="conn-card__btn conn-card__btn--secondary"
           onClick={() => { void api.openSystemNotifications(); }}
         >
-          Open system settings
+          打开系统设置
         </button>
       </div>
     </div>
@@ -556,13 +487,13 @@ export interface SettingsOpenIntent {
 }
 
 const SETTINGS_TABS: Array<{ id: SettingsSectionId; label: string }> = [
-  { id: 'settings-application', label: 'Application' },
-  { id: 'settings-appearance', label: 'Appearance' },
-  { id: 'settings-connections', label: 'Connections' },
-  { id: 'settings-browser-sync', label: 'Browser Sync' },
+  { id: 'settings-appearance', label: '外观' },
+  { id: 'settings-connections', label: '连接' },
+  { id: 'settings-browser-sync', label: '浏览器同步' },
   { id: 'settings-resources', label: '资源' },
-  { id: 'settings-shortcuts', label: 'Shortcuts' },
-  { id: 'settings-privacy', label: 'Privacy' },
+  { id: 'settings-shortcuts', label: '快捷键' },
+  { id: 'settings-privacy', label: '隐私' },
+  { id: 'settings-application', label: '应用' },
 ];
 
 interface SettingsPaneProps {
@@ -595,7 +526,7 @@ function KeybindRow({ kb, isOverridden, onUpdate, onReset, platform, formatShort
     setFirstKey(null);
     (document.activeElement as HTMLElement | null)?.blur?.();
     const ok = await onUpdate(kb.id, keys);
-    setRecordingError(ok ? null : 'That shortcut is unavailable. Choose another one.');
+    setRecordingError(ok ? null : '此快捷键不可用，请选择其他组合。');
   }, [kb.id, onUpdate]);
 
   useEffect(() => {
@@ -605,7 +536,7 @@ function KeybindRow({ kb, isOverridden, onUpdate, onReset, platform, formatShort
         void finishRecording([firstKey]);
       } else {
         setRecording(false);
-        setRecordingError('No shortcut was detected. Choose another combination.');
+        setRecordingError('未检测到快捷键，请重新输入。');
       }
     }, firstKey ? 700 : 8000);
 
@@ -624,7 +555,7 @@ function KeybindRow({ kb, isOverridden, onUpdate, onReset, platform, formatShort
         clearTimeout(timer);
         setRecording(false);
         setFirstKey(null);
-        setRecordingError('That shortcut is unavailable. Choose another one.');
+        setRecordingError('此快捷键不可用，请选择其他组合。');
         return;
       }
 
@@ -673,7 +604,7 @@ function KeybindRow({ kb, isOverridden, onUpdate, onReset, platform, formatShort
         >
           {recording ? (
             <span className="settings-pane__recording">
-              {firstKey ? `${formatShortcut(firstKey)} + ...` : 'Press key...'}
+              {firstKey ? `${formatShortcut(firstKey)} + ...` : '请按下快捷键…'}
             </span>
           ) : (
             kb.keys.map((k, i) => (
@@ -684,7 +615,7 @@ function KeybindRow({ kb, isOverridden, onUpdate, onReset, platform, formatShort
         <button
           className="settings-pane__reset-btn"
           onClick={() => onReset(kb.id)}
-          title="Reset to default"
+          title="恢复默认"
           style={{ visibility: isOverridden && !recording ? 'visible' : 'hidden' }}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -700,7 +631,7 @@ function KeybindRow({ kb, isOverridden, onUpdate, onReset, platform, formatShort
 
 export function SettingsPane({ intent, keybindings, overrides, onUpdateBinding, onResetBinding, onResetAll, formatShortcut }: SettingsPaneProps): React.ReactElement {
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>('settings-application');
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(SETTINGS_TABS[0].id);
   const platform = window.electronAPI?.shell?.platform ?? fallbackShortcutPlatform();
   // Cookie sync is unsupported on Windows (Chromium ABE + DevTools hardening),
   // so the Browser Sync tab + section are hidden on win32.
@@ -708,120 +639,94 @@ export function SettingsPane({ intent, keybindings, overrides, onUpdateBinding, 
     ? SETTINGS_TABS.filter((tab) => tab.id !== 'settings-browser-sync')
     : SETTINGS_TABS;
 
-  const scrollToSection = useCallback((id: SettingsSectionId, behavior: ScrollBehavior = 'smooth') => {
-    const scroller = scrollerRef.current;
-    const target = scroller?.querySelector<HTMLElement>(`#${id}`);
-    if (!scroller || !target) return;
-    const tabOffset = 96;
-    scroller.scrollTo({
-      top: Math.max(0, target.offsetTop - tabOffset),
-      behavior,
-    });
+  const selectSection = useCallback((id: SettingsSectionId) => {
     setActiveSection(id);
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
   }, []);
-
-  const updateActiveFromScroll = useCallback(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    let next = tabs[0].id;
-    const threshold = scroller.scrollTop + 112;
-    for (const tab of tabs) {
-      const section = scroller.querySelector<HTMLElement>(`#${tab.id}`);
-      if (section && section.offsetTop <= threshold) next = tab.id;
-    }
-    setActiveSection(next);
-  }, [tabs]);
 
   useEffect(() => {
     const sectionId = intent?.sectionId;
-    if (!sectionId) return;
-    requestAnimationFrame(() => scrollToSection(sectionId, 'auto'));
-  }, [intent?.requestId, intent?.sectionId, scrollToSection]);
+    if (sectionId) selectSection(platform === 'win32' && sectionId === 'settings-browser-sync' ? 'settings-connections' : sectionId);
+  }, [intent?.requestId, intent?.sectionId, platform, selectSection]);
+
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    let next: number;
+    if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    selectSection(tabs[next].id);
+    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-settings-tab="${tabs[next].id}"]`)?.focus();
+  };
 
   return (
     <div className="settings-page">
-      <div className="settings-page__scroller" ref={scrollerRef} onScroll={updateActiveFromScroll}>
-        <div className="settings-page__content">
-          <header className="settings-page__header">
-            <div>
-              <span className="settings-page__eyebrow">Browser Use</span>
-              <h1 className="settings-page__title">Settings</h1>
-            </div>
-          </header>
-
-          <nav className="settings-page__tabs" aria-label="Settings sections">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`settings-page__tab${activeSection === tab.id ? ' settings-page__tab--active' : ''}`}
-                onClick={() => scrollToSection(tab.id)}
-                data-settings-tab={tab.id}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-
-          <section id="settings-application" className="settings-page__section">
-            <div className="settings-section-header">
-              <h2 className="settings-section-header__title">Application</h2>
-            </div>
-            <AppSection />
-            <LayoutSection />
-          </section>
-
-          <section id="settings-appearance" className="settings-page__section">
-            <div className="settings-section-header">
-              <h2 className="settings-section-header__title">Appearance</h2>
-            </div>
-            <AppearanceSection />
-            <SpinnerVerbsSection />
-          </section>
-
-          <ConnectionsPane
-            embedded
-            connectionsSectionId="settings-connections"
-            browserSyncSectionId="settings-browser-sync"
-          />
-
-          <section id="settings-resources" className="settings-page__section">
-            <div className="settings-section-header">
-              <h2 className="settings-section-header__title">资源</h2>
-            </div>
-            <div className="settings-card settings-card--resources">
-              <MemoryIndicatorContent />
-            </div>
-          </section>
-
-          <section id="settings-shortcuts" className="settings-page__section">
-            <div className="settings-section-header">
-              <h2 className="settings-section-header__title">Shortcuts</h2>
-              {Object.keys(overrides).length > 0 && (
-                <button className="settings-pane__reset-all" onClick={onResetAll}>Reset all</button>
-              )}
-            </div>
-            <div className="settings-card settings-card--shortcuts">
-              {keybindings.map((kb) => (
-                <KeybindRow
-                  key={kb.id}
-                  kb={kb}
-                  isOverridden={kb.id in overrides}
-                  onUpdate={onUpdateBinding}
-                  onReset={onResetBinding}
-                  platform={platform}
-                  formatShortcut={formatShortcut}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section id="settings-privacy" className="settings-page__section settings-page__section--last">
-            <div className="settings-section-header">
-              <h2 className="settings-section-header__title">Privacy</h2>
-            </div>
-            <PrivacySection />
-          </section>
+      <div className="settings-page__content">
+        <header className="settings-page__header">
+          <h1 className="settings-page__title">设置</h1>
+        </header>
+        <nav className="settings-page__tabs" role="tablist" aria-label="设置模块">
+          {tabs.map((tab, index) => (
+            <button
+              key={tab.id}
+              id={`${tab.id}-tab`}
+              type="button"
+              role="tab"
+              aria-selected={activeSection === tab.id}
+              aria-controls="settings-active-panel"
+              tabIndex={activeSection === tab.id ? 0 : -1}
+              className={`settings-page__tab${activeSection === tab.id ? ' settings-page__tab--active' : ''}`}
+              onClick={() => selectSection(tab.id)}
+              onKeyDown={(event) => onTabKeyDown(event, index)}
+              data-settings-tab={tab.id}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-page__scroller" ref={scrollerRef}>
+          <div id="settings-active-panel" role="tabpanel" aria-labelledby={`${activeSection}-tab`} tabIndex={0}>
+            {activeSection === 'settings-application' && (
+              <section className="settings-page__section">
+                <AppSection />
+              </section>
+            )}
+            {activeSection === 'settings-appearance' && (
+              <section className="settings-page__section">
+                <AppearanceSection />
+                <SpinnerVerbsSection />
+              </section>
+            )}
+            {(activeSection === 'settings-connections' || activeSection === 'settings-browser-sync') && (
+              <ConnectionsPane embedded section={activeSection === 'settings-connections' ? 'connections' : 'browser-sync'} />
+            )}
+            {activeSection === 'settings-resources' && (
+              <section className="settings-page__section">
+                <div className="settings-card settings-card--resources"><MemoryIndicatorContent /></div>
+              </section>
+            )}
+            {activeSection === 'settings-shortcuts' && (
+              <section className="settings-page__section">
+                {Object.keys(overrides).length > 0 && (
+                  <div className="settings-section-header" style={{ justifyContent: 'flex-end' }}>
+                    <button className="settings-pane__reset-all" onClick={onResetAll}>全部恢复默认</button>
+                  </div>
+                )}
+                <div className="settings-card settings-card--shortcuts">
+                  {keybindings.map((kb) => (
+                    <KeybindRow key={kb.id} kb={kb} isOverridden={kb.id in overrides} onUpdate={onUpdateBinding} onReset={onResetBinding} platform={platform} formatShortcut={formatShortcut} />
+                  ))}
+                </div>
+              </section>
+            )}
+            {activeSection === 'settings-privacy' && (
+              <section className="settings-page__section">
+                <PrivacySection />
+              </section>
+            )}
+          </div>
         </div>
       </div>
     </div>

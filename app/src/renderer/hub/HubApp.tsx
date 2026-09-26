@@ -98,31 +98,6 @@ export function HubApp(): React.ReactElement {
   // driven effect keep it in sync with the focused session.
   const gridColumns = 1;
   const [gridPage, setGridPage] = useState(0);
-  const [tabsPosition, setTabsPositionRaw] = useState<'side' | 'top'>(() => {
-    try {
-      const saved = window.localStorage.getItem('hub-tabs-position');
-      return saved === 'top' ? 'top' : 'side';
-    } catch { return 'side'; }
-  });
-  useEffect(() => {
-    const onChange = (e: Event): void => {
-      const next = (e as CustomEvent<{ position: 'side' | 'top' }>).detail?.position;
-      if (next === 'side' || next === 'top') setTabsPositionRaw(next);
-    };
-    window.addEventListener('hub:tabs-position-change', onChange as EventListener);
-    return () => window.removeEventListener('hub:tabs-position-change', onChange as EventListener);
-  }, []);
-  // Fire pane:layout-change AFTER React commits the new layout so AgentPane
-  // re-measures bounds against the updated DOM (otherwise BrowserView keeps
-  // the pre-toggle rect and leaves a gap where the sidebar used to be).
-  useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('pane:layout-change'));
-      });
-    });
-    return () => cancelAnimationFrame(id);
-  }, [tabsPosition]);
   const restoreBrowserViewsForCurrentMode = useCallback(() => {
     window.electronAPI?.sessions?.viewsSetVisible?.(viewMode === 'grid')?.catch(() => {});
   }, [viewMode]);
@@ -444,6 +419,7 @@ export function HubApp(): React.ReactElement {
       <Navbar
         isDashboard={viewMode === 'dashboard'}
         isSpace={viewMode === 'space'}
+        isSettings={viewMode === 'settings'}
         onGoSpace={() => setViewMode('space')}
         onNewSession={openNewSession}
         onOpenSettings={() => openSettingsPage()}
@@ -456,7 +432,7 @@ export function HubApp(): React.ReactElement {
         resetZoomTitle={`重置缩放 (${vim.formatShortcut('CommandOrControl+0')})`}
       />
 
-      <div className="hub-body" data-tabs-position={tabsPosition}>
+      <div className="hub-body">
       <div className="hub-main">
       {viewMode === 'settings' ? (
         <SettingsPane

@@ -3,14 +3,14 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SettingsPane } from '../../../src/renderer/hub/SettingsPane';
+import { SettingsPane, type SettingsOpenIntent } from '../../../src/renderer/hub/SettingsPane';
 import type { ActionId, KeyBinding } from '../../../src/renderer/hub/keybindings';
 import { ToastProvider } from '../../../src/renderer/components/base/Toast';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('../../../src/renderer/hub/ConnectionsPane', () => ({
-  ConnectionsPane: (): null => null,
+  ConnectionsPane: ({ section }: { section?: string }) => <section data-connection-section={section}>{section === 'connections' ? '连接内容' : '同步内容'}</section>,
 }));
 
 const createPaneBinding: KeyBinding = {
@@ -44,7 +44,7 @@ function installElectronApi(): void {
   });
 }
 
-function renderSettingsPane(onUpdateBinding: (id: ActionId, keys: string[]) => Promise<boolean>): {
+function renderSettingsPane(onUpdateBinding: (id: ActionId, keys: string[]) => Promise<boolean>, intent?: SettingsOpenIntent): {
   container: HTMLDivElement;
   root: Root;
 } {
@@ -55,6 +55,7 @@ function renderSettingsPane(onUpdateBinding: (id: ActionId, keys: string[]) => P
     root.render(
       <ToastProvider>
         <SettingsPane
+          intent={intent}
           keybindings={[createPaneBinding]}
           overrides={{}}
           onUpdateBinding={onUpdateBinding}
@@ -74,7 +75,11 @@ function keyButton(container: HTMLElement): HTMLButtonElement {
   return button;
 }
 
-describe('SettingsPane shortcut recorder', () => {
+function clickTab(container: HTMLElement, id: string): void {
+  act(() => container.querySelector<HTMLButtonElement>(`[data-settings-tab="${id}"]`)?.click());
+}
+
+describe('SettingsPane tabs and shortcut recorder', () => {
   beforeEach(() => {
     window.localStorage.clear();
     delete document.documentElement.dataset.mode;
@@ -89,12 +94,13 @@ describe('SettingsPane shortcut recorder', () => {
   it('records a global shortcut with the same multi-key space capture used by onboarding', async () => {
     const onUpdateBinding = vi.fn(async () => true);
     const { container, root } = renderSettingsPane(onUpdateBinding);
+    clickTab(container, 'settings-shortcuts');
 
     act(() => {
       keyButton(container).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(keyButton(container).textContent).toContain('Press key');
+    expect(keyButton(container).textContent).toContain('请按下快捷键');
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', {
@@ -113,49 +119,56 @@ describe('SettingsPane shortcut recorder', () => {
     act(() => root.unmount());
   });
 
-  it('includes Browser Sync as its own anchored settings tab', () => {
+  it('shows browser sync as a separate Chinese tab and displays only the selected module', () => {
     const { container, root } = renderSettingsPane(vi.fn(async () => true));
     const browserSyncTab = container.querySelector<HTMLButtonElement>('[data-settings-tab="settings-browser-sync"]');
 
-    expect(browserSyncTab?.textContent).toBe('Browser Sync');
+    expect(browserSyncTab?.textContent).toBe('浏览器同步');
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('外观');
+    expect(container.querySelector('.settings-pane__segmented')).not.toBeNull();
+    clickTab(container, 'settings-browser-sync');
+    expect(container.querySelector('.layout-picker')).toBeNull();
+    expect(container.querySelector('[data-connection-section]')?.getAttribute('data-connection-section')).toBe('browser-sync');
+    expect(browserSyncTab?.getAttribute('aria-selected')).toBe('true');
+    clickTab(container, 'settings-connections');
+    expect(container.querySelector('[data-connection-section]')?.getAttribute('data-connection-section')).toBe('connections');
 
     act(() => root.unmount());
   });
 
-  it('keeps the tab layout picker working alongside the appearance picker', () => {
-    const layoutEvents: string[] = [];
-    const onLayoutChange = (event: Event) => {
-      layoutEvents.push((event as CustomEvent<{ position: string }>).detail.position);
-    };
-    window.addEventListener('hub:tabs-position-change', onLayoutChange);
-
+  it('places application last, removes the layout setting, and keeps theme selection working', () => {
     const { container, root } = renderSettingsPane(vi.fn(async () => true));
-    const lightButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.settings-pane__segment'))
-      .find((button) => button.textContent === 'Light');
-    const topLayoutButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.layout-picker__card'))
-      .find((button) => button.textContent?.includes('Top'));
-
+    const tabs = Array.from(container.querySelectorAll('[role="tab"]'));
+    expect(tabs.at(-1)?.textContent).toBe('应用');
+    clickTab(container, 'settings-application');
+    expect(container.querySelector('.layout-picker')).toBeNull();
+    expect(container.textContent).not.toContain('会话标签布局');
+    clickTab(container, 'settings-appearance');
+    const lightButton = Array.from(container.querySelectorAll<HTMLButtonElement>('.settings-pane__segment')).find((button) => button.textContent === '浅色');
     if (!lightButton) throw new Error('Missing light appearance option');
-    if (!topLayoutButton) throw new Error('Missing top tab layout option');
-
-    act(() => {
-      lightButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      topLayoutButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
+    act(() => lightButton.click());
     expect(window.localStorage.getItem('browser-use:theme-mode')).toBe('light');
     expect(document.documentElement.dataset.mode).toBe('light');
-    expect(window.localStorage.getItem('hub-tabs-position')).toBe('top');
-    expect(topLayoutButton.getAttribute('aria-checked')).toBe('true');
-    expect(layoutEvents).toEqual(['top']);
+    act(() => root.unmount());
+  });
 
-    window.removeEventListener('hub:tabs-position-change', onLayoutChange);
+  it('opens the requested module directly and supports keyboard tab switching', () => {
+    const { container, root } = renderSettingsPane(vi.fn(async () => true), { requestId: 1, sectionId: 'settings-privacy' });
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('隐私');
+    expect(container.querySelector('.settings-pane__toggle')).not.toBeNull();
+    expect(container.querySelector('.layout-picker')).toBeNull();
+    const selected = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
+    act(() => selected.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('外观');
+    expect(document.activeElement?.textContent).toBe('外观');
+    expect(container.querySelector('.settings-pane__toggle')).toBeNull();
     act(() => root.unmount());
   });
 
   it('shows an unavailable-shortcut error when the global save is rejected', async () => {
     const onUpdateBinding = vi.fn(async () => false);
     const { container, root } = renderSettingsPane(onUpdateBinding);
+    clickTab(container, 'settings-shortcuts');
 
     act(() => {
       keyButton(container).dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -173,7 +186,7 @@ describe('SettingsPane shortcut recorder', () => {
     });
 
     expect(container.querySelector('.settings-pane__key-error')?.textContent).toBe(
-      'That shortcut is unavailable. Choose another one.',
+      '此快捷键不可用，请选择其他组合。',
     );
 
     act(() => root.unmount());

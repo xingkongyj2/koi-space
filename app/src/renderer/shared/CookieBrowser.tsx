@@ -81,19 +81,25 @@ function normalizeDomain(domain: string): string {
   return domain.startsWith('.') ? domain.slice(1) : domain;
 }
 
+function localizedSyncError(error: unknown, fallback: string): string {
+  const message = userFacingIpcError(error);
+  console.warn('[CookieBrowser] request failed', message);
+  return /[\u4e00-\u9fff]/u.test(message) ? message : fallback;
+}
+
 function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0) return 'just now';
+  if (ms < 0) return '刚刚';
   const m = Math.floor(ms / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m} 分钟前`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return `${h} 小时前`;
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
+  if (d < 30) return `${d} 天前`;
   const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}mo ago`;
-  return `${Math.floor(mo / 12)}y ago`;
+  if (mo < 12) return `${mo} 个月前`;
+  return `${Math.floor(mo / 12)} 年前`;
 }
 
 export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
@@ -148,10 +154,10 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
       setProfiles(list);
       setHasLoadedProfiles(true);
       if (list.length === 0) {
-        setProfilesError('No Chromium browser profiles detected. Sign in to a supported browser first, then refresh.');
+        setProfilesError('未找到 Chromium 浏览器配置，请先在支持的浏览器中登录，再刷新。');
       }
     } catch (err) {
-      setProfilesError(userFacingIpcError(err) || 'Failed to read browser profiles');
+      setProfilesError(localizedSyncError(err, '无法读取浏览器配置，请检查浏览器是否已安装并重试。'));
     } finally {
       setProfilesLoading(false);
     }
@@ -187,13 +193,13 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
       const domainCount = result.domains?.length ?? 0;
       toast.show({
         variant: 'success',
-        title: `Synced ${result.imported} cookies`,
-        message: `${result.browserName} · ${domainCount} ${domainCount === 1 ? 'site' : 'sites'}`,
+        title: `已同步 ${result.imported} 条登录数据`,
+        message: `${result.browserName} · ${domainCount} 个网站`,
       });
     } catch (err) {
-      const message = userFacingIpcError(err) || 'Cookie sync failed';
+      const message = localizedSyncError(err, '登录状态同步失败，请检查浏览器配置后重试。');
       setSyncError(message);
-      toast.show({ variant: 'error', title: 'Cookie sync failed', message });
+      toast.show({ variant: 'error', title: '登录状态同步失败', message });
     } finally {
       setSyncingProfile(null);
     }
@@ -225,23 +231,23 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
     <div className="cb-root">
       {!hideHeader && (
         <div className="cb-header">
-          <span className="cb-title">Browser cookies</span>
+          <span className="cb-title">浏览器登录状态</span>
           <p className="cb-subtitle">
-            Sync cookies from a local Chromium browser profile so signed-in sites (Gmail, GitHub, internal tools) work in agent sessions without re-logging-in. Re-run anytime your local browser session changes.
+            从本机 Chromium 浏览器同步登录状态，让会话直接使用已登录的网站。浏览器登录状态变化后，可以再次同步。
           </p>
         </div>
       )}
 
       <div className="cb-section">
         <div className="cb-section-head">
-          <span className="cb-section-title">Browser profiles</span>
+          <span className="cb-section-title">本机浏览器配置</span>
           <button
             type="button"
             className="cb-btn cb-btn--ghost"
             onClick={refreshProfiles}
             disabled={profilesLoading}
           >
-            {profilesLoading ? 'Detecting…' : hasLoadedProfiles ? 'Refresh' : 'Detect'}
+            {profilesLoading ? '检测中…' : hasLoadedProfiles ? '刷新' : '检测'}
           </button>
         </div>
 
@@ -266,9 +272,9 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
                     {subtitle && <span className="cb-profile-email">{subtitle}</span>}
                     {record && (
                       <span className="cb-profile-result" title={new Date(record.last_synced_at).toLocaleString()}>
-                        Synced {relativeTime(record.last_synced_at)} · {record.domain_count.toLocaleString()} domains
+                        同步于 {relativeTime(record.last_synced_at)} · {record.domain_count.toLocaleString()} 个网站
                         {typeof record.new_domain_count === 'number' && typeof record.updated_domain_count === 'number' && (
-                          <> ({record.new_domain_count.toLocaleString()} new, {record.updated_domain_count.toLocaleString()} re-synced)</>
+                          <>（新增 {record.new_domain_count.toLocaleString()} 个，更新 {record.updated_domain_count.toLocaleString()} 个）</>
                         )}
                       </span>
                     )}
@@ -279,7 +285,7 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
                     onClick={() => handleSync(profileId)}
                     disabled={isSyncing || syncingProfile !== null}
                   >
-                    {isSyncing ? 'Syncing…' : record ? 'Re-sync' : 'Sync'}
+                    {isSyncing ? '同步中…' : record ? '重新同步' : '同步'}
                   </button>
                 </li>
               );
@@ -292,14 +298,14 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
 
       <div className="cb-section">
         <div className="cb-section-head">
-          <span className="cb-section-title">Sites in agent jar</span>
+          <span className="cb-section-title">会话中已同步的网站</span>
           <button
             type="button"
             className="cb-btn cb-btn--ghost"
             onClick={refreshCookies}
             disabled={cookiesLoading}
           >
-            {cookiesLoading ? 'Reading…' : 'Refresh'}
+            {cookiesLoading ? '读取中…' : '刷新'}
           </button>
         </div>
 
@@ -311,7 +317,7 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
           <input
             className="cb-search__input"
             type="text"
-            placeholder="Filter by domain (e.g. github)"
+            placeholder="按域名搜索，例如 github"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -320,7 +326,7 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
               type="button"
               className="cb-search__clear"
               onClick={() => setSearch('')}
-              aria-label="Clear search"
+              aria-label="清除搜索"
             >
               ×
             </button>
@@ -329,12 +335,12 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
 
         <div className="cb-list" role="list">
           {cookiesLoading && cookies.length === 0 ? (
-            <div className="cb-empty">Reading cookie jar…</div>
+            <div className="cb-empty">正在读取登录状态…</div>
           ) : visibleDomains.length === 0 ? (
             <div className="cb-empty">
               {cookies.length === 0
-                ? 'No cookies yet. Sync a browser profile to import them.'
-                : 'No domains match your filter.'}
+                ? '暂无登录数据，请先同步本机浏览器配置。'
+                : '没有匹配的网站。'}
             </div>
           ) : (
             visibleDomains.map((d) => (
@@ -345,7 +351,7 @@ export function CookieBrowser({ api, hideHeader }: Props): React.ReactElement {
 
         {truncated && (
           <p className="cb-truncated">
-            Showing first {MAX_VISIBLE_DOMAINS.toLocaleString()} of {filteredDomains.length.toLocaleString()} domains — narrow your filter to see more.
+            共 {filteredDomains.length.toLocaleString()} 个网站，当前显示前 {MAX_VISIBLE_DOMAINS.toLocaleString()} 个。请缩小搜索范围以查看更多。
           </p>
         )}
       </div>

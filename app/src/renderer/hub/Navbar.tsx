@@ -3,6 +3,7 @@ import React from 'react';
 interface NavbarProps {
   isDashboard: boolean;
   isSpace: boolean;
+  isSettings?: boolean;
   onGoSpace: () => void;
   onOpenSettings: () => void;
   onNewSession: () => void;
@@ -15,6 +16,7 @@ interface NavbarProps {
 export function Navbar({
   isDashboard,
   isSpace,
+  isSettings = false,
   onGoSpace,
   onOpenSettings,
   onNewSession,
@@ -56,14 +58,14 @@ export function Navbar({
             {Math.round(zoomFactor * 100)}%
           </button>
         )}
-        <button type="button" className="hub-navbar__settings-button"
+        {!isSettings && <button type="button" className="hub-navbar__settings-button"
           onClick={onOpenSettings} aria-label="设置" title={settingsShortcut ? `设置 (${settingsShortcut})` : '设置'}>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M6.3 1.6a1.7 1.7 0 0 1 3.4 0l.1.5a1.7 1.7 0 0 0 2.1 1.2l.5-.2a1.7 1.7 0 0 1 2.1 2.9l-.4.4a1.7 1.7 0 0 0 0 2.4l.4.4a1.7 1.7 0 0 1-2.1 2.9l-.5-.2a1.7 1.7 0 0 0-2.1 1.2l-.1.5a1.7 1.7 0 0 1-3.4 0l-.1-.5a1.7 1.7 0 0 0-2.1-1.2l-.5.2a1.7 1.7 0 0 1-2.1-2.9l.4-.4a1.7 1.7 0 0 0 0-2.4l-.4-.4a1.7 1.7 0 0 1 2.1-2.9l.5.2a1.7 1.7 0 0 0 2.1-1.2l.1-.5Z" stroke="currentColor" strokeWidth="1.2"/>
             <circle cx="8" cy="7.6" r="2" stroke="currentColor" strokeWidth="1.2"/>
           </svg>
           <span>设置</span>
-        </button>
+        </button>}
       </div>
     </header>
   );

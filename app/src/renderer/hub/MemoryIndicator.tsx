@@ -41,6 +41,22 @@ function statusDotClass(status: string): string {
   }
 }
 
+function processLabel(process: ProcessInfo): string {
+  if (process.label.startsWith('electron:')) {
+    const labels: Record<string, string> = {
+      Browser: '应用主进程',
+      Tab: '页面渲染进程',
+      GPU: '图形处理进程',
+      Utility: '辅助进程',
+      Zygote: '子进程管理',
+      'Sandbox helper': '沙箱辅助进程',
+    };
+    return labels[process.type] ?? '应用辅助进程';
+  }
+  if (process.label === 'harness:agent-browser') return '浏览器控制进程';
+  return process.label.replace(/ child$/u, ' 子进程');
+}
+
 export function MemoryIndicatorContent(): React.ReactElement {
   const [data, setData] = useState<MemoryData | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -87,7 +103,7 @@ export function MemoryIndicatorContent(): React.ReactElement {
           .map((p, i) => (
             <div key={p.pid ?? i} className="mem__session-row" title={`${p.type}${p.pid ? ` pid ${p.pid}` : ''}${p.component ? ` (${p.component})` : ''}`}>
               <span className={`mem__dot ${p.sessionId ? statusDotClass(data.sessions.find((s) => s.id === p.sessionId)?.status ?? 'stopped') : 'mem__dot--system'}`} />
-              <span className="mem__session-id">{p.label}</span>
+              <span className="mem__session-id">{processLabel(p)}</span>
               <span className="mem__session-mb">{Math.round(p.mb)} MB / {formatCpu(p.cpuPercent)}</span>
               {p.sessionId && (
                 <button
