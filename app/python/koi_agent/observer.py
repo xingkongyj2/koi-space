@@ -22,6 +22,7 @@ class Observer:
         self.session = session
         self._last_snapshot = ""
 
+    @protocol.traced("observer.capture")
     def capture(self) -> Observation:
         url = self.session.current_url()
         result = self.session.run(["snapshot", "-i"], timeout=30)

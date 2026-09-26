@@ -21,6 +21,7 @@ class Decision:
         self.model = model
         self.jev = jev
 
+    @protocol.traced("decision.choose")
     def choose(
         self, goal, observation, start_url="", slow=False, advice=""
     ) -> DecisionResult:
@@ -49,6 +50,7 @@ class Decision:
                     "typed choice",
                 )
             except Exception as exc:
+                protocol.trace_exception("decision.jev.fallback", exc)
                 protocol.log(f"flow=decision jev_error={exc}")
 
         if self.model:
@@ -65,7 +67,10 @@ class Decision:
                     },
                     ensure_ascii=False,
                 )
-                data = json.loads(self.model(payload))
+                raw = self.model(payload)
+                protocol.trace("decision.model.raw", data=raw)
+                data = json.loads(raw)
+                protocol.trace("decision.model.parsed", data=data)
                 actions = tuple(
                     Action(
                         str(item["kind"]),
@@ -84,6 +89,7 @@ class Decision:
                     str(data.get("rationale", "")),
                 )
             except Exception as exc:
+                protocol.trace_exception("decision.model.fallback", exc)
                 protocol.log(f"flow=decision model_error={exc}")
 
         return DecisionResult((), 0.0, "none", "no safe action available")

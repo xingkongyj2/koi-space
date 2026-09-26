@@ -1,6 +1,8 @@
 """Persistent successful action chains for zero-model repeated tasks."""
 from __future__ import annotations
 
+from . import protocol
+
 import json
 import re
 from pathlib import Path
@@ -23,6 +25,7 @@ class SkillLibrary:
             except ValueError:
                 continue
 
+    @protocol.traced("skills.match")
     def match(self, goal: str, url: str = ""):
         terms = set(re.findall(r"\w+", goal.lower()))
         best = None
@@ -34,6 +37,7 @@ class SkillLibrary:
                 best = (score, item)
         return best[1] if best else None
 
+    @protocol.traced("skills.save")
     def save(self, goal: str, actions, url: str = "") -> None:
         if not self.path:
             return

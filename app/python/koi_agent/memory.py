@@ -1,6 +1,8 @@
 """Append-only task memory with simple local retrieval."""
 from __future__ import annotations
 
+from . import protocol
+
 import json
 import time
 from pathlib import Path
@@ -10,6 +12,7 @@ class Memory:
     def __init__(self, path=None) -> None:
         self.path = Path(path).expanduser() if path else None
 
+    @protocol.traced("memory.write")
     def write(self, kind: str, data: dict) -> None:
         if not self.path:
             return

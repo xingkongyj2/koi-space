@@ -7,6 +7,7 @@ from . import protocol
 
 
 class Validator:
+    @protocol.traced("validator.action")
     def action(self, before, after, action) -> bool:
         changed = before.url != after.url or before.snapshot != after.snapshot
         passed = action.kind in {"wait", "scroll"} or changed
@@ -16,6 +17,7 @@ class Validator:
         )
         return passed
 
+    @protocol.traced("validator.step")
     def step(self, observation, criteria, start_url="") -> bool:
         text = f"{observation.url}\n{observation.snapshot}".lower()
         if start_url and not observation.url.startswith(start_url.rstrip("/")):

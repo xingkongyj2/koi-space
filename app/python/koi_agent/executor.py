@@ -21,6 +21,7 @@ class Executor:
     def __init__(self, session) -> None:
         self.session = session
 
+    @protocol.traced("executor.execute")
     def execute(self, action: Action):
         if action.kind not in self.ALLOWED:
             raise ValueError(f"unsupported action: {action.kind}")
@@ -39,4 +40,5 @@ class Executor:
         protocol.log(
             f"flow=execute action={action.kind} ref={action.ref or '-'}"
         )
+        protocol.trace("executor.command", command=commands[action.kind])
         return self.session.run(commands[action.kind])

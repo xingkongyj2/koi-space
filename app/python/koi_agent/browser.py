@@ -170,6 +170,7 @@ class BrowserSession:
 
     # ── agent-browser plumbing ──────────────────────────────────────────────
 
+    @protocol.traced("browser.cli")
     def _cli(self, args: list[str], timeout: float = 30.0) -> tuple[bool, str, str]:
         try:
             proc = subprocess.run(
@@ -266,6 +267,7 @@ class BrowserSession:
                 return loose[0]["tabId"]
         return None
 
+    @protocol.traced("browser.bind")
     def bind(self) -> str:
         """Point this agent-browser session at our assigned view. Returns the tab id."""
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -339,6 +341,7 @@ class BrowserSession:
 
     # ── execution ───────────────────────────────────────────────────────────
 
+    @protocol.traced("browser.run")
     def run(self, args: list[str], timeout: float = DEFAULT_TIMEOUT) -> BrowserResult:
         """Run one agent-browser command against this session's view."""
         if not args:

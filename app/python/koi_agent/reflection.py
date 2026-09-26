@@ -8,6 +8,7 @@ class Reflection:
     def __init__(self, model=None) -> None:
         self.model = model
 
+    @protocol.traced("reflection.advise")
     def advise(self, goal: str, observation, error: str = "") -> str:
         protocol.log(
             f"flow=reflection goal={goal[:80]!r} error={error[:120]!r}"
@@ -16,5 +17,6 @@ class Reflection:
             try:
                 return self.model(goal, observation.snapshot, error)
             except Exception as exc:  # reflection must never stop recovery
+                protocol.trace_exception("reflection.model.fallback", exc)
                 protocol.log(f"flow=reflection failed={exc}")
         return "重新观察页面，只使用当前 snapshot 中仍存在的元素引用。"

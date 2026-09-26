@@ -43,6 +43,7 @@ def emit_plan(plan: Plan) -> None:
     protocol.thinking(f"Planner: {plan.status}; {len(plan.steps)} step(s)")
 
 
+@protocol.traced("task.run")
 def main() -> int:
     try:
         task = read_task()
@@ -52,9 +53,11 @@ def main() -> int:
 
     prompt = str(task.get("prompt") or "")
     session_id = str(task.get("sessionId") or "?")
-    protocol.log(f"flow=receive session={session_id} prompt={prompt[:160]!r}")
+    protocol.set_context(session_id=session_id)
+    protocol.trace("task.received", task=task)
 
     settings = load_settings()
+    protocol.trace("task.configuration", planner={"model": settings.planner.model, "base_url": settings.planner.base_url, "configured": bool(settings.planner.api_key)}, decision={"model": settings.decision.model, "base_url": settings.decision.base_url, "configured": bool(settings.decision.api_key)}, max_steps=settings.max_steps, max_failures=settings.max_failures, max_seconds=settings.max_seconds)
     planner_client = (
         OpenAICompatible(settings.planner) if settings.planner.api_key else None
     )

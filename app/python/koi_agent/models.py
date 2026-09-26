@@ -1,14 +1,32 @@
 """OpenAI Responses client and Jev's typed browser decision adapter."""
 from __future__ import annotations
 
+from . import protocol
+
 import json
 import urllib.request
+import urllib.error
 
 from .config import Provider
 
 
 class ModelError(RuntimeError):
     """Raised when a configured model cannot return a usable response."""
+
+
+@protocol.traced("model.http")
+def _request_json(url: str, body: dict, *, provider_name: str, timeout: float, open_response) -> dict:
+    # open_response owns authentication; never serialize the Request or headers.
+    try:
+        with open_response() as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            protocol.trace("model.response.raw", status=response.status, body=raw)
+    except urllib.error.HTTPError as exc:
+        protocol.trace("model.response.http_error", status=exc.code, body=exc.read().decode("utf-8", errors="replace"))
+        raise
+    data = json.loads(raw)
+    protocol.trace("model.response.parsed", data=data)
+    return data
 
 
 class OpenAICompatible:
@@ -20,6 +38,7 @@ class OpenAICompatible:
     def chat(self, system: str, user: str) -> str:
         return self.responses(system, user)
 
+    @protocol.traced("model.responses")
     def responses(self, system: str, user: str) -> str:
         body = {
             "model": self.provider.model,
@@ -35,8 +54,9 @@ class OpenAICompatible:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.provider.timeout) as response:
-                data = json.load(response)
+            data = _request_json(request.full_url, body, provider_name=self.provider.name,
+                                 timeout=self.provider.timeout,
+                                 open_response=lambda: urllib.request.urlopen(request, timeout=self.provider.timeout))
             texts = []
             for item in data.get("output", []):
                 if item.get("type") != "message":
@@ -62,6 +82,7 @@ class JevDecision:
         self.provider = provider
         self.text_model = text_model
 
+    @protocol.traced("model.jev")
     def choose(self, goal: str, observation) -> dict:
         # TypeSafe System One selects from a finite set of observed actions.
         # It does not implement OpenAI's /responses endpoint or generate text.
@@ -127,8 +148,9 @@ class JevDecision:
             {"Content-Type": "application/json", "Authorization": f"Bearer {self.provider.api_key}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.provider.timeout) as response:
-                data = json.load(response)
+            data = _request_json(request.full_url, body, provider_name=self.provider.name,
+                                 timeout=self.provider.timeout,
+                                 open_response=lambda: urllib.request.urlopen(request, timeout=self.provider.timeout))
         except Exception as exc:
             raise ModelError(f"Jev systemone request failed: {exc}") from exc
 

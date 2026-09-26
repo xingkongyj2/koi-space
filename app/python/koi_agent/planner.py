@@ -1,6 +1,8 @@
 """Task planning contracts and the browser-specific Planner prompt."""
 from __future__ import annotations
 
+from . import protocol
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -59,8 +61,10 @@ def _json_object(text: str) -> dict[str, Any]:
     return value
 
 
+@protocol.traced("planner.parse")
 def parse_plan(text: str) -> Plan:
     obj = _json_object(text)
+    protocol.trace("planner.json.decoded", data=obj)
     status = obj.get("status")
     if status not in {"ready", "ask", "direct"}:
         raise PlanError("status must be ready, ask, or direct")
@@ -127,6 +131,7 @@ class Planner:
     def __init__(self, model: Callable[[str, str], str] | None = None) -> None:
         self.model = model
 
+    @protocol.traced("planner.plan")
     def plan(self, prompt: str) -> Plan:
         if not prompt.strip():
             return Plan("ask", False, question="请告诉我你希望完成什么任务？")

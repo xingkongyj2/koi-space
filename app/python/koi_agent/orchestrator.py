@@ -28,11 +28,13 @@ class Orchestrator:
         self.reflection = reflection or Reflection()
         self.skills = skills
 
+    @protocol.traced("orchestrator.run")
     def run(self) -> str:
         completed: list[str] = []
         for step in self.plan.steps:
             missing = [dep for dep in step.depends_on if dep not in completed]
             if missing:
+                protocol.trace("orchestrator.step.blocked", step_id=step.id, missing_dependencies=missing)
                 protocol.log(f"flow=plan step={step.id} status=blocked dependencies={missing}")
                 continue
             result = self._run_step(step, completed)
@@ -46,12 +48,15 @@ class Orchestrator:
         self.memory.record_success(self.plan, completed)
         return f"任务完成：{len(completed)}/{len(self.plan.steps)} 个步骤已验证通过。"
 
+    @protocol.traced("orchestrator.step")
     def _run_step(self, step, completed: list[str]) -> str | None:
         failures = 0
         slow = False
         advice = ""
         while self.budget.allow():
             self.budget.consume_step()
+            protocol.set_context(iteration=self.budget.steps)
+            protocol.trace("orchestrator.iteration", budget=self.budget.snapshot(), failures=failures, slow=slow, advice=advice)
             observation = self.observer.capture()
             # The first observation may already satisfy a navigation step.
             # Verify before asking Jev or a text model for another action.
@@ -72,6 +77,7 @@ class Orchestrator:
                 f"flow=decision step={step.id} route={decision.route} "
                 f"confidence={decision.confidence:.2f} actions={len(decision.actions)}"
             )
+            protocol.trace("orchestrator.actions", route=decision.route, confidence=decision.confidence, actions=decision.actions)
             if not decision.actions:
                 if self.validator.step(observation, step.success_criteria, step.start_url):
                     completed.append(step.id)
@@ -85,6 +91,7 @@ class Orchestrator:
             failed = False
             for action in decision.actions:
                 if step.needs_user_confirmation:
+                    protocol.trace("orchestrator.confirmation_required", action=action)
                     protocol.notify(f"步骤需要用户确认：{step.goal}", "warning")
                     return f"等待用户确认：{step.goal}"
                 try:
@@ -114,4 +121,5 @@ class Orchestrator:
             slow = failures >= 2
             if failures >= 3:
                 break
+        protocol.trace("orchestrator.step.exhausted", budget=self.budget.snapshot(), failures=failures)
         return f"步骤 {step.id} 失败：预算或重试次数耗尽"
