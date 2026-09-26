@@ -8,6 +8,7 @@ from . import browser, protocol
 from .budget import Budget
 from .config import load_settings
 from .decision import Decision
+from .history import task_history
 from .models import JevDecision, OpenAICompatible
 from .memory import Memory
 from .orchestrator import Orchestrator
@@ -40,7 +41,9 @@ def emit_plan(plan: Plan) -> None:
         f"planner status={plan.status} needs_browser={plan.needs_browser} "
         f"steps={len(plan.steps)}"
     )
-    protocol.thinking(f"Planner: {plan.status}; {len(plan.steps)} step(s)")
+    # Persist the validated contract, not just a step count: a later planning
+    # turn needs the prior goals, URLs, dependencies and clarification question.
+    protocol.thinking(json.dumps({"kind": "planner_plan", "plan": plan.to_dict()}, ensure_ascii=False))
 
 
 @protocol.traced("task.run")
@@ -56,6 +59,19 @@ def main() -> int:
     protocol.set_context(session_id=session_id)
     protocol.trace("task.received", task=task)
 
+    try:
+        history = task_history(task, user_input)
+    except ValueError as exc:
+        protocol.error(f"could not read the task history: {exc}")
+        return 0
+
+    with protocol.capture_events(history):
+        return run_task(task, user_input, session_id, history)
+
+
+def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) -> int:
+    """Run one turn using the complete history shared by all task layers."""
+
     settings = load_settings()
     protocol.trace("task.configuration", planner={"model": settings.planner.model, "base_url": settings.planner.base_url, "configured": bool(settings.planner.api_key)}, decision={"model": settings.decision.model, "base_url": settings.decision.base_url, "configured": bool(settings.decision.api_key)}, max_steps=settings.max_steps, max_failures=settings.max_failures, max_seconds=settings.max_seconds)
     planner_client = (
@@ -63,7 +79,7 @@ def main() -> int:
     )
 
     try:
-        plan = Planner(ai=planner_client).plan(user_input)
+        plan = Planner(ai=planner_client).plan(user_input, history=history)
     except PlanError as exc:
         protocol.error(f"flow=planner invalid: {exc}")
         return 0
@@ -93,11 +109,6 @@ def main() -> int:
         protocol.error(f"flow=bind failed: {exc}")
         return 0
     protocol.log(f"flow=bind tab={tab}")
-
-    if not plan.steps[0].start_url:
-        protocol.notify("规划已生成，当前步骤需要继续观察页面后执行。", "info")
-        protocol.done(plan.steps[0].goal, 0)
-        return 0
 
     try:
         decision = None

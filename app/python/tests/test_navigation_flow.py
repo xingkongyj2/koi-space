@@ -28,11 +28,17 @@ def navigation_plan():
     return parse_plan(json.dumps({
         "status": "ready",
         "needs_browser": True,
+        "question": "",
+        "direct_answer": "",
         "steps": [{
             "id": "s1",
             "goal": "导航到腾讯视频首页",
             "start_url": "https://v.qq.com/",
-            "success_criteria": ["页面 URL 为腾讯视频首页"],
+            "success_criteria": ["url_prefix:https://v.qq.com/"],
+            "depends_on": [],
+            "needs_user_confirmation": False,
+            "risk": "low",
+            "parallel_group": "",
         }],
     }))
 

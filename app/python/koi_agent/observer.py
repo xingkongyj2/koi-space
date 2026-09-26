@@ -1,6 +1,7 @@
 """Page observation, interactive element extraction and incremental diffs."""
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -34,6 +35,10 @@ class Observer:
             f"flow=observe url={url or '<unknown>'} "
             f"bytes={len(snapshot)} elements={len(elements)} changed={bool(diff)}"
         )
+        protocol.thinking(json.dumps({
+            "kind": "observation", "url": url, "ok": result.ok,
+            "diff": diff, "element_count": len(elements),
+        }, ensure_ascii=False))
         return Observation(url, "", snapshot, diff, bool(diff), elements)
 
     @staticmethod

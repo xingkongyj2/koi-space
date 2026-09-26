@@ -4,6 +4,9 @@ This module owns control flow only. All browser/model/storage concerns are
 injected through the dedicated components, which keeps the loop testable.
 """
 from __future__ import annotations
+from dataclasses import asdict
+import json
+
 from .budget import Budget
 from .observer import Observer
 from .decision import Decision
@@ -28,6 +31,24 @@ class Orchestrator:
         self.reflection = reflection or Reflection()
         self.skills = skills
 
+    @staticmethod
+    def _progress(step, status: str, completed: list[str], **details) -> None:
+        """Persist planning-relevant execution state in the session history."""
+        protocol.thinking(json.dumps({
+            "kind": "task_progress",
+            "step_id": step.id,
+            "goal": step.goal,
+            "status": status,
+            "completed_steps": list(completed),
+            **details,
+        }, ensure_ascii=False))
+
+    def _complete(self, step, completed: list[str], observation) -> None:
+        completed.append(step.id)
+        self._progress(step, "completed", completed,
+                       current_url=observation.url,
+                       success_criteria=list(step.success_criteria))
+
     @protocol.traced("orchestrator.run")
     def run(self) -> str:
         completed: list[str] = []
@@ -36,7 +57,9 @@ class Orchestrator:
             if missing:
                 protocol.trace("orchestrator.step.blocked", step_id=step.id, missing_dependencies=missing)
                 protocol.log(f"flow=plan step={step.id} status=blocked dependencies={missing}")
+                self._progress(step, "blocked", completed, missing_dependencies=missing)
                 continue
+            self._progress(step, "started", completed, start_url=step.start_url)
             result = self._run_step(step, completed)
             if result is not None:
                 self.memory.record_failure(result)
@@ -61,7 +84,7 @@ class Orchestrator:
             # The first observation may already satisfy a navigation step.
             # Verify before asking Jev or a text model for another action.
             if self.validator.step(observation, step.success_criteria, step.start_url):
-                completed.append(step.id)
+                self._complete(step, completed, observation)
                 protocol.log(f"flow=verify step={step.id} status=passed source=pre_decision")
                 return None
             skill = self.skills.match(step.goal, observation.url) if self.skills else None
@@ -80,19 +103,22 @@ class Orchestrator:
             protocol.trace("orchestrator.actions", route=decision.route, confidence=decision.confidence, actions=decision.actions)
             if not decision.actions:
                 if self.validator.step(observation, step.success_criteria, step.start_url):
-                    completed.append(step.id)
+                    self._complete(step, completed, observation)
                     protocol.log(f"flow=verify step={step.id} status=passed")
                     return None
                 failures += 1
                 self.budget.failure()
                 advice = self.reflection.advise(step.goal, observation, "no action")
+                self._progress(step, "retry", completed, current_url=observation.url,
+                               error="no action", advice=advice)
                 slow = True
                 continue
             failed = False
             for action in decision.actions:
                 if step.needs_user_confirmation:
                     protocol.trace("orchestrator.confirmation_required", action=action)
-                    protocol.notify(f"步骤需要用户确认：{step.goal}", "warning")
+                    self._progress(step, "waiting_confirmation", completed, current_url=observation.url)
+                    protocol.notify(f"步骤需要用户确认：{step.goal}", "blocking")
                     return f"等待用户确认：{step.goal}"
                 try:
                     result = self.executor.execute(action)
@@ -100,21 +126,27 @@ class Orchestrator:
                     failed = True
                     self.budget.failure()
                     advice = self.reflection.advise(step.goal, observation, str(exc))
+                    self._progress(step, "retry", completed, current_url=observation.url,
+                                   error=str(exc), advice=advice)
                     break
                 if not result.ok:
                     failed = True
                     self.budget.failure()
                     advice = self.reflection.advise(step.goal, observation, result.preview)
+                    self._progress(step, "retry", completed, current_url=observation.url,
+                                   error=result.preview, advice=advice)
                     break
                 after = self.observer.capture()
                 if not self.validator.action(observation, after, action):
                     failed = True
                     self.budget.failure()
                     advice = self.reflection.advise(step.goal, after, "no-op")
+                    self._progress(step, "retry", completed, current_url=after.url,
+                                   error="no-op", advice=advice)
                     break
                 observation = after
             if not failed and self.validator.step(observation, step.success_criteria, step.start_url):
-                completed.append(step.id)
+                self._complete(step, completed, observation)
                 protocol.log(f"flow=verify step={step.id} status=passed")
                 return None
             failures += 1
@@ -122,4 +154,6 @@ class Orchestrator:
             if failures >= 3:
                 break
         protocol.trace("orchestrator.step.exhausted", budget=self.budget.snapshot(), failures=failures)
+        self._progress(step, "failed", completed, reason="预算或重试次数耗尽",
+                       budget=asdict(self.budget.snapshot()), failures=failures)
         return f"步骤 {step.id} 失败：预算或重试次数耗尽"

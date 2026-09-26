@@ -125,6 +125,7 @@ const pythonAdapter: EngineAdapter = {
   getStdinPayload(ctx: SpawnContext): string {
     return JSON.stringify({
       userInput: ctx.prompt,
+      history: ctx.history ?? [],
       sessionId: ctx.sessionId,
       browser: { cdpPort: ctx.cdpPort, targetId: ctx.targetId },
       outputsDir: path.join(ctx.harnessDir, 'outputs', ctx.sessionId),

@@ -12,6 +12,8 @@ import type { HlEvent } from '../../../shared/session-schemas';
 export interface SpawnContext {
   /** User prompt to feed to the agent. Adapters may wrap with seed/system text. */
   prompt: string;
+  /** Full chronological session event log, including the current user input. */
+  history?: HlEvent[];
   /** Absolute path to <userData>/harness/ (AGENTS.md, skills, uploads, outputs). */
   harnessDir: string;
   /** App session id (used for naming uploads/outputs dirs + env injection). */
@@ -112,6 +114,8 @@ export interface EngineRunControl {
 export interface RunEngineOptions {
   engineId: string;
   prompt: string;
+  /** Persisted conversation and execution history; never a recent-turn window. */
+  history?: HlEvent[];
   sessionId: string;
   webContents: WebContents;
   cdpPort: number;

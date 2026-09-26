@@ -43,8 +43,9 @@ class OpenAICompatible:
     def responses(self, system: str, user_input: str) -> str:
         body = {
             "model": self.provider.model,
-            "input": f"{system}\n\n用户任务：\n{user_input}",
-            "enable_thinking": True,
+            "instructions": system,
+            "input": user_input,
+            "enable_thinking": False,
         }
         request = urllib.request.Request(
             f"{self.provider.base_url.rstrip('/')}/responses",

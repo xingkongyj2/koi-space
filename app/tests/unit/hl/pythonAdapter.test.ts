@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, test, vi } from 'vitest';
 import type { ParseContext, SpawnContext } from '../../../src/main/hl/engines/types';
+import type { HlEvent } from '../../../src/shared/session-schemas';
 
 vi.mock('electron', () => ({
   app: { getAppPath: vi.fn(() => path.join(__dirname, '..', '..', '..')) },
@@ -118,7 +119,30 @@ describe('python adapter spawn contract', () => {
       sessionId: 'sess-abc',
       browser: { cdpPort: 51234, targetId: 'TARGET-1' },
       outputsDir: '/tmp/harness/outputs/sess-abc',
+      history: [],
     });
+  });
+
+  test('preserves the full conversation and execution history without clipping', () => {
+    const history: HlEvent[] = [{ type: 'user_input', text: 'Compare two products and keep the original constraints.' }];
+    for (let turn = 0; turn < 8; turn += 1) {
+      history.push(
+        { type: 'notify', level: 'blocking', message: `Clarification ${turn}?` },
+        { type: 'user_input', text: `Answer ${turn}: ${'完整上下文'.repeat(300)}` },
+      );
+    }
+    history.push(
+      { type: 'thinking', text: JSON.stringify({ kind: 'plan', start_url: 'https://example.net' }) },
+      { type: 'tool_result', name: 'agent-browser', ok: false, preview: 'Navigation failed', ms: 5 },
+      { type: 'error', message: 'Could not complete the first subgoal' },
+      { type: 'user_input', text: 'Try again with the same constraints' },
+    );
+    const ctx = spawnContext({ prompt: 'Try again with the same constraints', history });
+    const parsed = JSON.parse(adapter.getStdinPayload!(ctx, ctx.prompt));
+
+    expect(parsed.history).toEqual(history);
+    expect(parsed.userInput).toBe(ctx.prompt);
+    expect(parsed.history.filter((event: HlEvent) => event.type === 'user_input')).toHaveLength(10);
   });
 
   test('the envelope carries no agent-browser details — the agent owns those', () => {
@@ -126,7 +150,7 @@ describe('python adapter spawn contract', () => {
     // cdpPort + targetId are the whole of the app's browser knowledge. Session
     // naming, socket layout and tab binding are the Python agent's business.
     expect(Object.keys(parsed).sort()).toEqual([
-      'browser', 'harnessDir', 'outputsDir', 'resumeSessionId', 'sessionId', 'userInput',
+      'browser', 'harnessDir', 'history', 'outputsDir', 'resumeSessionId', 'sessionId', 'userInput',
     ]);
     expect(Object.keys(parsed.browser as object).sort()).toEqual(['cdpPort', 'targetId']);
   });

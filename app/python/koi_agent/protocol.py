@@ -18,6 +18,8 @@ import time
 import inspect
 import traceback
 from contextvars import ContextVar
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from functools import wraps
@@ -29,11 +31,30 @@ _STARTED_AT = time.monotonic()
 LOG_DIR = Path(__file__).resolve().parent.parent / "log"
 LOG_PATH = LOG_DIR / f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{os.getpid()}.jsonl"
 _CONTEXT: ContextVar[dict] = ContextVar("log_context", default={})
+_HISTORY: ContextVar[list[dict[str, Any]] | None] = ContextVar("task_history", default=None)
 _CALLS = count(1)
 
 
 def set_context(**data: Any) -> None:
     _CONTEXT.set({**_CONTEXT.get(), **data})
+
+
+def current_iteration() -> int:
+    return _CONTEXT.get().get("iteration", 0)
+
+
+@contextmanager
+def capture_events(history: list[dict[str, Any]]):
+    """Keep emitted messages in the same history used by later planner calls.
+
+    Electron persists these exact events for the next process/resume. Context
+    scoping keeps independent tasks and tests from sharing a mutable history.
+    """
+    token = _HISTORY.set(history)
+    try:
+        yield
+    finally:
+        _HISTORY.reset(token)
 
 
 def _json_value(value: Any) -> Any:
@@ -129,6 +150,9 @@ def _record(kind: str, **data: Any) -> None:
 
 
 def _emit(event: dict[str, Any]) -> None:
+    history = _HISTORY.get()
+    if history is not None:
+        history.append(deepcopy(event))
     _record("event", event=event)
     sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
     sys.stdout.flush()

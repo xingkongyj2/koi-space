@@ -115,7 +115,9 @@ export class SessionManager extends EventEmitter {
       this.hydratedOutputs.add(id);
       return;
     }
-    const events = this.db.getEvents(id);
+    // SQLite LIMIT -1 means all rows. Planning must retain the complete
+    // conversation, including older clarifications and execution failures.
+    const events = this.db.getEvents(id, { limit: -1 });
     if (events.length > 0) {
       session.output = events;
       const kickoff = this.firstUserInput(session)?.text;
@@ -183,6 +185,15 @@ export class SessionManager extends EventEmitter {
     return this.firstUserInput(session)?.text ?? (session.prompt || undefined);
   }
 
+  /** Snapshot the complete persisted transcript for a new agent process.
+   *  Current input is already recorded by create/start/resumeSession. */
+  getSessionHistory(id: string): HlEvent[] {
+    const session = this.sessions.get(id);
+    if (!session) return [];
+    this.hydrateOutput(id);
+    return [...session.output];
+  }
+
   private getSnapshotPrompt(session: AgentSession): string {
     return this.firstUserInput(session)?.text
       ?? this.db.getFirstUserInputText(session.id)
@@ -223,6 +234,8 @@ export class SessionManager extends EventEmitter {
     if (session.status !== 'draft' && session.status !== 'idle') {
       throw new Error(`Session ${id} is ${session.status}, expected draft or idle`);
     }
+
+    this.hydrateOutput(id);
 
     const resumed = session.status === 'idle';
     session.status = 'running';
@@ -346,6 +359,7 @@ export class SessionManager extends EventEmitter {
       mainLogger.warn('SessionManager.appendOutput', { id, reason: 'not_found' });
       return;
     }
+    this.hydrateOutput(id);
     session.output.push(event);
     const seq = session.output.length - 1;
     this.db.appendEvent(id, seq, event);
@@ -623,6 +637,9 @@ export class SessionManager extends EventEmitter {
     session.status = 'stopped';
     session.error = error;
     this.db.updateSessionStatus(id, 'stopped', error);
+    // The status row is reset by a follow-up; preserve the failure in the
+    // append-only transcript so the next planner invocation can see it.
+    this.appendOutput(id, { type: 'error', message: error });
     mainLogger.info('SessionManager.failSession', {
       id,
       error,

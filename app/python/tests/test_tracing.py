@@ -38,7 +38,7 @@ class TracingTests(unittest.TestCase):
         return [entry for entry in map(json.loads, self.path.read_text().splitlines()) if entry.get("stage") == stage]
 
     def test_model_raw_extracted_and_normalized_plan_are_distinct(self):
-        plan = {"status": "ready", "steps": [{"id": "s1", "goal": "open site", "start_url": "https://example.com", "success_criteria": ["original prose"]}]}
+        plan = navigation_plan().to_dict()
         text = json.dumps(plan)
         raw = json.dumps({"output": [{"type": "message", "content": [{"text": text}]}], "padding": "x" * 16000})
         with patch("urllib.request.urlopen", return_value=Response(raw.encode())):
@@ -48,6 +48,14 @@ class TracingTests(unittest.TestCase):
         self.assertEqual(self.records("planner.json.decoded")[0]["data"], plan)
         self.assertEqual(self.records("planner.parse.end")[0]["result"]["steps"][0]["success_criteria"], list(result.steps[0].success_criteria))
         self.assertNotIn(self.provider.api_key, self.path.read_text())
+
+    def test_system_instructions_are_separate_from_complete_model_input(self):
+        with patch("urllib.request.urlopen", return_value=Response(b'{"output_text":"ok"}')) as request:
+            self.assertEqual(OpenAICompatible(self.provider).chat("system rules", "complete history"), "ok")
+        body = json.loads(request.call_args.args[0].data)
+        self.assertEqual(body["instructions"], "system rules")
+        self.assertEqual(body["input"], "complete history")
+        self.assertFalse(body["enable_thinking"])
 
     def test_malformed_response_keeps_raw_body_and_traceback(self):
         with patch("urllib.request.urlopen", return_value=Response(b"not json")):

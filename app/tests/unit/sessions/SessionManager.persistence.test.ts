@@ -226,6 +226,58 @@ describe('SessionManager persistence', () => {
     manager.destroy();
   });
 
+  it('retains every clarification, plan, result and failure across restart and follow-up', () => {
+    const dbPath = tempDbPath();
+    const first = new SessionManager(dbPath);
+    const id = first.createSession('Find a product matching these original constraints.');
+    first.startSession(id);
+    for (let turn = 0; turn < 8; turn += 1) {
+      first.appendOutput(id, { type: 'notify', level: 'blocking', message: `Which option for ${turn}?` });
+      first.appendOutput(id, { type: 'done', summary: `Waiting for answer ${turn}`, iterations: 0 });
+      first.completeSession(id);
+      first.resumeSession(id, `Answer ${turn}: ${'retain this detail '.repeat(150)}`);
+    }
+    first.appendOutput(id, { type: 'thinking', text: '{"kind":"plan","start_url":"https://example.net"}' });
+    first.appendOutput(id, { type: 'tool_result', name: 'agent-browser', ok: false, preview: 'Page unavailable', ms: 2 });
+    first.failSession(id, 'Failed to open the confirmed URL');
+    const beforeRestart = first.getSessionHistory(id);
+    first.destroy();
+
+    const second = new SessionManager(dbPath);
+    second.resumeSession(id, 'Try the backup site https://example.org');
+    const history = second.getSessionHistory(id);
+    expect(history).toEqual([
+      ...beforeRestart,
+      { type: 'user_input', text: 'Try the backup site https://example.org' },
+    ]);
+    expect(history.filter((event) => event.type === 'user_input')).toHaveLength(10);
+    expect(history.at(-2)).toEqual({ type: 'error', message: 'Failed to open the confirmed URL' });
+    expect(second.getSession(id)?.error).toBeUndefined();
+
+    // A run receives its own array snapshot; later output cannot rewrite it.
+    second.appendOutput(id, { type: 'thinking', text: 'Next planning attempt' });
+    expect(history.at(-1)).toEqual({ type: 'user_input', text: 'Try the backup site https://example.org' });
+    second.destroy();
+  });
+
+  it('hydrates idle session history before starting after a restart', () => {
+    const dbPath = tempDbPath();
+    const first = new SessionManager(dbPath);
+    const id = first.createSession('Open example.com');
+    first.startSession(id);
+    first.appendOutput(id, { type: 'done', summary: 'Original result', iterations: 1 });
+    first.completeSession(id);
+    first.destroy();
+
+    const second = new SessionManager(dbPath);
+    second.startSession(id);
+    expect(second.getSessionHistory(id)).toEqual([
+      { type: 'user_input', text: 'Open example.com' },
+      { type: 'done', summary: 'Original result', iterations: 1 },
+    ]);
+    second.destroy();
+  });
+
   it('removes a closed session from the live set and the database', () => {
     const dbPath = tempDbPath();
     const manager = new SessionManager(dbPath);
@@ -271,6 +323,7 @@ describe('SessionManager persistence', () => {
     expect(session?.status).toBe('running');
     expect(session?.canResume).toBe(false);
     expect(session?.output).toEqual([{ type: 'user_input', text: 'Open example.com' }]);
+    expect(manager.getSessionHistory(id)).toEqual([{ type: 'user_input', text: 'Open example.com' }]);
     expect(manager.getInitialPrompt(id)).toBe('Open example.com');
     expect(manager.getEngineSessionId(id)).toBeUndefined();
 

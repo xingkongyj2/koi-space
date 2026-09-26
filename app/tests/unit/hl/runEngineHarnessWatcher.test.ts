@@ -50,7 +50,7 @@ function prepareHarness(): string {
   return harnessDir;
 }
 
-function registerFakeEngine(script: string, parseLine: (line: string, ctx: ParseContext) => ParseResult): string {
+function registerFakeEngine(script: string, parseLine: (line: string, ctx: ParseContext) => ParseResult, overrides: Partial<EngineAdapter> = {}): string {
   const id = `harness-watch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const adapter: EngineAdapter = {
     id,
@@ -61,6 +61,7 @@ function registerFakeEngine(script: string, parseLine: (line: string, ctx: Parse
     buildEnv(_ctx: SpawnContext, baseEnv: NodeJS.ProcessEnv) { return baseEnv; },
     wrapPrompt(ctx: SpawnContext) { return ctx.prompt; },
     parseLine,
+    ...overrides,
   };
   register(adapter);
   return id;
@@ -103,6 +104,37 @@ describe('runEngine harness watcher', () => {
 
   afterAll(() => {
     fs.rmSync(mockState.userData, { recursive: true, force: true });
+  });
+
+  test('passes the session transcript through spawn context into the child stdin', async () => {
+    const history: HlEvent[] = [
+      { type: 'user_input', text: 'Original request' },
+      { type: 'notify', level: 'blocking', message: 'Which site?' },
+      { type: 'user_input', text: 'https://example.net' },
+    ];
+    const script = [
+      "const fs = require('node:fs');",
+      "const input = JSON.parse(fs.readFileSync(0, 'utf8'));",
+      "console.log(JSON.stringify({ type: 'done', summary: JSON.stringify(input.history), iterations: 0 }));",
+    ].join('\n');
+    const engineId = registerFakeEngine(script, (line) => ({ events: [JSON.parse(line)] }), {
+      getStdinPayload: (ctx) => JSON.stringify({ history: ctx.history }),
+    });
+    const events: HlEvent[] = [];
+    await runEngine({
+      engineId,
+      prompt: 'https://example.net',
+      history,
+      sessionId: 'history-session',
+      webContents: createWebContents() as unknown as WebContents,
+      cdpPort: 9222,
+      harnessDir,
+      onEvent: (event) => events.push(event),
+    });
+
+    const done = events.find((event) => event.type === 'done');
+    expect(done).toBeDefined();
+    expect(JSON.parse(done!.summary)).toEqual(history);
   });
 
   test('emits harness_edited from an actual AGENTS.md content change before done', async () => {

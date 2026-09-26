@@ -133,6 +133,7 @@ export async function runEngine(opts: RunEngineOptions): Promise<void> {
   //    configuration, so there is no provider credential to inject here.
   const spawnCtx: SpawnContext = {
     prompt: opts.prompt,
+    history: opts.history,
     harnessDir: opts.harnessDir,
     sessionId: opts.sessionId,
     targetId,
