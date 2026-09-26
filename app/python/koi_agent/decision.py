@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 from . import protocol
 from .executor import Action
+from .models import JevDecision, OpenAICompatible
+
+DECISION_SYSTEM_PROMPT = '根据浏览器快照选择最多一个安全动作，只返回 JSON：{"actions":[{"kind":"click|fill|press|wait|scroll|open","ref":"@e1","value":""}],"confidence":0.8}。只使用快照中存在的 ref；不要猜测密码。'
 
 
 @dataclass(frozen=True)
@@ -17,8 +20,8 @@ class DecisionResult:
 
 
 class Decision:
-    def __init__(self, model=None, jev=None) -> None:
-        self.model = model
+    def __init__(self, ai: OpenAICompatible | None = None, jev: JevDecision | None = None) -> None:
+        self.ai = ai
         self.jev = jev
 
     @protocol.traced("decision.choose")
@@ -53,7 +56,7 @@ class Decision:
                 protocol.trace_exception("decision.jev.fallback", exc)
                 protocol.log(f"flow=decision jev_error={exc}")
 
-        if self.model:
+        if self.ai:
             try:
                 payload = json.dumps(
                     {
@@ -67,7 +70,7 @@ class Decision:
                     },
                     ensure_ascii=False,
                 )
-                raw = self.model(payload)
+                raw = self.ai.chat(DECISION_SYSTEM_PROMPT, payload)
                 protocol.trace("decision.model.raw", data=raw)
                 data = json.loads(raw)
                 protocol.trace("decision.model.parsed", data=data)

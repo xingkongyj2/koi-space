@@ -6,7 +6,7 @@ import path from 'node:path';
 export const LOCAL_TASK_CONTROL_FILE = 'local-task-server.json';
 
 export interface LocalTaskPayload {
-  prompt: string;
+  userInput: string;
   engine?: string;
 }
 
@@ -78,19 +78,21 @@ function parsePayload(raw: string): LocalTaskPayload {
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('request body must be an object');
   }
-  const obj = parsed as { prompt?: unknown; engine?: unknown };
-  if (typeof obj.prompt !== 'string' || obj.prompt.trim().length === 0) {
-    throw new Error('prompt must be a non-empty string');
+  const obj = parsed as { userInput?: unknown; prompt?: unknown; engine?: unknown };
+  // Accept the old field from existing callers, but normalize at the boundary.
+  const userInput = obj.userInput === undefined ? obj.prompt : obj.userInput;
+  if (typeof userInput !== 'string' || userInput.trim().length === 0) {
+    throw new Error('userInput must be a non-empty string');
   }
-  if (obj.prompt.length > 10000) {
-    throw new Error('prompt is too long');
+  if (userInput.length > 10000) {
+    throw new Error('userInput is too long');
   }
   if (obj.engine != null && (typeof obj.engine !== 'string' || obj.engine.length > 50)) {
     throw new Error('engine must be a string up to 50 characters');
   }
   const engine = typeof obj.engine === 'string' ? obj.engine : undefined;
   return {
-    prompt: obj.prompt,
+    userInput,
     engine,
   };
 }

@@ -51,7 +51,7 @@ def main() -> int:
         protocol.error(f"could not read the task envelope: {exc}")
         return 0
 
-    prompt = str(task.get("prompt") or "")
+    user_input = str(task.get("userInput", task.get("prompt")) or "")
     session_id = str(task.get("sessionId") or "?")
     protocol.set_context(session_id=session_id)
     protocol.trace("task.received", task=task)
@@ -61,14 +61,9 @@ def main() -> int:
     planner_client = (
         OpenAICompatible(settings.planner) if settings.planner.api_key else None
     )
-    planner_model = (
-        (lambda system, user: planner_client.chat(system, user))
-        if planner_client
-        else None
-    )
 
     try:
-        plan = Planner(planner_model).plan(prompt)
+        plan = Planner(ai=planner_client).plan(user_input)
     except PlanError as exc:
         protocol.error(f"flow=planner invalid: {exc}")
         return 0
@@ -109,12 +104,7 @@ def main() -> int:
         if settings.decision.api_key:
             decision = Decision(
                 jev=JevDecision(settings.decision, text_model=planner_client),
-                model=(
-                    lambda payload: planner_client.chat(
-                        '根据浏览器快照选择最多一个安全动作，只返回 JSON：{"actions":[{"kind":"click|fill|press|wait|scroll|open","ref":"@e1","value":""}],"confidence":0.8}。只使用快照中存在的 ref；不要猜测密码。',
-                        payload,
-                    )
-                ) if planner_client else None,
+                ai=planner_client,
             )
         orchestrator = Orchestrator(
             session,

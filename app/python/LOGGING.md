@@ -4,13 +4,13 @@
 
 ```python
 if __name__ == "__main__":
-    question = "打开 https://example.com"  # 修改成你要测试的问题
+    user_input = "打开 https://example.com"  # 修改成你要测试的问题
     browser_path = None
     user_data_dir = None
     cdp_port = None
     target_id = None
     raise SystemExit(run_debug(
-        question,
+        user_input,
         browser_path=browser_path,
         user_data_dir=user_data_dir,
         cdp_port=cdp_port,
@@ -60,7 +60,7 @@ JSONL 中每行是一个 JSON 对象。`time` 是 UTC 时间，`session_id` 是�
 | `task.received` | 任务输入 |
 | `task.configuration` | 使用的模型和运行预算，不包含 API key |
 | `planner.plan.start` | 规划输入 |
-| `model.http.start` | 模型地址、请求体和超时，不包含认证头 |
+| `model.request` | 模型地址、请求体和超时，不包含认证头 |
 | `model.response.raw` | 完整 HTTP 响应文本及状态码 |
 | `model.response.parsed` | 解析后的响应 JSON |
 | `model.responses.end` | 从响应中提取的模型文本 |

@@ -1,21 +1,27 @@
 """Failure analysis hook used to produce the next decision's advice."""
 from __future__ import annotations
 
+import json
+
 from . import protocol
+from .models import OpenAICompatible
+
+REFLECTION_SYSTEM_PROMPT = "根据任务目标、当前页面快照和执行错误，给出下一次决策可直接使用的简短建议。只使用页面中存在的元素，不猜测密码或目标。"
 
 
 class Reflection:
-    def __init__(self, model=None) -> None:
-        self.model = model
+    def __init__(self, ai: OpenAICompatible | None = None) -> None:
+        self.ai = ai
 
     @protocol.traced("reflection.advise")
     def advise(self, goal: str, observation, error: str = "") -> str:
         protocol.log(
             f"flow=reflection goal={goal[:80]!r} error={error[:120]!r}"
         )
-        if self.model:
+        if self.ai:
             try:
-                return self.model(goal, observation.snapshot, error)
+                payload = json.dumps({"goal": goal, "snapshot": observation.snapshot, "error": error}, ensure_ascii=False)
+                return self.ai.chat(REFLECTION_SYSTEM_PROMPT, payload)
             except Exception as exc:  # reflection must never stop recovery
                 protocol.trace_exception("reflection.model.fallback", exc)
                 protocol.log(f"flow=reflection failed={exc}")

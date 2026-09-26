@@ -6,7 +6,9 @@ from . import protocol
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
+
+from .models import OpenAICompatible
 
 PLANNER_SYSTEM_PROMPT = """你是 Koi，专门处理浏览器自动化任务的规划器。只规划，不操作浏览器。
 把用户目标拆成可机械验证的子目标；判断是否需要浏览器。信息不足时必须先追问，禁止猜测。
@@ -128,17 +130,18 @@ def parse_plan(text: str) -> Plan:
 
 
 class Planner:
-    def __init__(self, model: Callable[[str, str], str] | None = None) -> None:
-        self.model = model
+    def __init__(self, ai: OpenAICompatible | None = None) -> None:
+        self.ai = ai
 
     @protocol.traced("planner.plan")
-    def plan(self, prompt: str) -> Plan:
-        if not prompt.strip():
+    def plan(self, user_input: str) -> Plan:
+        if not user_input.strip():
             return Plan("ask", False, question="请告诉我你希望完成什么任务？")
-        if self.model:
-            return parse_plan(self.model(PLANNER_SYSTEM_PROMPT, prompt))
+        if self.ai:
+            raw = self.ai.chat(PLANNER_SYSTEM_PROMPT, user_input)
+            return parse_plan(raw)
 
-        url = re.search(r"https?://[^\s]+", prompt)
+        url = re.search(r"https?://[^\s]+", user_input)
         if url:
             return Plan(
                 "ready",
@@ -146,7 +149,7 @@ class Planner:
                 steps=(
                     Step(
                         "s1",
-                        prompt.strip(),
+                        user_input.strip(),
                         ("页面到达目标 URL 或得到明确结果",),
                         start_url=url.group(0),
                     ),

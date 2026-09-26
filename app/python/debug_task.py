@@ -23,7 +23,7 @@ from koi_agent import browser, protocol
 from koi_agent.config import load_settings
 
 # 在 PyCharm 中直接运行时，修改这里即可更换任务。
-DEFAULT_PROMPT = "打开 https://example.com"
+DEFAULT_USER_INPUT = "打开 https://example.com"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -92,12 +92,12 @@ def print_task_log(session_id: str, started: float) -> None:
     print(f"Python 日志目录：{protocol.LOG_DIR}（尚未找到该任务的日志）", flush=True)
 
 
-def run_app_task(prompt: str, profile: Path, control: dict, timeout: float) -> int:
+def run_app_task(user_input: str, profile: Path, control: dict, timeout: float) -> int:
     db_path = profile / "sessions.db"
     if not db_path.is_file():
         raise RuntimeError(f"找不到任务数据库：{db_path}")
     started = time.time()
-    result = app_request(control, "/tasks", {"prompt": prompt, "engine": "python"})
+    result = app_request(control, "/tasks", {"userInput": user_input, "engine": "python"})
     if not result.get("ok") or not result.get("started"):
         raise RuntimeError(result.get("error", "应用未能启动任务"))
     session_id = result["id"]
@@ -213,10 +213,10 @@ class EventPrinter:
         self.output.flush()
 
 
-def run_task(prompt: str, session_id: str, port: int, target_id: str) -> int:
+def run_task(user_input: str, session_id: str, port: int, target_id: str) -> int:
     from koi_agent.__main__ import main as run_agent
 
-    task = {"sessionId": session_id, "prompt": prompt, "browser": {"cdpPort": port, "targetId": target_id}}
+    task = {"sessionId": session_id, "userInput": user_input, "browser": {"cdpPort": port, "targetId": target_id}}
     original_stdin = sys.stdin
     output = EventPrinter(sys.stdout)
     try:
@@ -230,7 +230,7 @@ def run_task(prompt: str, session_id: str, port: int, target_id: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT, help="任务文字")
+    parser.add_argument("user_input", nargs="?", default=DEFAULT_USER_INPUT, help="任务文字")
     parser.add_argument("--cdp-port", type=int, help="使用已经运行的浏览器 CDP 端口")
     parser.add_argument("--target-id", help="要控制的页面 CDP targetId")
     parser.add_argument("--browser", help="自动启动时使用的 Chrome/Chromium 可执行文件")
@@ -239,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user-data-dir", help="项目应用使用的 userData/profile 目录")
     parser.add_argument("--timeout", type=float, default=600, help="等待应用任务结束的秒数，默认 600")
     args = parser.parse_args(argv)
-    if not args.prompt.strip():
+    if not args.user_input.strip():
         parser.error("任务文字不能为空")
     if (args.cdp_port is None) != (args.target_id is None):
         parser.error("--cdp-port 和 --target-id 必须一起提供")
@@ -261,11 +261,11 @@ def main(argv: list[str] | None = None) -> int:
 
     session_id = f"debug-{uuid4().hex}"
     protocol.set_context(session_id=session_id)
-    print(f"任务：{args.prompt}", flush=True)
+    print(f"任务：{args.user_input}", flush=True)
     try:
         if not direct:
             profile, control = find_app(args.user_data_dir)
-            return run_app_task(args.prompt, profile, control, args.timeout)
+            return run_app_task(args.user_input, profile, control, args.timeout)
         print(f"任务 ID：{session_id}")
         print(f"可读日志：{protocol.LOG_PATH.with_suffix('.log')}")
         print(f"原始日志：{protocol.LOG_PATH}", flush=True)
@@ -274,9 +274,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("未配置规划模型 API key。请设置 KOI_PLANNER_API_KEY，或配置 ~/.koi/config.toml / app/python/.env。")
         browser.resolve_cli()  # fail before opening Chrome if agent-browser is missing
         if args.cdp_port is not None:
-            return run_task(args.prompt, session_id, args.cdp_port, args.target_id)
+            return run_task(args.user_input, session_id, args.cdp_port, args.target_id)
         with test_browser(find_browser(args.browser), args.headless) as (port, target_id):
-            return run_task(args.prompt, session_id, port, target_id)
+            return run_task(args.user_input, session_id, port, target_id)
     except Exception as exc:
         protocol.trace_exception("debug_task.error", exc)
         print(f"执行失败：{exc}\n详情请查看上方日志。", file=sys.stderr)
@@ -286,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
-def run_debug(prompt: str, *, browser_path: str | None = None,
+def run_debug(user_input: str, *, browser_path: str | None = None,
               user_data_dir: str | None = None, cdp_port: int | None = None,
               target_id: str | None = None, config_path: str | None = None,
               headless: bool = False, timeout: float = 600) -> int:
@@ -299,13 +299,13 @@ def run_debug(prompt: str, *, browser_path: str | None = None,
             arguments.extend([option, str(value)])
     if headless:
         arguments.append("--headless")
-    arguments.extend(["--", prompt])
+    arguments.extend(["--", user_input])
     return main(arguments)
 
 
 if __name__ == "__main__":
     # 在 PyCharm 中修改这里的问题，然后点击本文件的 Run 即可执行完整流程。
-    question = "打开 https://example.com"
+    user_input = "打开 https://example.com"
 
     # 默认 None：连接本项目正在运行的应用，让应用准备浏览器。
     # 如果应用没启动，填入你自己的浏览器可执行文件路径，例如：
@@ -321,7 +321,7 @@ if __name__ == "__main__":
     target_id = None
 
     raise SystemExit(run_debug(
-        question,
+        user_input,
         browser_path=browser_path,
         user_data_dir=user_data_dir,
         cdp_port=cdp_port,

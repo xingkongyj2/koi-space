@@ -124,7 +124,7 @@ const pythonAdapter: EngineAdapter = {
    *  of what the app tells the agent about the browser. */
   getStdinPayload(ctx: SpawnContext): string {
     return JSON.stringify({
-      prompt: ctx.prompt,
+      userInput: ctx.prompt,
       sessionId: ctx.sessionId,
       browser: { cdpPort: ctx.cdpPort, targetId: ctx.targetId },
       outputsDir: path.join(ctx.harnessDir, 'outputs', ctx.sessionId),

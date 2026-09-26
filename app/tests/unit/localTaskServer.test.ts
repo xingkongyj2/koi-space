@@ -42,12 +42,12 @@ describe('localTaskServer', () => {
         authorization: `Bearer ${handle.token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ prompt: 'test prompt', engine: 'python' }),
+      body: JSON.stringify({ userInput: 'test input', engine: 'python' }),
     });
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ ok: true, id: 'session-1', started: true });
-    expect(seen).toEqual([{ prompt: 'test prompt', engine: 'python' }]);
+    expect(seen).toEqual([{ userInput: 'test input', engine: 'python' }]);
   });
 
   it('rejects requests without the control token', async () => {
@@ -65,6 +65,27 @@ describe('localTaskServer', () => {
 
     expect(res.status).toBe(401);
     await expect(res.json()).resolves.toEqual({ error: 'unauthorized' });
+  });
+
+  it('normalizes legacy input and gives userInput precedence', async () => {
+    const seen: unknown[] = [];
+    const handle = await createLocalTaskServer({
+      userDataPath: makeTempDir(),
+      submitTask: async (payload) => {
+        seen.push(payload);
+        return { id: 'session-1', started: true };
+      },
+    });
+    handles.push(handle);
+    for (const payload of [{ prompt: 'old input' }, { prompt: 'old input', userInput: 'new input' }]) {
+      const res = await fetch(`${handle.url}/tasks`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${handle.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      expect(res.status).toBe(200);
+    }
+    expect(seen).toEqual([{ userInput: 'old input' }, { userInput: 'new input' }]);
   });
 
   it('removes its own control file when closed', async () => {

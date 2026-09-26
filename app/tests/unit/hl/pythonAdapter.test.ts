@@ -114,7 +114,7 @@ describe('python adapter spawn contract', () => {
     const payload = adapter.getStdinPayload!(ctx, ctx.prompt);
     const parsed = JSON.parse(payload) as Record<string, unknown>;
     expect(parsed).toMatchObject({
-      prompt: ctx.prompt,
+      userInput: ctx.prompt,
       sessionId: 'sess-abc',
       browser: { cdpPort: 51234, targetId: 'TARGET-1' },
       outputsDir: '/tmp/harness/outputs/sess-abc',
@@ -126,7 +126,7 @@ describe('python adapter spawn contract', () => {
     // cdpPort + targetId are the whole of the app's browser knowledge. Session
     // naming, socket layout and tab binding are the Python agent's business.
     expect(Object.keys(parsed).sort()).toEqual([
-      'browser', 'harnessDir', 'outputsDir', 'prompt', 'resumeSessionId', 'sessionId',
+      'browser', 'harnessDir', 'outputsDir', 'resumeSessionId', 'sessionId', 'userInput',
     ]);
     expect(Object.keys(parsed.browser as object).sort()).toEqual(['cdpPort', 'targetId']);
   });

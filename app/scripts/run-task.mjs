@@ -110,7 +110,7 @@ async function main() {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      prompt: opts.prompt,
+      userInput: opts.prompt,
       engine: opts.engine,
     }),
   });

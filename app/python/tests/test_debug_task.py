@@ -65,7 +65,7 @@ class DebugTaskTests(unittest.TestCase):
 
         with patch.object(debug_task, "app_request", return_value={"ok": True, "started": True, "id": "task-test"}) as submit, patch.object(debug_task.time, "sleep", side_effect=finish), patch.object(debug_task, "print_task_log") as logs, redirect_stdout(io.StringIO()) as output:
             self.assertEqual(debug_task.run_app_task("全部流程", self.profile, {}, 10), 0)
-        self.assertEqual(submit.call_args.args[2], {"prompt": "全部流程", "engine": "python"})
+        self.assertEqual(submit.call_args.args[2], {"userInput": "全部流程", "engine": "python"})
         self.assertEqual(output.getvalue().count("规划中"), 1)
         self.assertIn("完整流程结束", output.getvalue())
         logs.assert_called_once()

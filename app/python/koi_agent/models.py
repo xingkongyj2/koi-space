@@ -15,10 +15,11 @@ class ModelError(RuntimeError):
 
 
 @protocol.traced("model.http")
-def _request_json(url: str, body: dict, *, provider_name: str, timeout: float, open_response) -> dict:
-    # open_response owns authentication; never serialize the Request or headers.
+def _request_json(request: urllib.request.Request, body: dict, *, provider_name: str, timeout: float) -> dict:
+    # Request is logged only as its type; never serialize authentication headers.
+    protocol.trace("model.request", url=request.full_url, body=body, provider=provider_name, timeout=timeout)
     try:
-        with open_response() as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
             protocol.trace("model.response.raw", status=response.status, body=raw)
     except urllib.error.HTTPError as exc:
@@ -35,14 +36,14 @@ class OpenAICompatible:
     def __init__(self, provider: Provider) -> None:
         self.provider = provider
 
-    def chat(self, system: str, user: str) -> str:
-        return self.responses(system, user)
+    def chat(self, system: str, user_input: str) -> str:
+        return self.responses(system, user_input)
 
     @protocol.traced("model.responses")
-    def responses(self, system: str, user: str) -> str:
+    def responses(self, system: str, user_input: str) -> str:
         body = {
             "model": self.provider.model,
-            "input": f"{system}\n\n用户任务：\n{user}",
+            "input": f"{system}\n\n用户任务：\n{user_input}",
             "enable_thinking": True,
         }
         request = urllib.request.Request(
@@ -54,9 +55,8 @@ class OpenAICompatible:
             },
         )
         try:
-            data = _request_json(request.full_url, body, provider_name=self.provider.name,
-                                 timeout=self.provider.timeout,
-                                 open_response=lambda: urllib.request.urlopen(request, timeout=self.provider.timeout))
+            data = _request_json(request, body, provider_name=self.provider.name,
+                                 timeout=self.provider.timeout)
             texts = []
             for item in data.get("output", []):
                 if item.get("type") != "message":
@@ -148,9 +148,8 @@ class JevDecision:
             {"Content-Type": "application/json", "Authorization": f"Bearer {self.provider.api_key}"},
         )
         try:
-            data = _request_json(request.full_url, body, provider_name=self.provider.name,
-                                 timeout=self.provider.timeout,
-                                 open_response=lambda: urllib.request.urlopen(request, timeout=self.provider.timeout))
+            data = _request_json(request, body, provider_name=self.provider.name,
+                                 timeout=self.provider.timeout)
         except Exception as exc:
             raise ModelError(f"Jev systemone request failed: {exc}") from exc
 

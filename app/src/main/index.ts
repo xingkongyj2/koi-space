@@ -1201,19 +1201,19 @@ app.whenReady().then(async () => {
     userDataPath: app.getPath('userData'),
     log: mainLogger,
     submitTask: async (payload) => {
-      const validatedPrompt = assertString(payload.prompt, 'prompt', 10000);
+      const userInput = assertString(payload.userInput, 'userInput', 10000);
       const engineId = payload.engine == null ? DEFAULT_ENGINE_ID : assertString(payload.engine, 'engine', 50);
       mainLogger.info('main.localTask.submit', {
-        promptLength: validatedPrompt.length,
+        userInputLength: userInput.length,
         engineId,
       });
 
-      const id = sessionManager.createSession(validatedPrompt);
+      const id = sessionManager.createSession(userInput);
       sessionManager.setSessionEngine(id, engineId);
       captureEvent('session_created', {
         source: 'local-task-server',
         engine: engineId,
-        prompt_length: validatedPrompt.length,
+        prompt_length: userInput.length,
         attachments_count: 0,
       });
 

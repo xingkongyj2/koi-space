@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from koi_agent import protocol
@@ -14,6 +14,7 @@ from koi_agent.models import JevDecision, ModelError, OpenAICompatible
 from koi_agent.observer import Observation
 from koi_agent.orchestrator import Orchestrator
 from koi_agent.planner import Planner
+from koi_agent.reflection import Reflection
 from test_navigation_flow import FakeSession, navigation_plan
 
 
@@ -41,7 +42,7 @@ class TracingTests(unittest.TestCase):
         text = json.dumps(plan)
         raw = json.dumps({"output": [{"type": "message", "content": [{"text": text}]}], "padding": "x" * 16000})
         with patch("urllib.request.urlopen", return_value=Response(raw.encode())):
-            result = Planner(OpenAICompatible(self.provider).chat).plan("open site")
+            result = Planner(ai=OpenAICompatible(self.provider)).plan("open site")
         self.assertEqual(self.records("model.response.raw")[0]["body"], raw)
         self.assertEqual(self.records("model.responses.end")[0]["result"], text)
         self.assertEqual(self.records("planner.json.decoded")[0]["data"], plan)
@@ -72,7 +73,10 @@ class TracingTests(unittest.TestCase):
         self.assertEqual(self.records("model.jev.end")[0]["result"]["target"], "@e1")
         self.assertEqual(decision.actions[0].ref, "@e1")
         value = {"actions": [{"kind": "unsupported"}, {"kind": "click", "ref": "@e1"}]}
-        Decision(model=lambda _: json.dumps(value)).choose("click", observation)
+        ai = Mock()
+        ai.chat.return_value = json.dumps(value)
+        Decision(ai=ai).choose("click", observation)
+        self.assertEqual(json.loads(ai.chat.call_args.args[1])["goal"], "click")
         self.assertEqual(len(self.records("decision.model.parsed")[0]["data"]["actions"]), 2)
         self.assertEqual(len(self.records("decision.choose.end")[-1]["result"]["actions"]), 1)
 
@@ -89,7 +93,16 @@ class TracingTests(unittest.TestCase):
 
     def test_caught_decision_failure_logs_fallback(self):
         observation = Observation("", "", "", "", False)
-        result = Decision(model=lambda _: "invalid json").choose("test", observation)
+        ai = Mock()
+        ai.chat.return_value = "invalid json"
+        result = Decision(ai=ai).choose("test", observation)
         self.assertEqual(result.route, "none")
         self.assertEqual(self.records("decision.model.raw")[0]["data"], "invalid json")
         self.assertIn("JSONDecodeError", self.records("decision.model.fallback")[0]["traceback"])
+
+    def test_reflection_calls_the_same_ai_method(self):
+        ai = Mock()
+        ai.chat.return_value = "重新观察按钮"
+        observation = Observation("", "", "当前页面", "", False)
+        self.assertEqual(Reflection(ai=ai).advise("点击按钮", observation, "no-op"), "重新观察按钮")
+        self.assertEqual(json.loads(ai.chat.call_args.args[1]), {"goal": "点击按钮", "snapshot": "当前页面", "error": "no-op"})
