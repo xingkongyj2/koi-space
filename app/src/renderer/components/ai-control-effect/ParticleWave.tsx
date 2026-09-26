@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import './ai-control-effect.css';
 
 /** A transparent, viewport-sized effect. All pointer events pass through it. */
-export default function ParticleWave() {
+export default function ParticleWave({ className = '' }: { className?: string }) {
   const particlesRef = useRef<HTMLCanvasElement>(null);
   const glowRef = useRef<HTMLCanvasElement>(null);
 
@@ -192,7 +192,7 @@ export default function ParticleWave() {
     };
   }, []);
 
-  return <div className="particle-wave" aria-hidden="true">
+  return <div className={`particle-wave ${className}`.trim()} aria-hidden="true">
     <canvas ref={glowRef} className="particle-wave-glow" />
     <canvas ref={particlesRef} className="particle-wave-dots" />
   </div>;

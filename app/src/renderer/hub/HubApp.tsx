@@ -424,7 +424,7 @@ export function HubApp(): React.ReactElement {
   const selectedSessionId = sessions[focusIndex]?.id ?? null;
 
   return (
-    <div className="hub-root canvas-dots">
+    <div className={`hub-root canvas-dots${viewMode === 'space' ? ' hub-root--space' : ''}`}>
       <Navbar
         isDashboard={viewMode === 'dashboard'}
         isSpace={viewMode === 'space'}

@@ -32,6 +32,7 @@ export interface TaskInputSubmission {
 interface TaskInputProps {
   onSubmit: (input: TaskInputSubmission) => void;
   placeholder?: string;
+  showAttachmentButton?: boolean;
   /** Optional content rendered inside the input box, above the textarea
    *  and below the chips row. Used by the chat composer to host the quoted-
    *  text preview so it visually extends the box rather than floating
@@ -66,7 +67,7 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function TaskInput({ onSubmit, topSlot, placeholder = INPUT_PLACEHOLDER }, ref) {
+export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function TaskInput({ onSubmit, topSlot, showAttachmentButton = true, placeholder = INPUT_PLACEHOLDER }, ref) {
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
   const [attachments, setAttachments] = useState<TaskInputAttachment[]>([]);
@@ -256,25 +257,29 @@ export const TaskInput = forwardRef<TaskInputHandle, TaskInputProps>(function Ta
           aria-label="任务输入"
         />
         <div className="task-input__actions" onClick={focusTextareaOnBoxClick}>
-          <button
-            type="button"
-            className="task-input__attach has-tooltip"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="添加附件"
-            data-tooltip="添加附件"
-          >
-            <PaperclipIcon />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              if (e.target.files && e.target.files.length > 0) void addFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
+          {showAttachmentButton && (
+            <>
+              <button
+                type="button"
+                className="task-input__attach has-tooltip"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="添加附件"
+                data-tooltip="添加附件"
+              >
+                <PaperclipIcon />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) void addFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          )}
           <button
             className="task-input__send"
             onClick={submit}

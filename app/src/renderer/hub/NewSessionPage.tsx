@@ -27,7 +27,7 @@ export function NewSessionPage({ onSubmit, focusRequest }: NewSessionPageProps):
     <section className="new-session-page" aria-label="新建会话">
       <div className="new-session-page__composer">
         <h1 className="new-session-page__title">Koi Space</h1>
-        <TaskInput ref={inputRef} onSubmit={onSubmit} placeholder="想让小K帮你干什么？" />
+        <TaskInput ref={inputRef} onSubmit={onSubmit} placeholder="想让小K帮你干什么？" showAttachmentButton={false} />
       </div>
     </section>
   );

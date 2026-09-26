@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ConnectionsPane } from './ConnectionsPane';
+import { MemoryIndicatorContent } from './MemoryIndicator';
 import type { ActionId, KeyBinding } from './keybindings';
 import { fallbackShortcutPlatform, keyboardEventToShortcut } from '../../shared/hotkeys';
 import { useThemeMode } from '../design/useThemeMode';
@@ -543,6 +544,7 @@ function PrivacySection(): React.ReactElement {
 export type SettingsSectionId =
   | 'settings-connections'
   | 'settings-browser-sync'
+  | 'settings-resources'
   | 'settings-shortcuts'
   | 'settings-privacy'
   | 'settings-appearance'
@@ -558,6 +560,7 @@ const SETTINGS_TABS: Array<{ id: SettingsSectionId; label: string }> = [
   { id: 'settings-appearance', label: 'Appearance' },
   { id: 'settings-connections', label: 'Connections' },
   { id: 'settings-browser-sync', label: 'Browser Sync' },
+  { id: 'settings-resources', label: '资源' },
   { id: 'settings-shortcuts', label: 'Shortcuts' },
   { id: 'settings-privacy', label: 'Privacy' },
 ];
@@ -781,6 +784,15 @@ export function SettingsPane({ intent, keybindings, overrides, onUpdateBinding, 
             connectionsSectionId="settings-connections"
             browserSyncSectionId="settings-browser-sync"
           />
+
+          <section id="settings-resources" className="settings-page__section">
+            <div className="settings-section-header">
+              <h2 className="settings-section-header__title">资源</h2>
+            </div>
+            <div className="settings-card settings-card--resources">
+              <MemoryIndicatorContent />
+            </div>
+          </section>
 
           <section id="settings-shortcuts" className="settings-page__section">
             <div className="settings-section-header">

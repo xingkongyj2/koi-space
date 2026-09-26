@@ -937,13 +937,12 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
         </div>
         <div className="pane__actions">
           <button
-            className={`pane__action-btn${logsOpen ? ' pane__action-btn--active' : ''}`}
+            className={`pane__action-btn pane__action-btn--icon${logsOpen ? ' pane__action-btn--active' : ''}`}
             onClick={(e) => { e.stopPropagation(); handleToggleLogs(); }}
             aria-label="日志"
             title="日志"
           >
             <SplitIcon />
-            <span>日志</span>
           </button>
           {onRerun && (
             <button

@@ -1,5 +1,4 @@
 import React from 'react';
-import { MemoryIndicator } from './MemoryIndicator';
 
 interface NavbarProps {
   isDashboard: boolean;
@@ -32,10 +31,23 @@ export function Navbar({
             type="button"
             className="hub-navbar__task-entry"
             onClick={onNewSession}
-          >想让小K帮你干什么？</button>
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 2.5v11M2.5 8h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span>新任务</span>
+          </button>
         )}
         {!isSpace && (
-          <button type="button" className="hub-navbar__nav-button" onClick={onGoSpace}>我的空间</button>
+          <button type="button" className="hub-navbar__nav-button" onClick={onGoSpace}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="1.75" y="1.75" width="5.25" height="5.25" rx="1.25" stroke="currentColor" strokeWidth="1.3" />
+              <rect x="9" y="1.75" width="5.25" height="5.25" rx="1.25" stroke="currentColor" strokeWidth="1.3" />
+              <rect x="1.75" y="9" width="5.25" height="5.25" rx="1.25" stroke="currentColor" strokeWidth="1.3" />
+              <rect x="9" y="9" width="5.25" height="5.25" rx="1.25" stroke="currentColor" strokeWidth="1.3" />
+            </svg>
+            <span>我的空间</span>
+          </button>
         )}
       </nav>
       <div className="hub-navbar__right">
@@ -44,7 +56,6 @@ export function Navbar({
             {Math.round(zoomFactor * 100)}%
           </button>
         )}
-        <MemoryIndicator />
         <button type="button" className="hub-navbar__settings-button"
           onClick={onOpenSettings} aria-label="设置" title={settingsShortcut ? `设置 (${settingsShortcut})` : '设置'}>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">

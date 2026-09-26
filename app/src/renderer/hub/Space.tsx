@@ -28,6 +28,7 @@ function hostOf(session: AgentSession): string {
 
 function SpaceThumbnail({ session }: { session: AgentSession }): React.ReactElement {
   const host = hostOf(session);
+  const hasPageAddress = Boolean(session.lastUrl?.trim() || session.primarySite?.trim());
   const [hasFrame, setHasFrame] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const thumbnailRef = useRef<HTMLDivElement>(null);
@@ -98,14 +99,14 @@ function SpaceThumbnail({ session }: { session: AgentSession }): React.ReactElem
       <img ref={imageRef} className="space-card__frame" hidden={!hasFrame} alt="" />
       {!hasFrame && (
         <div className="space-card__page-preview">
-          <div className="space-card__page-edge" />
-          <div className="space-card__page-glow" />
-          <div className="space-card__page-wave space-card__page-wave--one" />
-          <div className="space-card__page-wave space-card__page-wave--two" />
-          <div className="space-card__page-focus"><span /></div>
-          <div className="space-card__page-copy">
-            <span>准备浏览器内容</span>
-            <strong>{host}</strong>
+          <div className="space-card__placeholder">
+            <svg width="30" height="26" viewBox="0 0 30 26" fill="none" aria-hidden="true">
+              <rect x="2" y="3" width="26" height="20" rx="3" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M2 9h26" stroke="currentColor" strokeWidth="1.2" />
+              <circle cx="6" cy="6" r=".75" fill="currentColor" />
+              <circle cx="9" cy="6" r=".75" fill="currentColor" />
+            </svg>
+            <span>{hasPageAddress ? '页面未加载' : '暂无网页内容'}</span>
           </div>
         </div>
       )}
@@ -117,10 +118,7 @@ export function Space({ sessions, selectedId, onSelect }: SpaceProps): React.Rea
   return (
     <section className="space-page" aria-label="我的空间">
       <div className="space-page__heading">
-        <div>
-          <h1>我的空间</h1>
-        </div>
-        <span className="space-page__count">{sessions.length} 个会话</span>
+        <h1>我的空间</h1>
       </div>
 
       {sessions.length === 0 ? (
