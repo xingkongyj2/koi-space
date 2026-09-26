@@ -193,7 +193,7 @@ class PlannerTests(unittest.TestCase):
         planner.plan("查询商品价格")
         self.assertEqual(planner.plan("打开 https://shop.example/").status, "ask")
 
-    def test_planner_prompt_uses_user_site_or_default_web_entry(self):
+    def test_planner_prompt_keeps_the_generic_browser_task_contract(self):
         ai = Mock()
         ai.chat.return_value = json.dumps(ready(
             step("s1", goal="打开并确认腾讯视频网页版入口", start_url="https://v.qq.com/",
@@ -203,13 +203,12 @@ class PlannerTests(unittest.TestCase):
         ), ensure_ascii=False)
         Planner(ai).plan("打开腾讯视频历史记录")
         system_prompt = ai.chat.call_args.args[0]
-        self.assertIn("腾讯视频", system_prompt)
-        self.assertIn("AI Agent 浏览器助手", system_prompt)
-        self.assertIn("用户写出网址时直接使用该网址", system_prompt)
-        self.assertIn("只说网站名称或不规范地描述目标时", system_prompt)
-        self.assertIn("https://v.qq.com/", system_prompt)
-        self.assertIn("根据用户任务的自然语言描述，判断最合理的网站和页面", system_prompt)
-        self.assertIn("如果只能确认网站，就使用该网站的默认官方入口", system_prompt)
+        self.assertIn("你是浏览器任务规划器", system_prompt)
+        self.assertIn("根据 history、user_input 和 context", system_prompt)
+        self.assertIn("用最少的步骤规划用户目标", system_prompt)
+        self.assertIn('"start_url"', system_prompt)
+        self.assertIn('"success_criteria"', system_prompt)
+        self.assertIn('"needs_user_confirmation"', system_prompt)
 
 
 if __name__ == '__main__':

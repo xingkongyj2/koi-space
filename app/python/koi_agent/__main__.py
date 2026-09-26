@@ -130,33 +130,34 @@ def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) 
     planner = Planner(ai=planner_client)
 
     if planner_client:
-        # Phase 1 is deliberately one short request.  No full task history or
-        # action decomposition is allowed to delay the first URL.
-        try:
-            with protocol.measure("planning.entry.total"):
-                entry = planner.locate_entry(user_input, history=history)
-        except PlanError as exc:
-            protocol.error(f"flow=entry_locator invalid: {exc}")
-            return 0
-        protocol.trace("planner.entry_locator.completed", result={"status": entry.status, "url": entry.url})
-        if entry.status == "ask":
-            protocol.notify(entry.question, "info")
-            protocol.done(entry.question, 0)
-            return 0
-
-        # Phase 2 starts the slower task decomposition and page loading at the
-        # same time.  If the plan finishes first it is held at plan_future.result
-        # until the entry page has been opened and verified.
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="koi-plan") as workers:
-            protocol.trace("planner.parallel.started", phases=["entry_open", "full_plan"])
+        # The short locator and full task planner make independent model
+        # requests.  Open the page as soon as the locator returns; execution
+        # waits for both the page and the full plan.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="koi-plan") as workers:
             def submit_with_task_context(function, *args, **kwargs):
                 context = copy_context()
                 return workers.submit(context.run, function, *args, **kwargs)
 
+            def locate_entry():
+                with protocol.measure("planning.entry.total"):
+                    return Planner(ai=planner_client).locate_entry(user_input, history=history)
+
             parallel_started = time.monotonic()
+            protocol.trace("planner.parallel.started", phases=["entry_locator", "full_plan"])
+            entry_future = submit_with_task_context(locate_entry)
             plan_future = submit_with_task_context(planner.plan, user_input, history=history,
-                                                   context={"entry_locator": "completed",
-                                                            "entry_url": entry.url})
+                                                   context={"entry_locator": "pending"})
+
+            try:
+                entry = entry_future.result()
+            except PlanError as exc:
+                protocol.error(f"flow=entry_locator invalid: {exc}")
+                return 0
+            protocol.trace("planner.entry_locator.completed", result={"status": entry.status, "url": entry.url})
+            if entry.status == "ask":
+                protocol.notify(entry.question, "info")
+                protocol.done(entry.question, 0)
+                return 0
 
             try:
                 cdp_port, target_id = browser_target(task)

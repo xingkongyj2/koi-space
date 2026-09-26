@@ -40,7 +40,7 @@ _TIMING_LABELS = {
     "planning.full.model_request": "规划②拆分任务·模型请求",
     "planning.full.total": "规划②拆分任务·总耗时",
     "planning.full.wait_after_browser_open": "页面打开后等待规划",
-    "planning.full.parallel_wall": "页面打开与规划并行总耗时",
+    "planning.full.parallel_wall": "入口定位、页面打开与规划并行总耗时",
     "runtime.orchestrator.total": "执行层总耗时",
     "runtime.step.total": "子任务总耗时",
     "runtime.observe": "观察页面",
