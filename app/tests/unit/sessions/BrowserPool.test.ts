@@ -67,6 +67,43 @@ describe('BrowserPool — creation', () => {
     expect(pool.activeCount).toBe(1);
   });
 
+  it('opens website tab requests in the same page with the original referrer', () => {
+    const view = pool.create('s1')!;
+    const wc = view.webContents;
+    const load = vi.spyOn(wc, 'loadURL').mockResolvedValue();
+    const handler = (wc as unknown as { __windowOpenHandler: (details: Electron.HandlerDetails) => Electron.WindowOpenHandlerResponse }).__windowOpenHandler;
+    const referrer = { url: 'https://example.com/', policy: 'strict-origin-when-cross-origin' as const };
+    for (const disposition of ['foreground-tab', 'background-tab', 'new-window'] as const) {
+      expect(handler({ url: 'https://example.com/details', frameName: '_blank', features: '', disposition, referrer })).toEqual({ action: 'deny' });
+    }
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(load).toHaveBeenLastCalledWith('https://example.com/details', { httpReferrer: referrer });
+    expect(pool.getWebContents('s1')).toBe(wc);
+    expect(pool.activeCount).toBe(1);
+  });
+
+  it('preserves POST form bodies when a form requests a new window', () => {
+    const wc = pool.create('s1')!.webContents;
+    const load = vi.spyOn(wc, 'loadURL').mockResolvedValue();
+    const handler = (wc as unknown as { __windowOpenHandler: (details: Electron.HandlerDetails) => Electron.WindowOpenHandlerResponse }).__windowOpenHandler;
+    const referrer = { url: 'https://example.com/', policy: 'no-referrer' as const };
+    const data = [{ type: 'rawData' as const, bytes: Buffer.from('field=value') }];
+    handler({ url: 'https://example.com/submit', frameName: '_blank', features: '', disposition: 'new-window', referrer, postBody: { data, contentType: 'multipart/form-data', boundary: 'test-boundary' } });
+    expect(load).toHaveBeenCalledWith('https://example.com/submit', {
+      httpReferrer: referrer,
+      postData: data,
+      extraHeaders: 'Content-Type: multipart/form-data; boundary=test-boundary',
+    });
+  });
+
+  it('denies empty popups without replacing the current page with a blank document', () => {
+    const wc = pool.create('s1')!.webContents;
+    const load = vi.spyOn(wc, 'loadURL').mockResolvedValue();
+    const handler = (wc as unknown as { __windowOpenHandler: (details: Electron.HandlerDetails) => Electron.WindowOpenHandlerResponse }).__windowOpenHandler;
+    expect(handler({ url: 'about:blank', frameName: '', features: '', disposition: 'new-window', referrer: { url: '', policy: 'no-referrer' } })).toEqual({ action: 'deny' });
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it('assigns unique webContents per session', () => {
     const v1 = pool.create('s1');
     const v2 = pool.create('s2');

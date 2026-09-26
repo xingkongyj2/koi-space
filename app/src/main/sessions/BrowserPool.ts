@@ -174,9 +174,9 @@ export class BrowserPool {
     // Without this, attach/detach during view swaps briefly paints black
     // (Chromium's default before the page commits its first frame).
     view.setBackgroundColor(getWindowBackgroundColor());
-    // Native child views paint above the renderer; CSS overflow cannot clip
-    // them. Match the browser card's 12px inner well (minus its 1px border).
-    view.setBorderRadius(11);
+    // Clip the page in the native compositor; renderer CSS cannot clip a
+    // WebContentsView. Match the card’s 12px radius minus its 2px border.
+    view.setBorderRadius(10);
     browserLogger.info('BrowserPool.startup.constructed', {
       sessionId,
       component: 'BrowserPool',
@@ -262,6 +262,33 @@ export class BrowserPool {
     // Fire onGone if the renderer process crashes, closes, or otherwise dies
     // out-of-band so the UI can react (stop showing "Browser starting…").
     const wc = view.webContents;
+    // A session owns exactly one page target. Route website popup/tab
+    // requests back into that target instead of creating another window.
+    wc.setWindowOpenHandler(({ url, referrer, postBody }) => {
+      // Empty popups have no destination yet; keep the current page intact.
+      if (url && url !== 'about:blank' && !wc.isDestroyed()) {
+        const options: Electron.LoadURLOptions = { httpReferrer: referrer };
+        if (postBody) {
+          options.postData = postBody.data;
+          const boundary = postBody.boundary ? `; boundary=${postBody.boundary}` : '';
+          options.extraHeaders = `Content-Type: ${postBody.contentType}${boundary}`;
+        }
+        void wc.loadURL(url, options).catch((error: unknown) => {
+          browserLogger.warn('BrowserPool.popupNavigation.error', { sessionId, error: String(error) });
+        });
+      }
+      return { action: 'deny' };
+    });
+    // Hide the page's scrollbar chrome without disabling scrolling. Reapply
+    // for each document because navigation clears inserted stylesheets.
+    wc.on('dom-ready', () => {
+      void wc.insertCSS(`
+        * { scrollbar-width: none !important; }
+        ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+      `, { cssOrigin: 'user' }).catch((error: unknown) => {
+        browserLogger.warn('BrowserPool.scrollbarStyle.error', { sessionId, error: String(error) });
+      });
+    });
     let navigationSeq = 0;
     let currentNavigation: { id: number; url: string; startedAt: number } | null = null;
 

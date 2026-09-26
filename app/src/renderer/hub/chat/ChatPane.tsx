@@ -15,6 +15,7 @@ import './chat.css';
 interface ChatPaneProps {
   sessionId: string;
   showBrowserPreview?: boolean;
+  showStatus?: boolean;
   onSwitchToBrowser: () => void;
   onExit: () => void;
 }
@@ -26,7 +27,7 @@ function formatCost(usd?: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-export function ChatPane({ sessionId, onSwitchToBrowser, onExit, showBrowserPreview = true }: ChatPaneProps): React.ReactElement {
+export function ChatPane({ sessionId, onSwitchToBrowser, onExit, showBrowserPreview = true, showStatus = true }: ChatPaneProps): React.ReactElement {
   // sessions.listAll (used at boot) returns metadata only — output[] is empty
   // until something triggers hydrateOutput in the main process. Call
   // sessions.get on mount so the transcript repaints from the DB instead of
@@ -289,7 +290,7 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit, showBrowserPrev
 
   return (
     <div className="chat-pane">
-      <div className="chat-pane__header">
+      {(showStatus || (typeof header.costUsd === 'number' && header.costUsd > 0)) && <div className="chat-pane__header">
         <div className="chat-pane__title" aria-hidden="true" />
         <div className="chat-pane__meta">
           {typeof header.costUsd === 'number' && header.costUsd > 0 && (
@@ -305,9 +306,9 @@ export function ChatPane({ sessionId, onSwitchToBrowser, onExit, showBrowserPrev
               {formatCost(header.costUsd)}
             </span>
           )}
-          <span className={statusClass}>{STATUS_LABEL[header.status] ?? header.status}</span>
+          {showStatus && <span className={statusClass}>{STATUS_LABEL[header.status] ?? header.status}</span>}
         </div>
-      </div>
+      </div>}
       <div className="chat-pane__column">
         <ChatTranscript
           sessionId={sessionId}

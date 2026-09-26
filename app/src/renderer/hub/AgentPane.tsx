@@ -5,6 +5,7 @@ import { TerminalPane } from './TerminalPane';
 import { closeAppPopup, openAnchoredAppPopup } from '../shared/appPopup';
 import type { AgentSession, OutputEntry } from './types';
 import { useBrowserCard } from './useBrowserCard';
+import { STATUS_LABEL } from './constants';
 
 function friendlyError(raw: string): string {
   const lower = raw.toLowerCase();
@@ -423,14 +424,6 @@ function OutputIcon(): React.ReactElement {
   );
 }
 
-function SplitIcon(): React.ReactElement {
-  return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-      <rect x="1.5" y="2" width="11" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-      <rect x="1.5" y="7.5" width="11" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-    </svg>
-  );
-}
 
 function CopyIcon(): React.ReactElement {
   return (
@@ -619,10 +612,15 @@ function FollowUpInput({ sessionId, onUserInput, autoFocus }: { sessionId: strin
   );
 }
 
-function CloseIcon(): React.ReactElement {
+
+function BrowserActionIcon({ action }: { action: 'logs' | 'refresh' | 'expand' | 'collapse' | 'close' }): React.ReactElement {
   return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-      <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {action === 'logs' && <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 8h10M7 12h10M7 16h6" /></>}
+      {action === 'refresh' && <path d="M3 12a9 9 0 0 1 15.36-6.36L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.36 6.36L3 16M3 21v-5h5" />}
+      {action === 'expand' && <path d="M9 3H3v6M15 3h6v6M3 15v6h6M21 15v6h-6" />}
+      {action === 'collapse' && <path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6" />}
+      {action === 'close' && <path d="m5 5 14 14M19 5 5 19" />}
     </svg>
   );
 }
@@ -634,6 +632,8 @@ interface AgentPaneProps {
   onResume?: (sessionId: string) => void;
   onPause?: (sessionId: string) => void;
   onFollowUp?: (sessionId: string, prompt: string, attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>) => void;
+  browserFullscreen?: boolean;
+  onToggleBrowserFullscreen?: () => void;
   onClose?: (sessionId: string) => void;
   onCancel?: (sessionId: string) => void;
   onSelect?: (sessionId: string) => void;
@@ -643,7 +643,7 @@ interface AgentPaneProps {
   cycleShortcut?: string;
 }
 
-export function AgentPane({ session, focused, onRerun, onResume, onPause, onFollowUp, onClose, onCancel, onSelect, onOpenFollowUp, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
+export function AgentPane({ session, focused, browserFullscreen = false, onToggleBrowserFullscreen, onRerun, onResume, onPause, onFollowUp, onClose, onCancel, onSelect, onOpenFollowUp, shouldDetachBrowserOnUnmount, followUpShortcut, cycleShortcut }: AgentPaneProps): React.ReactElement {
   // The session view owns the whole browser column. The hook's fill mode keeps
   // the native WebContentsView bounds tied to the browser card while retaining
   // its standalone floating-card behavior for other consumers.
@@ -663,12 +663,14 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
     if (rect.width <= 2 || rect.height <= 2) return null;
     const fullWidth = Math.round(rect.width);
     const slotWidth = fullWidth;
-    const border = 1;
+    // The joined frame has no border between title and content; only inset
+    // the native page at the sides and bottom.
+    const border = 2;
     return {
       x: Math.round(rect.x) + border,
-      y: Math.round(rect.y) + border,
+      y: Math.round(rect.y),
       width: slotWidth - border * 2,
-      height: Math.round(rect.height) - border * 2,
+      height: Math.round(rect.height) - border,
       slotWidth,
     };
   }, []);
@@ -933,6 +935,9 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
       >
       <div className="pane__header">
         <div className="pane__title-group">
+          <span className={`browser-card-title__status browser-card-title__status--${session.status}`}>
+            {STATUS_LABEL[session.status] ?? session.status}
+          </span>
           <span className="pane__prompt" title={session.prompt}>{session.prompt}</span>
         </div>
         <div className="pane__actions">
@@ -942,7 +947,7 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
             aria-label="日志"
             title="日志"
           >
-            <SplitIcon />
+            <BrowserActionIcon action="logs" />
           </button>
           {onRerun && (
             <button
@@ -951,7 +956,18 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
               aria-label="刷新"
               title="刷新会话"
             >
-              <RerunIcon />
+              <BrowserActionIcon action="refresh" />
+            </button>
+          )}
+          {onToggleBrowserFullscreen && (
+            <button
+              className={`pane__action-btn pane__action-btn--icon${browserFullscreen ? ' pane__action-btn--active' : ''}`}
+              onClick={(event) => { event.stopPropagation(); onToggleBrowserFullscreen(); }}
+              aria-label={browserFullscreen ? '退出全屏' : '全屏浏览器'}
+              aria-pressed={browserFullscreen}
+              title={browserFullscreen ? '退出全屏' : '全屏浏览器'}
+            >
+              <BrowserActionIcon action={browserFullscreen ? 'collapse' : 'expand'} />
             </button>
           )}
           {onClose && (
@@ -961,7 +977,7 @@ export function AgentPane({ session, focused, onRerun, onResume, onPause, onFoll
               aria-label="关闭"
               title="关闭会话"
             >
-              <CloseIcon />
+              <BrowserActionIcon action="close" />
             </button>
           )}
         </div>

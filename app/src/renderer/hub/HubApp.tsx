@@ -20,6 +20,7 @@ type SettingsOpenPayload = {
 };
 
 export function HubApp(): React.ReactElement {
+  const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const sessionsQuery = useSessionsQuery();
   const updateSession = useUpdateSession();
   const sessions = sessionsQuery.data ?? [];
@@ -57,6 +58,7 @@ export function HubApp(): React.ReactElement {
   });
   const [focusNewSession, setFocusNewSession] = useState(0);
   const setViewMode = useCallback((mode: ViewMode) => {
+    setBrowserFullscreen(false);
     const shouldShowBrowserViews = mode === 'grid';
     keepBrowserParkedForChatRef.current = mode === 'chat';
     if (!shouldShowBrowserViews) {
@@ -422,9 +424,21 @@ export function HubApp(): React.ReactElement {
   }, [sessions]);
 
   const selectedSessionId = sessions[focusIndex]?.id ?? null;
+  const isBrowserFullscreen = browserFullscreen && viewMode === 'grid' && !!selectedSessionId;
+  useEffect(() => {
+    if (!isBrowserFullscreen) return;
+    const exitOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setBrowserFullscreen(false);
+    };
+    window.addEventListener('keydown', exitOnEscape, { capture: true });
+    return () => window.removeEventListener('keydown', exitOnEscape, { capture: true });
+  }, [isBrowserFullscreen]);
+
 
   return (
-    <div className={`hub-root canvas-dots${viewMode === 'space' ? ' hub-root--space' : ''}`}>
+    <div className={`hub-root canvas-dots${viewMode === 'space' ? ' hub-root--space' : ''}${isBrowserFullscreen ? ' hub-root--browser-fullscreen' : ''}`}>
       <Navbar
         isDashboard={viewMode === 'dashboard'}
         isSpace={viewMode === 'space'}
@@ -505,6 +519,8 @@ export function HubApp(): React.ReactElement {
                     <AgentPane
                       key={session.id}
                       session={session}
+                      browserFullscreen={isBrowserFullscreen}
+                      onToggleBrowserFullscreen={() => setBrowserFullscreen(value => !value)}
                       focused={globalIdx === focusIndex}
                       onRerun={(id) => {
                         window.electronAPI?.sessions.rerun(id).catch((err) => console.error('[HubApp] rerun failed', err));
@@ -513,6 +529,7 @@ export function HubApp(): React.ReactElement {
                       onPause={handlePause}
                       onFollowUp={handleFollowUp}
                       onClose={(id) => {
+                        setBrowserFullscreen(false);
                         // Close = remove. Cancels a live run, tears down the
                         // browser view, drops the DB row and emits
                         // `session-removed` so the card leaves the hub. The old
@@ -536,11 +553,12 @@ export function HubApp(): React.ReactElement {
                 })}
               </div>
               </div>
-              <div className="workspace-split__chat">
+              <div className="workspace-split__chat" inert={isBrowserFullscreen} aria-hidden={isBrowserFullscreen}>
                 {selectedSessionId ? (
                   <ChatPane
                     sessionId={selectedSessionId}
                     showBrowserPreview={false}
+                    showStatus={false}
                     onExit={() => setViewMode('dashboard')}
                     onSwitchToBrowser={() => setViewMode('grid')}
                   />

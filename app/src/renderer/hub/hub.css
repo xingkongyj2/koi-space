@@ -111,7 +111,7 @@
   align-items: center;
   justify-content: space-between;
   box-sizing: border-box;
-  padding: 20px 24px 14px;
+  padding: 7px 24px;
   /* Reserve space for the Windows Controls Overlay (min/max/close) so the
      right-side toolbar items can't sit under the native caption buttons.
      The env() vars are set by Chromium only when titleBarOverlay is
@@ -121,7 +121,7 @@
     24px +
     max(0px, 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))
   );
-  height: 70px;
+  height: 50px;
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
@@ -191,8 +191,8 @@
 .mem-indicator__btn:focus-visible { outline: 1px solid #93e9b1; outline-offset: 3px; }
 
 [data-platform='mac'] .hub-navbar {
-  height: 58px;
-  padding: 8px 24px 14px 88px;
+  height: 50px;
+  padding: 7px 24px 7px 88px;
 }
 
 
@@ -4958,15 +4958,12 @@ button:focus:not(:focus-visible) {
   .browser-card .pane__action-btn > span { display: none; }
 }
 
-/* Session workspace layout: the title and browser are sibling cards. The
-   browser card fills the entire left column; the old floating pane shell is
-   intentionally visually transparent so it cannot add a second frame around
-   the native WebContentsView. */
+/* One continuous translucent frame around the title and browser content. */
 .browser-card-layout {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   min-width: 0;
   min-height: 0;
   width: 100%;
@@ -4976,46 +4973,76 @@ button:focus:not(:focus-visible) {
 .browser-card-title {
   flex: 0 0 auto;
   min-width: 0;
+  width: 100%;
+  border: 2px solid #2c2d2f;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
   color: #f4f4f4;
+  background: #1c1d1cad;
+  box-shadow: inset 0 1px 1px #ffffff0b;
   cursor: default;
 }
 
 .browser-card-title .pane__header {
   display: grid;
   grid-template-columns: 116px minmax(0, 1fr) 116px;
-  min-height: 46px;
-  padding: 8px 10px;
+  min-height: 38px;
+  padding: 4px 10px;
   gap: 10px;
   background: transparent;
   user-select: none;
 }
 
 .browser-card-title .pane__prompt {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--color-fg-primary);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
   display: block;
 }
+.browser-card-title__status {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+}
+.browser-card-title__status--running { color: var(--color-status-success); }
+.browser-card-title__status--stuck { color: var(--color-status-error); }
+.browser-card-title__status--idle { color: var(--color-status-warning); }
+.browser-card-title__status--paused { color: var(--color-accent-default); }
+.browser-card-title__status--stopped,
+.browser-card-title__status--draft { color: var(--color-fg-tertiary); }
 .browser-card-title .pane__title-group { grid-column: 2; min-width: 0; justify-content: center; text-align: center; }
 .browser-card-title .pane__actions { grid-column: 3; justify-self: end; gap: 4px; }
 .browser-card-title .pane__action-btn {
-  min-height: 26px;
-  height: 26px;
-  width: 26px;
+  min-height: 28px;
+  height: 28px;
+  width: 28px;
   padding: 0;
   justify-content: center;
   border: 0;
-  color: #bbb;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: color 140ms ease, background 140ms ease;
+  color: #bfc1c3;
   background: transparent;
   box-shadow: none;
 }
-.browser-card-title .pane__action-btn:hover { color: #f4f4f4; background: transparent; }
-.browser-card-title .pane__action-btn--active { color: #b7f9c8; background: transparent; }
-.browser-card-title .pane__action-btn--danger:hover { color: #ef6684; }
+.browser-card-title .pane__action-btn:hover { color: #f4f4f4; background: #ffffff0a; }
+.browser-card-title .pane__action-btn--active { color: #b7f9c8; background: #b7f9c80c; }
+.browser-card-title .pane__action-btn--danger:hover { color: #ef6684; background: #ef668410; }
 .browser-card-title .pane__action-btn:focus-visible { outline: 1px solid #93e9b1; outline-offset: 2px; }
+
+.browser-card-title .pane__action-btn svg { width: 15px; height: 15px; display: block; flex-shrink: 0; }
 
 .browser-card-stage {
   position: relative;
@@ -5026,6 +5053,7 @@ button:focus:not(:focus-visible) {
   width: 100%;
   height: auto;
   overflow: hidden;
+  border-radius: 0 0 12px 12px;
 }
 
 .pane.browser-card {
@@ -5035,7 +5063,7 @@ button:focus:not(:focus-visible) {
   min-height: 0;
   padding: 0;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0 0 12px 12px;
   background: transparent;
   box-shadow: none;
   overflow: hidden;
@@ -5047,14 +5075,16 @@ button:focus:not(:focus-visible) {
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--surface-raised-border);
-  border-radius: 12px;
-  background: var(--surface-raised-bg);
-  box-shadow: var(--shadow-panel);
+  border: 2px solid #2c2d2f;
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: #1c1d1cad;
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.2);
 }
 
 .browser-card .pane__browser-frame {
-  border-radius: 12px;
+  border: 0;
+  border-radius: 0 0 12px 12px;
 }
 
 .workspace-split {
@@ -5180,7 +5210,9 @@ button:focus:not(:focus-visible) {
 .space-page__empty p { margin: 0; font-size: 13px; line-height: 1.6; }
 
 /* Browser fills the area left of the unframed chat column. */
-.workspace-split { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 20px; padding: 12px 18px 18px; }
+.hub-root:has(.workspace-split) { --workspace-edge-gap: 8px; }
+.hub-root:has(.workspace-split) .hub-navbar { height: 50px; padding-block: 7px; }
+.workspace-split { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 20px; padding: 0 var(--workspace-edge-gap) var(--workspace-edge-gap); }
 .workspace-split__browser { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; height: 100%; }
 .workspace-split__browser .hub-grid { width: 100%; height: 100%; }
 .workspace-split__chat { display: flex; flex: 0 0 clamp(280px, 23vw, 320px); max-width: 320px; min-width: 0; min-height: 0; margin-left: 0; overflow: hidden; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
@@ -5194,7 +5226,8 @@ button:focus:not(:focus-visible) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   column-gap: 16px;
-  padding-inline: max(4px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+  padding-left: 4px;
+  padding-right: max(16px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
 }
 .hub-navbar__navigation {
   grid-column: 2;
@@ -5251,3 +5284,34 @@ button:focus:not(:focus-visible) {
 @media (max-width: 1100px) { .space-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 850px) { .workspace-split { gap: 12px; } .workspace-split__chat { flex-basis: 270px; margin-left: 0; } .hub-navbar__center { display: none; } }
 @media (max-width: 650px) { .space-page__heading h1 { font-size: 30px; } .space-grid { grid-template-columns: 1fr; } .workspace-split { flex-direction: column; gap: 10px; } .workspace-split__chat { flex: 0 0 40%; max-width: none; margin-left: 0; } }
+
+/* Browser fullscreen fills the workspace while keeping the joined title. */
+.browser-card-title .pane__header { grid-template-columns: 132px minmax(0, 1fr) 132px; }
+.workspace-split { --workspace-chat-width: clamp(280px, 23vw, 320px); transition: gap 300ms cubic-bezier(.22, 1, .36, 1); }
+.workspace-split__chat { transition: flex-basis 300ms cubic-bezier(.22, 1, .36, 1), transform 300ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease; }
+.workspace-split__chat .chat-pane { flex: 0 0 var(--workspace-chat-width); width: var(--workspace-chat-width); }
+.hub-root--browser-fullscreen .hub-navbar { display: none; }
+.hub-root--browser-fullscreen .workspace-split { gap: 0; padding: 0; }
+.hub-root--browser-fullscreen .workspace-split__chat { flex-basis: 0; opacity: 0; transform: translateX(100%); pointer-events: none; }
+[data-platform='mac'] .hub-root--browser-fullscreen .browser-card-title .pane__header { padding-left: 84px; padding-right: 10px; grid-template-columns: 58px minmax(0, 1fr) 132px; }
+@media (max-width: 850px) { .workspace-split { --workspace-chat-width: 270px; } }
+@media (max-width: 650px) { .workspace-split__chat .chat-pane { flex: 1; width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .workspace-split, .workspace-split__chat { transition: none; } }
+
+/* Compact top-menu controls. */
+.hub-navbar--centered .hub-navbar__nav-button,
+.hub-navbar--centered .hub-navbar__task-entry,
+.hub-navbar--centered .hub-navbar__settings-button,
+.hub-navbar--centered .hub-navbar__zoom {
+  height: 30px;
+  border-radius: 7px;
+  font-size: 11px;
+  gap: 5px;
+}
+.hub-navbar--centered .hub-navbar__nav-button { width: 86px; }
+.hub-navbar--centered .hub-navbar__task-entry { width: 74px; padding-inline: 8px; }
+.hub-navbar--centered .hub-navbar__settings-button { padding-inline: 9px; }
+.hub-navbar--centered .hub-navbar__navigation { gap: 8px; }
+.hub-navbar--centered .hub-navbar__nav-button svg,
+.hub-navbar--centered .hub-navbar__task-entry svg,
+.hub-navbar--centered .hub-navbar__settings-button svg { width: 13px; height: 13px; }
