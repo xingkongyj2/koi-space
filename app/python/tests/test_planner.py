@@ -177,6 +177,24 @@ class PlannerTests(unittest.TestCase):
         planner.plan("查询商品价格")
         self.assertEqual(planner.plan("打开 https://shop.example/").status, "ask")
 
+    def test_planner_prompt_uses_user_site_or_default_web_entry(self):
+        ai = Mock()
+        ai.chat.return_value = json.dumps(ready(
+            step("s1", goal="打开并确认腾讯视频网页版入口", start_url="https://v.qq.com/",
+                 success_criteria=["url_prefix:https://v.qq.com/"]),
+            step("s2", goal="在腾讯视频网页版中打开历史记录", start_url="https://v.qq.com/",
+                 depends_on=["s1"], success_criteria=["text_contains:历史记录"]),
+        ), ensure_ascii=False)
+        Planner(ai).plan("打开腾讯视频历史记录")
+        system_prompt = ai.chat.call_args.args[0]
+        self.assertIn("腾讯视频", system_prompt)
+        self.assertIn("AI Agent 浏览器助手", system_prompt)
+        self.assertIn("用户写出网址时直接使用该网址", system_prompt)
+        self.assertIn("只说网站名称或不规范地描述目标时", system_prompt)
+        self.assertIn("https://v.qq.com/", system_prompt)
+        self.assertIn("根据用户任务的自然语言描述，判断最合理的网站和页面", system_prompt)
+        self.assertIn("如果只能确认网站，就使用该网站的默认官方入口", system_prompt)
+
 
 if __name__ == '__main__':
     unittest.main()

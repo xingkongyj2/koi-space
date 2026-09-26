@@ -6,6 +6,7 @@ injected through the dedicated components, which keeps the loop testable.
 from __future__ import annotations
 from dataclasses import asdict
 import json
+import time
 
 from .budget import Budget
 from .observer import Observer
@@ -130,29 +131,72 @@ class Orchestrator:
                                    error=str(exc), advice=advice)
                     break
                 if not result.ok:
-                    failed = True
-                    self.budget.failure()
-                    advice = self.reflection.advise(step.goal, observation, result.preview)
-                    self._progress(step, "retry", completed, current_url=observation.url,
-                                   error=result.preview, advice=advice)
-                    break
+                    # Browser navigation may report a timeout while the page
+                    # finishes loading in the background. Verify the URL once
+                    # before counting it as a failed action.
+                    if action.kind == "open" and action.value:
+                        try:
+                            settled_url = self.session.current_url()
+                        except Exception:
+                            settled_url = ""
+                        if settled_url.startswith(action.value.rstrip("/")):
+                            protocol.trace("orchestrator.action.soft_success", action=action,
+                                           reason="navigation reached target after command timeout",
+                                           current_url=settled_url)
+                            result = type("SettledResult", (), {"ok": True, "preview": result.preview})()
+                    if result.ok:
+                        pass
+                    else:
+                        failed = True
+                        self.budget.failure()
+                        advice = self.reflection.advise(step.goal, observation, result.preview)
+                        self._progress(step, "retry", completed, current_url=observation.url,
+                                       error=result.preview, advice=advice)
+                        break
                 after = self.observer.capture()
                 if not self.validator.action(observation, after, action):
-                    failed = True
-                    self.budget.failure()
-                    advice = self.reflection.advise(step.goal, after, "no-op")
-                    self._progress(step, "retry", completed, current_url=after.url,
-                                   error="no-op", advice=advice)
-                    break
+                    # Clicks, fills and navigation can dispatch asynchronous
+                    # page updates after the command has returned. Give the
+                    # page a short settle window before classifying a no-op.
+                    if action.kind in {"open", "click", "fill", "press", "scroll"}:
+                        time.sleep(0.8)
+                        settled = self.observer.capture()
+                        if self.validator.action(observation, settled, action):
+                            after = settled
+                        else:
+                            after = settled
+                    if self.validator.action(observation, after, action):
+                        observation = after
+                        continue
+                    # A successful browser command is still progress even when
+                    # the page has not exposed a visible change yet. This is
+                    # common for input events, autocomplete menus and async
+                    # navigation. Keep the fresh observation and let the next
+                    # decision advance the task; only command errors consume
+                    # the failure budget.
+                    protocol.trace("orchestrator.action.uncertain", action=action,
+                                   reason="command succeeded but page snapshot did not change",
+                                   current_url=after.url)
+                    self._progress(step, "progress_uncertain", completed,
+                                   current_url=after.url, action=asdict(action),
+                                   advice="动作已执行，页面暂未显示可验证变化；继续基于最新页面观察推进。")
+                    observation = after
+                    continue
                 observation = after
             if not failed and self.validator.step(observation, step.success_criteria, step.start_url):
                 self._complete(step, completed, observation)
                 protocol.log(f"flow=verify step={step.id} status=passed")
                 return None
-            failures += 1
+            if not failed:
+                # The actions completed successfully but the step's final
+                # criterion is not visible yet. This is normal multi-action
+                # progress, so do not convert it into a failure.
+                slow = True
+                advice = "动作已执行但步骤尚未完成；继续观察当前页面并选择下一步。"
+                self._progress(step, "progressing", completed,
+                               current_url=observation.url, advice=advice)
+                continue
             slow = failures >= 2
-            if failures >= 3:
-                break
         protocol.trace("orchestrator.step.exhausted", budget=self.budget.snapshot(), failures=failures)
         self._progress(step, "failed", completed, reason="预算或重试次数耗尽",
                        budget=asdict(self.budget.snapshot()), failures=failures)

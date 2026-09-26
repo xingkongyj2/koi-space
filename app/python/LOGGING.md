@@ -72,7 +72,7 @@ JSONL 中每行是一个 JSON 对象。`time` 是 UTC 时间，`session_id` 是�
 | `observer.capture.end` | 页面快照、差异和元素列表 |
 | `executor.command` | 实际执行的命令参数 |
 | `browser.run.end` / `browser.cli.end` | 浏览器返回，包括完整 stdout/stderr |
-| `validator.action.end` / `validator.step.end` | 动作和步骤校验结果，输入在对应 start 中 |
+| `validator.action.end` / `validator.step.end` | 动作和步骤校验结果；`unchanged` 表示命令成功但页面暂未显示变化，不等于动作失败 |
 | `reflection.advise.end` | 反思建议 |
 | `orchestrator.iteration` | 当前预算、失败次数和重试建议 |
 | `orchestrator.step.exhausted` | 预算或重试耗尽时的状态 |

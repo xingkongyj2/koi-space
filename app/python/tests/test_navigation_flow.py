@@ -24,6 +24,23 @@ class FakeSession:
         return type("Result", (), {"ok": True, "stdout": "- button \"Play\" [ref=e1]", "preview": "ok"})()
 
 
+class SettlingSession(FakeSession):
+    """The first snapshot is unchanged; the page updates after settling."""
+    def __init__(self):
+        super().__init__("https://example.com/")
+        self.snapshots = 0
+
+    def run(self, args, timeout=30):
+        self.commands.append(args)
+        if args[0] == "click":
+            return type("Result", (), {"ok": True, "stdout": "✓ Done", "preview": "ok"})()
+        if args[0] == "snapshot":
+            self.snapshots += 1
+            body = "before" if self.snapshots == 1 else "after click"
+            return type("Result", (), {"ok": True, "stdout": body, "preview": body})()
+        return type("Result", (), {"ok": True, "stdout": "", "preview": "ok"})()
+
+
 def navigation_plan():
     return parse_plan(json.dumps({
         "status": "ready",
@@ -63,6 +80,23 @@ class NavigationFlowTests(unittest.TestCase):
         from koi_agent.observer import Observer
         elements = list(Observer._elements('- button "Play" [ref=e1]'))
         self.assertEqual(elements, [{"ref": "@e1", "text": 'button "Play"'}])
+
+    def test_successful_click_is_allowed_to_settle_before_noop_failure(self):
+        from koi_agent.decision import DecisionResult
+        from koi_agent.executor import Action
+        session = SettlingSession()
+        plan = parse_plan(json.dumps({
+            "status": "ready", "needs_browser": True,
+            "question": "", "direct_answer": "",
+            "steps": [{"id": "s1", "goal": "点击按钮", "success_criteria": ["text_contains:after click"],
+                        "depends_on": [], "start_url": "https://example.com/",
+                        "needs_user_confirmation": False, "risk": "low", "parallel_group": ""}],
+        }))
+        result = Orchestrator(
+            session, plan, budget=Budget(max_steps=5, max_failures=1),
+            decision=type("Decision", (), {"choose": lambda *_args, **_kwargs: DecisionResult((Action("click", ref="@e1"),), 1.0, "test")})(),
+        ).run()
+        self.assertIn("任务完成", result)
 
 
 if __name__ == "__main__":

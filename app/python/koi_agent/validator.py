@@ -13,7 +13,7 @@ class Validator:
         passed = action.kind in {"wait", "scroll"} or changed
         protocol.log(
             f"flow=validate action={action.kind} "
-            f"status={'passed' if passed else 'noop'}"
+            f"status={'passed' if passed else 'unchanged'}"
         )
         return passed
 

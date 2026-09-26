@@ -8,7 +8,7 @@ from . import protocol
 from .executor import Action
 from .models import JevDecision, OpenAICompatible
 
-DECISION_SYSTEM_PROMPT = '根据浏览器快照选择最多一个安全动作，只返回 JSON：{"actions":[{"kind":"click|fill|press|wait|scroll|open","ref":"@e1","value":""}],"confidence":0.8}。只使用快照中存在的 ref；不要猜测密码。'
+DECISION_SYSTEM_PROMPT = '根据浏览器快照选择最多一个安全动作，只返回 JSON：{"actions":[{"kind":"click|fill|press|wait|scroll|open","ref":"@e1","value":""}],"confidence":0.8}。只使用快照中存在的 ref；不要猜测密码。对于带联想下拉框的输入，先选择并确认下拉候选，再填写下一个字段或点击查询；不要在站点仍显示未确认的占位值时点击查询。'
 
 
 @dataclass(frozen=True)
