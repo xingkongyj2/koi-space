@@ -1,25 +1,9 @@
-"""The only module that talks to `agent-browser` — the Executor seam.
+"""agent-browser 的唯一调用边界，负责标签页绑定和守护进程重连。
 
-Everything upstream stays ignorant of CLI details. This module owns the whole
-browser contract that used to live in the Electron main process plus a PATH
-shim:
-
-* **Binding.** agent-browser addresses pages as `t1..tN` in its own enumeration
-  order and has no notion of a CDP targetId — feeding it a page-level
-  `ws://…/devtools/page/<id>` URL is accepted and then ignored. The app assigns
-  each session one specific browser view, so we translate targetId → tab id
-  ourselves: read the target's real url/title from `/json/list`, plant a unique
-  `document.title` marker through CDP, then match it in `tab list`.
-
-* **Rebinding.** The binding lives in agent-browser's per-session daemon. When
-  that daemon exits (idle timeout, crash, machine sleep) the next command
-  silently reattaches to `t1` — another session's page. So every command first
-  checks the daemon pid; if it changed or died, we re-resolve. Doing this
-  in-process is why no PATH shim is needed any more.
-
-* **Refusing to guess.** If the target cannot be matched uniquely we raise
-  instead of picking one. Driving the wrong page is worse than failing.
-"""
+Electron 只传入 CDP targetId；agent-browser 使用自己的 t1..tN 编号。
+本模块先读取目标 URL/标题，再通过 CDP 注入唯一标题标记，完成精确映射。
+守护进程重启后必须重新绑定，不能默认选择 t1，否则会操作其他会话。
+目标不存在或匹配有歧义时直接报错，不猜测目标标签页。"""
 
 from __future__ import annotations
 
@@ -48,7 +32,7 @@ DEFAULT_TIMEOUT = 60.0
 
 
 class BindingLost(RuntimeError):
-    """The session is not attached to its browser view. Never retry blindly."""
+    """会话与指定页面的绑定已失效，禁止盲目重试到其他页面。"""
 
 
 @dataclass(frozen=True)
@@ -62,7 +46,7 @@ class BrowserResult:
 
     @property
     def preview(self) -> str:
-        """Short single-string rendering for the chat UI's tool_result event."""
+        """生成简短的 tool_result 预览；成功无输出时显示 ok。"""
         body = (self.stdout or self.stderr).strip()
         if len(body) > 800:
             body = body[:800] + "…"
@@ -70,12 +54,7 @@ class BrowserResult:
 
 
 def resolve_cli(explicit: str | None = None) -> str:
-    """Absolute path to agent-browser.
-
-    Resolved from PATH, which the app hands us already enriched with the
-    nvm/Homebrew/volta directories a GUI-launched Electron process would
-    otherwise not see. `KOI_AGENT_BROWSER` overrides for tests and odd installs.
-    """
+    """确定 agent-browser 路径：显式参数和环境覆盖优先，否则使用宿主扩充的 PATH。"""
     candidate = explicit or os.environ.get("KOI_AGENT_BROWSER")
     if candidate:
         if not os.path.isfile(candidate):
@@ -91,35 +70,23 @@ def resolve_cli(explicit: str | None = None) -> str:
 
 
 def session_name(session_id: str, cdp_port: int) -> str:
-    """Short, stable, collision-resistant agent-browser session name.
-
-    The CDP port is folded in on purpose: the app picks a random port on every
-    launch, but agent-browser's daemon caches the endpoint it first connected to
-    and ignores `AGENT_BROWSER_CDP` afterwards. A surviving daemon would
-    otherwise keep aiming at the previous launch's dead port.
-
-    Short because this name becomes a Unix socket filename (see
-    `socket_path`).
-    """
+    """由会话 ID 和 CDP 端口生成短名称，避免重启后复用旧端口的守护进程。"""
     digest = hashlib.sha256(f"{session_id}:{cdp_port}".encode("utf-8")).hexdigest()
     return f"bu{digest[:10]}"
 
 
 def socket_dir() -> Path:
-    """Shared by every session — isolation comes from the session name.
-
-    Kept under tmpdir rather than the app's userData because directory depth is
-    exactly what the socket path budget cannot afford.
-    """
+    """使用较短的临时目录规避 Unix socket 长度限制；会话名称提供隔离。"""
     return Path(tempfile.gettempdir()) / "buab"
 
 
 def socket_path(session: str) -> Path:
+    """返回当前 agent-browser 会话的 Unix socket 文件路径。"""
     return socket_dir() / f"{session}.sock"
 
 
 class BrowserSession:
-    """One app session's handle on its own browser view."""
+    """一个应用会话对其唯一浏览器视图的访问句柄。"""
 
     def __init__(self, session_id: str, cdp_port: int, target_id: str, cli: str | None = None):
         self.session_id = session_id
@@ -138,6 +105,7 @@ class BrowserSession:
     # ── setup ───────────────────────────────────────────────────────────────
 
     def _check_socket_budget(self) -> None:
+        """在启动 CLI 前检查 socket 路径字节长度。"""
         length = len(str(socket_path(self.session)).encode("utf-8"))
         if length > SOCKET_PATH_LIMIT:
             raise BindingLost(
@@ -148,20 +116,19 @@ class BrowserSession:
 
     @property
     def env(self) -> dict[str, str]:
-        """Environment for agent-browser subprocesses.
+        """构造 CLI 子进程环境，固定会话与 CDP 端口。
 
-        Deliberately does NOT set `AGENT_BROWSER_SCREENSHOT_DIR`: that would
-        route the agent's own visual check-ins into the watched outputs dir and
-        surface every one of them in the chat as a `file_output` event.
-        Screenshots the user should see get an explicit path instead.
-        """
+        不设置 AGENT_BROWSER_SCREENSHOT_DIR，避免内部检查截图
+        被宿主误识别为用户交付文件；交付截图应显式指定输出位置。"""
         env = dict(os.environ)
-        env.update({
-            "AGENT_BROWSER_SESSION": self.session,
-            "AGENT_BROWSER_CDP": str(self.cdp_port),
-            "AGENT_BROWSER_SOCKET_DIR": str(self.dir),
-            "AGENT_BROWSER_IDLE_TIMEOUT_MS": IDLE_TIMEOUT_MS,
-        })
+        env.update(
+            {
+                "AGENT_BROWSER_SESSION": self.session,
+                "AGENT_BROWSER_CDP": str(self.cdp_port),
+                "AGENT_BROWSER_SOCKET_DIR": str(self.dir),
+                "AGENT_BROWSER_IDLE_TIMEOUT_MS": IDLE_TIMEOUT_MS,
+            }
+        )
         # Nothing upstream may steer the binding: these would override the above
         # or make agent-browser pick its own browser.
         for key in ("AGENT_BROWSER_AUTO_CONNECT", "AGENT_BROWSER_PROFILE", "AGENT_BROWSER_STATE"):
@@ -172,6 +139,7 @@ class BrowserSession:
 
     @protocol.traced("browser.cli")
     def _cli(self, args: list[str], timeout: float = 30.0) -> tuple[bool, str, str]:
+        """执行内部绑定命令，将超时统一转换为失败返回值。"""
         try:
             proc = subprocess.run(
                 [self.cli, *args],
@@ -186,8 +154,7 @@ class BrowserSession:
 
     @staticmethod
     def _failure_text(stdout: str, stderr: str) -> str:
-        """agent-browser reports failures as JSON on **stdout** with an empty
-        stderr, so reading stderr alone loses the only useful detail."""
+        """兼顾 stdout 中的 JSON 错误与 stderr，避免遗漏 agent-browser 的实际报错。"""
         for chunk in (stderr, stdout):
             text = (chunk or "").strip()
             if not text:
@@ -205,6 +172,7 @@ class BrowserSession:
         return "agent-browser produced no output"
 
     def _list_tabs(self) -> list[dict]:
+        """读取 CLI 标签列表，仅解析 JSON 信封，不被页面文本中的大括号干扰。"""
         ok, stdout, stderr = self._cli(["tab", "list", "--json"])
         if not ok:
             raise BindingLost(
@@ -229,7 +197,7 @@ class BrowserSession:
     # ── binding ─────────────────────────────────────────────────────────────
 
     def _target_fingerprint(self) -> tuple[str, str]:
-        """This target's real url/title, straight from the browser."""
+        """直接从 CDP 获取该 target 的真实 URL 和标题。"""
         try:
             entry = cdp.find_target(self.cdp_port, self.target_id)
         except cdp.CdpError as exc:
@@ -238,14 +206,11 @@ class BrowserSession:
         return entry.get("url") or "", entry.get("title") or ""
 
     def _plant_marker(self) -> bool:
-        """Make this target uniquely identifiable in `tab list`.
-
-        Needed because every fresh session view sits at `about:blank` with an
-        empty title — several concurrent sessions are then indistinguishable by
-        url/title alone. Fails harmlessly on `chrome://` or a crashed renderer.
-        """
+        """给目标页面写入唯一标题标记，区分多个 about:blank 会话；失败时返回 False。"""
         try:
-            cdp.evaluate(self.cdp_port, self.target_id, f"document.title = {json.dumps(self.marker)}")
+            cdp.evaluate(
+                self.cdp_port, self.target_id, f"document.title = {json.dumps(self.marker)}"
+            )
             return True
         except cdp.CdpError as exc:
             protocol.log(f"could not plant marker: {exc}")
@@ -253,6 +218,7 @@ class BrowserSession:
 
     @staticmethod
     def _select(tabs: list[dict], marker: str | None, url: str, title: str) -> str | None:
+        """优先精确匹配唯一标记，再匹配 URL/标题；匹配有歧义时拒绝选择。"""
         pages = [t for t in tabs if (t.get("type") or "page") == "page"]
         if marker:
             hits = [t for t in pages if t.get("title") == marker]
@@ -269,7 +235,7 @@ class BrowserSession:
 
     @protocol.traced("browser.bind")
     def bind(self) -> str:
-        """Point this agent-browser session at our assigned view. Returns the tab id."""
+        """将 agent-browser 会话绑定到宿主指定的视图，返回唯一匹配的 tabId。"""
         self.dir.mkdir(parents=True, exist_ok=True)
         url, title = self._target_fingerprint()
         planted = self._plant_marker()
@@ -286,7 +252,9 @@ class BrowserSession:
 
         ok, stdout, stderr = self._cli(["tab", tab_id], timeout=15.0)
         if not ok:
-            raise BindingLost(f"`agent-browser tab {tab_id}` failed: {self._failure_text(stdout, stderr)[:300]}")
+            raise BindingLost(
+                f"`agent-browser tab {tab_id}` failed: {self._failure_text(stdout, stderr)[:300]}"
+            )
 
         self._bound_tab = tab_id
         self._daemon_pid = self._read_pid()
@@ -294,10 +262,13 @@ class BrowserSession:
             self.pid_cache.write_text(self._daemon_pid or "", encoding="utf-8")
         except OSError:
             pass  # best effort; worst case the next command rebinds again
-        protocol.log(f"bound {self.session} -> {tab_id} (target {self.target_id[:8]}, {len(tabs)} candidates)")
+        protocol.log(
+            f"bound {self.session} -> {tab_id} (target {self.target_id[:8]}, {len(tabs)} candidates)"
+        )
         return tab_id
 
     def _read_pid(self) -> str:
+        """读取守护进程 PID，文件缺失或不可读时返回空值。"""
         try:
             return self.pid_file.read_text(encoding="utf-8").strip()
         except OSError:
@@ -305,6 +276,7 @@ class BrowserSession:
 
     @staticmethod
     def _pid_alive(pid: str) -> bool:
+        """用信号 0 检查 PID 是否仍存活，不向进程发送实际信号。"""
         if not pid:
             return False
         try:
@@ -316,20 +288,10 @@ class BrowserSession:
         return True
 
     def ensure_bound(self) -> None:
-        """Re-resolve the binding only when the daemon has actually restarted.
+        """守护进程重启或消失后重新绑定，避免新守护进程默认选中 t1。
 
-        A pid-file match alone is not enough: a killed daemon leaves its pid file
-        behind with the old pid in it, so the cache would compare equal while
-        nothing is serving and the next command would spawn a fresh daemon bound
-        to `t1` — another session's page.
-
-        Known residual race: for a few milliseconds after a daemon dies it is a
-        zombie, and `os.kill(pid, 0)` still succeeds for zombies (measured at
-        3.2 ms on macOS before launchd reaps it). Closing that would mean
-        spawning `ps` on every browser command, which costs more than the risk:
-        the daemon only ever dies while idle, so a command would have to begin
-        within ~3 ms of an idle death to be affected.
-        """
+        同时验证 PID 文件和进程存活状态。僵尸进程短暂存活期间仍存在
+        极小的竞态窗口；不为此在每条命令前启动昂贵的 ps 查询。"""
         if self._bound_tab is None:
             self.bind()
             return
@@ -343,7 +305,7 @@ class BrowserSession:
 
     @protocol.traced("browser.run")
     def run(self, args: list[str], timeout: float = DEFAULT_TIMEOUT) -> BrowserResult:
-        """Run one agent-browser command against this session's view."""
+        """校验绑定后执行一个命令，返回统一的成功、错误与耗时信息。"""
         if not args:
             raise ValueError("agent-browser requires a subcommand")
         self.ensure_bound()
@@ -358,7 +320,9 @@ class BrowserSession:
             )
         except subprocess.TimeoutExpired:
             elapsed = (time.monotonic() - started) * 1000
-            return BrowserResult(False, tuple(args), "", f"timed out after {timeout}s", 124, elapsed)
+            return BrowserResult(
+                False, tuple(args), "", f"timed out after {timeout}s", 124, elapsed
+            )
 
         elapsed = (time.monotonic() - started) * 1000
         result = BrowserResult(
@@ -384,14 +348,17 @@ class BrowserSession:
         return result
 
     def open_url(self, url: str, timeout: float = DEFAULT_TIMEOUT) -> BrowserResult:
+        """把显式导航委托给统一的浏览器命令入口。"""
         return self.run(["open", url], timeout=timeout)
 
     def current_url(self, timeout: float = 15.0) -> str:
-        """Read back the bound view's URL — cheapest proof the chain is live."""
+        """读取当前绑定页面的 URL，失败时返回空字符串。"""
         result = self.run(["get", "url"], timeout=timeout)
         return result.stdout.strip() if result.ok else ""
 
 
 def log_environment() -> None:
-    """One stderr line describing the resolved toolchain, for post-mortems."""
-    protocol.log(f"python={sys.version.split()[0]} agent-browser={shutil.which('agent-browser') or 'NOT FOUND'}")
+    """通过诊断接口记录 Python 和 agent-browser 的解析路径。"""
+    protocol.log(
+        f"python={sys.version.split()[0]} agent-browser={shutil.which('agent-browser') or 'NOT FOUND'}"
+    )

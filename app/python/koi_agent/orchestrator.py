@@ -1,397 +1,460 @@
-"""Task state machine for the Koi browser agent.
+"""任务与步骤状态机：调度、恢复、记录结果，不直接调用浏览器命令。"""
 
-This module owns control flow only. All browser/model/storage concerns are
-injected through the dedicated components, which keeps the loop testable.
-"""
 from __future__ import annotations
-from dataclasses import asdict
+
 import json
 import re
-import time
+from dataclasses import asdict, dataclass, field, replace
 from urllib.parse import urlsplit
 
-from .budget import Budget
-from .observer import Observer
-from .decision import Decision, DecisionResult
-from .executor import Executor
-from .validator import Validator
-from .completion import CompletionVerifier
-from .reflection import Reflection
-from .memory import Memory
 from . import protocol
+from .browser import BindingLost
+from .budget import Budget, BudgetExceeded, StepBudget
+from .completion import CompletionGate, CompletionVerifier, TaskValidator
+from .decision import Decision, DecisionResult
+from .executor import Action, Executor
+from .memory import Memory
+from .observer import Observation, Observer
+from .outcomes import StepOutcome, StepResult, TaskOutcome
+from .reflection import Reflection
+from .validator import Validator, url_matches
+
+
+@dataclass
+class StepRuntimeState:
+    """只属于当前步骤的一次尝试；重规划不会覆盖既有结果。"""
+
+    budget: StepBudget = field(default_factory=StepBudget)
+    results: list[StepResult] = field(default_factory=list)
+    history: list[dict] = field(default_factory=list)
+    transitions: dict = field(default_factory=dict)
+    navigations: dict = field(default_factory=dict)
+    decisions: set = field(default_factory=set)
+    advice: str = ""
+    slow: bool = False
+    cycle: bool = False
+    last_action: Action | None = None
+    last_before: Observation | None = None
+    skill_cursor: int = 0
+    skill_disabled: bool = False
+
+
+def _controls(page):
+    """轮播广告和 ref 重编号不应掩盖控件之间的往返循环。"""
+    lines = [re.sub(r"\[ref=[\w-]+\]", "", line).strip() for line in page.snapshot.splitlines()]
+    controls = tuple(
+        line
+        for line in lines
+        if re.search(
+            r"\b(textbox|searchbox|combobox|listbox|option|spinbutton|checkbox|radio|button)\b",
+            line,
+        )
+    )
+    return page.url, controls or tuple(lines)
+
+
+def _page_path(url):
+    parsed = urlsplit(url)
+    return parsed.scheme, parsed.netloc, parsed.path
+
 
 class Orchestrator:
-    def __init__(self, session, plan, *, budget=None, decision=None,
-                 memory=None, reflection=None, observer=None, executor=None,
-                 validator=None, completion=None, skills=None):
+    def __init__(
+        self,
+        session,
+        plan,
+        *,
+        budget=None,
+        decision=None,
+        memory=None,
+        reflection=None,
+        observer=None,
+        executor=None,
+        validator=None,
+        completion=None,
+        skills=None,
+        planner=None,
+        task_validator=None,
+        user_goal="",
+    ):
         self.session = session
         self.plan = plan
+        self.original_plan = plan
+        self.user_goal = user_goal or "；".join(step.goal for step in plan.steps)
         self.budget = budget or Budget()
         self.observer = observer or Observer(session)
         self.decision = decision or Decision()
         self.executor = executor or Executor(session)
         self.validator = validator or Validator()
         self.completion = completion or CompletionVerifier()
+        self.gate = CompletionGate(self.validator, self.completion)
+        self.task_validator = task_validator or TaskValidator(self.completion.ai)
         self.memory = memory or Memory()
         self.reflection = reflection or Reflection()
         self.skills = skills
-        self._last_completed_url = ""
+        self.planner = planner
+        self.outcomes = []
+        self.observation = None
 
     @staticmethod
-    def _progress(step, status: str, completed: list[str], **details) -> None:
-        """Persist planning-relevant execution state in the session history."""
-        protocol.thinking(json.dumps({
-            "kind": "task_progress",
-            "step_id": step.id,
-            "goal": step.goal,
-            "status": status,
-            "completed_steps": list(completed),
-            **details,
-        }, ensure_ascii=False))
+    def _progress(step, status, completed, **details):
+        """沿用 thinking 事件存储结构化状态，兼容已有的历史恢复入口。"""
+        protocol.thinking(
+            json.dumps(
+                {
+                    "kind": "task_progress",
+                    "step_id": step.id,
+                    "goal": step.goal,
+                    "status": status,
+                    "completed_steps": list(completed),
+                    **details,
+                },
+                ensure_ascii=False,
+            )
+        )
 
-    def _complete(self, step, completed: list[str], observation, source="criteria") -> None:
-        completed.append(step.id)
-        self._last_completed_url = observation.url
-        self._progress(step, "completed", completed,
-                       current_url=observation.url,
-                       success_criteria=list(step.success_criteria),
-                       verification_source=source)
+    def _record(self, outcome, step, completed):
+        """追加步骤尝试及验收证据，让历史恢复保留成功和失败的完整过程。"""
+        self.outcomes.append(outcome)
+        self.memory.write("step_result", asdict(outcome))
+        self._progress(
+            step,
+            "waiting_confirmation" if outcome.status == "waiting_user" else outcome.status,
+            completed,
+            current_url=outcome.current_url,
+            reason=outcome.reason,
+            verification_source=outcome.source,
+            evidence=list(outcome.evidence),
+            result=asdict(outcome),
+            budget=asdict(self.budget.snapshot()),
+        )
+
+    def _finish(self, status, reason, evidence=()):
+        page_url = self.observation.url if self.observation else ""
+        summary = (
+            ("任务失败：" if status == "failed" else "")
+            + reason
+            + (f" 当前页面：{page_url}" if page_url else "")
+        )
+        outcome = TaskOutcome(status, summary, tuple(self.outcomes), page_url, evidence)
+        if status == "completed":
+            self.memory.record_success(self.plan, list(outcome.completed_steps))
+        else:
+            self.memory.record_failure(summary)
+        return outcome
 
     @protocol.traced("orchestrator.run")
-    def run(self) -> str:
-        completed: list[str] = []
-        for step in self.plan.steps:
-            missing = [dep for dep in step.depends_on if dep not in completed]
-            if missing:
-                protocol.trace("orchestrator.step.blocked", step_id=step.id, missing_dependencies=missing)
-                protocol.log(f"flow=plan step={step.id} status=blocked dependencies={missing}")
-                self._progress(step, "blocked", completed, missing_dependencies=missing)
-                continue
-            self._progress(step, "started", completed, start_url=step.start_url)
-            with protocol.measure("runtime.step.total", step_id=step.id):
-                result = self._run_step(step, completed)
-            if result is not None:
-                self.memory.record_failure(result)
-                return result
-        if len(completed) != len(self.plan.steps):
-            reason = f"计划依赖无法满足：{len(completed)}/{len(self.plan.steps)} 个步骤完成"
-            self.memory.record_failure(reason)
-            return reason
-        self.memory.record_success(self.plan, completed)
-        final_goal = self.plan.steps[-1].goal if self.plan.steps else "已完成请求"
-        result = f"任务完成：{final_goal}。"
-        if self._last_completed_url:
-            result += f" 当前页面：{self._last_completed_url}"
-        return result
+    def run(self) -> TaskOutcome:
+        """按依赖执行步骤，必要时增量重规划，最后统一验证原始用户目标。"""
+        completed = set()
+        replans = 0
+
+        try:
+            with self.budget.track_models():
+                while len(completed) < len(self.plan.steps):
+                    ready = [
+                        step
+                        for step in self.plan.steps
+                        if step.id not in completed and set(step.depends_on) <= completed
+                    ]
+                    if not ready:
+                        return self._finish("blocked", "计划依赖无法满足")
+
+                    # 当前宿主只提供一个 targetId。即使标记同一 parallel_group，
+                    # 也必须串行，直到宿主提供独立标签页和独立上下文。
+                    step = ready[0]
+                    self._progress(step, "started", sorted(completed), start_url=step.start_url)
+                    protocol.set_context(step_id=step.id, iteration=self.budget.steps + 1)
+                    with protocol.measure("runtime.step.total", step_id=step.id):
+                        try:
+                            outcome = self._run_step(step, sorted(completed))
+                        except BudgetExceeded as exc:
+                            outcome = self._outcome(step, self._active_state, "failed", str(exc))
+                    if outcome.status == "completed":
+                        completed.add(step.id)
+                    self._record(outcome, step, sorted(completed))
+
+                    if outcome.status == "completed":
+                        continue
+                    if (
+                        outcome.status == "replan"
+                        and self.planner
+                        and replans < self.budget.max_replans
+                    ):
+                        replans += 1
+                        try:
+                            self.plan = self.planner.incremental_replan(
+                                self.user_goal,
+                                self.plan,
+                                tuple(self.outcomes),
+                                step.id,
+                                self.observation,
+                                reason=outcome.reason,
+                            )
+                        except BudgetExceeded:
+                            raise
+                        except Exception as exc:
+                            return self._finish("blocked", f"增量重规划失败：{exc}")
+                        protocol.thinking(
+                            json.dumps(
+                                {"kind": "planner_plan", "plan": self.plan.to_dict()},
+                                ensure_ascii=False,
+                            )
+                        )
+                        continue
+                    status = "blocked" if outcome.status == "replan" else outcome.status
+                    return self._finish(status, outcome.reason)
+
+                final = self.task_validator.verify(
+                    self.user_goal,
+                    self.plan,
+                    tuple(self.outcomes),
+                    self.observation,
+                    original_plan=self.original_plan,
+                )
+                if not final.accepted:
+                    return self._finish(
+                        "blocked", "步骤已结束，但用户目标尚未通过最终验收", final.evidence
+                    )
+                return self._finish("completed", f"任务完成：{self.user_goal}。", final.evidence)
+        except BudgetExceeded as exc:
+            return self._finish("failed", str(exc))
+
+    def _capture(self, step):
+        # URL/元素类验收只抓交互树，正文和语义条件才需要完整页面。
+        if isinstance(self.observer, Observer):
+            encoded = json.dumps(step.success_criteria, ensure_ascii=False)
+            self.observer.include_full = (
+                any(kind in encoded for kind in ("text_contains", "goal_state"))
+                or step.risk != "low"
+            )
+        page = self.observer.capture()
+        self.observation = page
+        return page
+
+    def _outcome(self, step, state, status, reason="", completion=None):
+        return StepOutcome(
+            step.id,
+            step.goal,
+            status,
+            reason,
+            self.observation.url if self.observation else "",
+            completion.source if completion else "",
+            completion.evidence if completion else (),
+            tuple(state.results),
+        )
+
+    def _recover(self, step, state, page, reason, completed, *, no_op=False):
+        """L1 记录失败；连续失败或 no-op 的下一轮升级 L2。"""
+        self.budget.failure()
+        if no_op:
+            state.budget.no_ops += 1
+        else:
+            state.budget.failures += 1
+        state.skill_disabled = True
+        state.slow = state.budget.failures >= 1 or state.budget.no_ops >= 2
+        state.advice = f"{reason}；依据当前页面修正动作，不重复无效操作，不猜测业务参数。"
+        self._progress(
+            step, "retry", completed, current_url=page.url, error=reason, advice=state.advice
+        )
+
+    def _choose(self, step, state, page):
+        """技能每轮只绑定一个动作；缓存过的快路径失败状态直接升级。"""
+        if self.skills and not state.skill_disabled and not state.slow:
+            skill = self.skills.match(step.goal, page.url)
+            if skill:
+                action = self.skills.next_action(skill, state.skill_cursor, page)
+                if action is not None:
+                    return DecisionResult((action,), 1.0, "skill")
+                state.skill_disabled = True
+
+        cache_key = page.fingerprint
+        if cache_key in state.decisions:
+            state.slow = True
+        state.decisions.add(cache_key)
+
+        if state.slow or state.cycle:
+            state.budget.slow_calls += 1
+        decision = self.decision.choose(
+            step.goal,
+            page,
+            step.start_url if not state.results else "",
+            slow=state.slow,
+            advice=state.advice,
+            force_entry=step.success_criteria
+            in (
+                (f"url_prefix:{step.start_url}",),
+                ({"type": "url_prefix", "value": step.start_url},),
+            ),
+            success_criteria=step.success_criteria,
+            recent_action=state.last_action,
+            force_reasoning=state.budget.no_ops >= 2 or state.cycle,
+            action_history=state.history[-6:],
+        )
+        if decision.route == "slow" and not (state.slow or state.cycle):
+            state.budget.slow_calls += 1
+        return decision
+
+    def _track_transition(self, state, before, after, action):
+        target = next(
+            (item.get("text", "") for item in before.elements if item.get("ref") == action.ref), ""
+        )
+        transition = (_controls(before), action.kind, target, action.value, _controls(after))
+        state.transitions[transition] = state.transitions.get(transition, 0) + 1
+        count = state.transitions[transition]
+        state.history.append(
+            {
+                "action": asdict(action),
+                "page_changed": before.fingerprint != after.fingerprint,
+                "before_controls": transition[0][1],
+                "after_controls": transition[-1][1],
+            }
+        )
+        if count >= 2 and transition[0] != transition[-1]:
+            state.cycle = True
+        if count >= 3 and state.cycle:
+            return "控件状态往返循环，慢路径恢复仍无进展"
+
+        if _page_path(before.url) != _page_path(after.url):
+            navigation = (
+                _page_path(before.url),
+                action.kind,
+                target,
+                action.value,
+                _page_path(after.url),
+            )
+            state.navigations[navigation] = state.navigations.get(navigation, 0) + 1
+            if state.navigations[navigation] >= 2:
+                state.cycle = True
+                state.slow = True
+            if state.navigations[navigation] >= 3:
+                return "页面往返循环，慢路径恢复仍无进展"
+        return ""
 
     @protocol.traced("orchestrator.step")
-    def _run_step(self, step, completed: list[str]) -> str | None:
-        failures = 0
-        slow = False
-        advice = ""
-        interacted = False
-        last_before = None
-        last_action = None
-        last_check = None
-        last_verdict = None
-        verification_source = "criteria"
-        transitions: dict[tuple[str, str, str, str, str], int] = {}
-        no_progress = 0
-        action_history = []
-        last_state = None
-        state_transitions = {}
-        cycle_recovery = False
+    def _run_step(self, step, completed) -> StepOutcome:
+        """用当前观察驱动一个动作，动作后验收并复用新观察进入下一轮。"""
+        state = StepRuntimeState()
+        self._active_state = state
+        if not self.budget.allow():
+            return self._outcome(step, state, "failed", "预算或重试次数耗尽")
 
-        def state_key(page):
-            # Ref renumbering is not business progress.
-            text = re.sub(r"\[ref=[\w-]+\]", "", page.snapshot + "\n" + page.page_text)
-            return page.url, text
+        page = self._capture(step)
+        initial = self.gate.check(step, page, initial=True)
+        if initial.accepted:
+            return self._outcome(step, state, "completed", completion=initial)
 
-        def control_key(page):
-            # Dynamic banners and ref renumbering must not hide a form cycle.
-            lines = [re.sub(r"\[ref=[\w-]+\]", "", line).strip()
-                     for line in page.snapshot.splitlines()]
-            controls = tuple(line for line in lines if re.search(
-                r"\b(textbox|searchbox|combobox|listbox|option|spinbutton|checkbox|radio|button)\b", line))
-            return page.url, controls or tuple(lines)
+        while state.budget.allow(self.budget):
+            state.budget.attempts += 1
+            protocol.set_context(iteration=self.budget.steps + 1)
+            if not page.stable or page.loading:
+                # 不稳定观察不可驱动动作；轮询次数也受步骤尝试预算约束。
+                page = self._capture(step)
+                check = self.gate.check(step, page, state.last_before, state.last_action)
+                if check.accepted:
+                    return self._outcome(step, state, "completed", completion=check)
+                continue
 
-        def needs_model_verification() -> bool:
-            """Return whether page evidence needs semantic completion review.
+            decision = self._choose(step, state, page)
+            if decision.terminal == "DONE":
+                done = self.gate.check(step, page, state.last_before, state.last_action)
+                if done.accepted:
+                    return self._outcome(step, state, "completed", completion=done)
+                self._recover(step, state, page, "DONE 未通过完成验收", completed)
+                continue
 
-            URL-only acceptance is deterministic.  Text-only and goal-state
-            criteria are deliberately treated as ambiguous because a label can
-            remain visible before the requested action has finished.
-            """
-            if step.risk in {"medium", "high"} or step.needs_user_confirmation:
-                return True
-            if len(step.success_criteria) > 1:
-                return True
-            for criterion in step.success_criteria:
-                if isinstance(criterion, dict):
-                    if criterion.get("type") in {"text_contains", "goal_state"}:
-                        return True
-                elif str(criterion).lower().startswith("text_contains:"):
-                    return True
-            return False
+            if decision.terminal == "BLOCKED" or not decision.actions:
+                self._recover(step, state, page, "没有安全可执行的动作", completed)
+                continue
+            if decision.confidence < 0.65:
+                self._recover(step, state, page, "决策置信度不足", completed)
+                continue
 
-        def deterministic_completion_allowed() -> bool:
-            """Avoid finishing on a weak legacy text criterion at step entry."""
-            return not needs_model_verification()
+            # 每轮只接受一个动作，并绑定本次观察；显式的旧版本不可覆盖。
+            action = decision.actions[0]
+            if action.observation_version is None:
+                action = replace(action, observation_version=page.version)
+            precondition = self.validator.precondition(page, action)
+            if not precondition:
+                self._recover(step, state, page, "；".join(precondition.evidence), completed)
+                page = self._capture(step)
+                continue
 
-        def goal_complete(page, before=None, action=None, phase="before_decision",
-                          allow_model=False) -> bool:
-            nonlocal last_check, last_verdict, verification_source
-            with protocol.measure("runtime.goal_check", phase=phase):
-                criteria_met = self.validator.step(page, step.success_criteria, step.start_url)
-                if not allow_model:
-                    verification_source = "criteria"
-                    return criteria_met
-                key = (page.url, page.snapshot, page.page_text,
-                       before.url if before else "", before.snapshot if before else "",
-                       before.page_text if before else "",
-                       action.kind if action else "", action.ref if action else "",
-                       action.value if action else "")
-                if key != last_check:
-                    last_verdict = self.completion.verify(step, before, page, action)
-                    last_check = key
-                if last_verdict is None:
-                    verification_source = "criteria"
-                    return criteria_met
-                if last_verdict != criteria_met:
-                    protocol.trace("completion.criteria.disagree", step_id=step.id,
-                                   criteria_met=criteria_met, goal_complete=last_verdict,
-                                   current_url=page.url)
-                if last_verdict:
-                    verification_source = "goal_verifier"
-                return last_verdict
-
-        def page_key(url: str) -> str:
-            parsed = urlsplit(url)
-            return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-
-        while self.budget.allow():
-            self.budget.consume_step()
-            protocol.set_context(iteration=self.budget.steps)
-            protocol.trace("orchestrator.iteration", budget=self.budget.snapshot(), failures=failures, slow=slow, advice=advice)
-            with protocol.measure("runtime.observe", phase="before_decision"):
-                observation = self.observer.capture()
-            page_observed_at = time.monotonic()
-            if last_state is not None and state_key(observation) != last_state:
-                no_progress = 0  # Allow asynchronous changes to settle.
-            # The first observation only uses cheap deterministic acceptance.
-            # Semantic completion is checked after an action or when JEV
-            # explicitly proposes DONE.
-            if (goal_complete(
-                    observation,
-                    last_before,
-                    last_action,
-                    allow_model=interacted and needs_model_verification(),
-                ) and (interacted or deterministic_completion_allowed())):
-                self._complete(step, completed, observation, verification_source)
-                protocol.log(f"flow=verify step={step.id} status=passed source=pre_decision")
-                return None
-            decision_started = time.monotonic()
-            skill = self.skills.match(step.goal, observation.url) if self.skills else None
-            if skill:
-                protocol.log(f"flow=decision step={step.id} route=skill")
-                actions = self.skills.actions(skill)
-                decision = type("SkillDecision", (), {"actions": actions, "route": "skill", "confidence": 1.0})()
-            else:
-                decision = self.decision.choose(
-                    step.goal, observation, step.start_url if not interacted else "",
-                    slow=slow, advice=advice,
-                    force_entry=(step.success_criteria == (f"url_prefix:{step.start_url}",)),
-                    success_criteria=step.success_criteria,
-                    recent_action=last_action,
-                    force_reasoning=no_progress >= 2 or cycle_recovery,
-                    action_history=action_history[-6:],
-                )
-            protocol.timing("runtime.decision", decision_started, route=decision.route)
-            # Treat every browser interaction as a new planning boundary.  A
-            # previously chosen sequence can become invalid as soon as the
-            # page changes, so the next loop must capture and analyze again.
-            if len(decision.actions) > 1:
-                protocol.trace("orchestrator.reanalyze_after_action",
-                               discarded_actions=len(decision.actions) - 1)
-                decision = DecisionResult(decision.actions[:1], decision.confidence,
-                                          decision.route, getattr(decision, "rationale", ""),
-                                          getattr(decision, "terminal", ""))
-            protocol.log(
-                f"flow=decision step={step.id} route={decision.route} "
-                f"confidence={decision.confidence:.2f} actions={len(decision.actions)}"
+            requires_confirmation = action.sensitive or (
+                step.needs_user_confirmation and action.kind not in {"open", "wait", "scroll"}
             )
-            protocol.trace("orchestrator.actions", route=decision.route, confidence=decision.confidence, actions=decision.actions)
-            terminal = getattr(decision, "terminal", "")
-            if terminal == "DONE":
-                accepted = goal_complete(
-                    observation,
-                    last_before,
-                    last_action,
-                    phase="jev_done",
-                    allow_model=needs_model_verification(),
-                )
-                if accepted:
-                    self._complete(step, completed, observation, verification_source)
-                    protocol.log(f"flow=verify step={step.id} status=passed source=jev_done")
-                    return None
-                protocol.trace("orchestrator.done_rejected",
-                               step_id=step.id,
-                               reason="JEV DONE did not pass the completion gate",
-                               current_url=observation.url)
-                failures += 1
-                self.budget.failure()
-                advice = self.reflection.advise(step.goal, observation, "JEV claimed DONE but acceptance was not proven")
-                self._progress(step, "retry", completed, current_url=observation.url,
-                               error="JEV DONE 未通过完成验收", advice=advice)
-                slow = True
-                continue
-            if terminal == "BLOCKED":
-                self._progress(step, "failed", completed, current_url=observation.url,
-                               reason="JEV 报告没有安全可执行的动作")
-                return f"步骤 {step.id} 失败：JEV 报告没有安全可执行的动作"
-            if not decision.actions:
-                failures += 1
-                self.budget.failure()
-                advice = self.reflection.advise(step.goal, observation, "no action")
-                self._progress(step, "retry", completed, current_url=observation.url,
-                               error="no action", advice=advice)
-                slow = True
-                continue
-            failed = False
-            for action in decision.actions:
-                if step.needs_user_confirmation:
-                    protocol.trace("orchestrator.confirmation_required", action=action)
-                    self._progress(step, "waiting_confirmation", completed, current_url=observation.url)
-                    protocol.notify(f"步骤需要用户确认：{step.goal}", "blocking")
-                    return f"等待用户确认：{step.goal}"
-                try:
-                    target_label = next((element.get("text", "") for element in observation.elements
-                                         if element.get("ref") == action.ref), "")
-                    protocol.timing("browser.action.page_observed_to_dispatch", page_observed_at,
-                                    action=action.kind, route=decision.route,
-                                    target=action.ref or (action.value if action.kind == "open" else ""),
-                                    target_label=target_label)
-                    with protocol.measure("runtime.execute", action=action.kind):
-                        result = self.executor.execute(action)
-                except Exception as exc:  # executor turns operational errors into reflection input
-                    interacted = interacted or action.kind != "open"
-                    failed = True
-                    self.budget.failure()
-                    advice = self.reflection.advise(step.goal, observation, str(exc))
-                    self._progress(step, "retry", completed, current_url=observation.url,
-                                   error=str(exc), advice=advice)
-                    break
+            if requires_confirmation:
+                protocol.notify(f"步骤需要用户确认：{step.goal}", "blocking")
+                return self._outcome(step, state, "waiting_user", f"等待用户确认：{step.goal}")
+
+            self.budget.consume_step()
+            state.budget.actions += 1
+            error = ""
+            try:
+                result = self.executor.execute(action)
                 if not result.ok:
-                    # Browser navigation may report a timeout while the page
-                    # finishes loading in the background. Verify the URL once
-                    # before counting it as a failed action.
-                    if action.kind == "open" and action.value:
-                        try:
-                            settled_url = self.session.current_url()
-                        except Exception:
-                            settled_url = ""
-                        if settled_url.startswith(action.value.rstrip("/")):
-                            protocol.trace("orchestrator.action.soft_success", action=action,
-                                           reason="navigation reached target after command timeout",
-                                           current_url=settled_url)
-                            result = type("SettledResult", (), {"ok": True, "preview": result.preview})()
-                    if result.ok:
-                        pass
-                    else:
-                        interacted = interacted or action.kind != "open"
-                        failed = True
-                        self.budget.failure()
-                        advice = self.reflection.advise(step.goal, observation, result.preview)
-                        self._progress(step, "retry", completed, current_url=observation.url,
-                                       error=result.preview, advice=advice)
-                        break
-                interacted = True
-                last_before, last_action = observation, action
-                with protocol.measure("runtime.observe", phase="after_action", action=action.kind):
-                    after = self.observer.capture()
-                changed = state_key(observation) != state_key(after)
-                no_progress = 0 if changed else no_progress + 1
-                last_state = state_key(after)
-                action_history.append({"action": asdict(action), "page_changed": changed,
-                                       "before_controls": control_key(observation)[1],
-                                       "after_controls": control_key(after)[1]})
-                target_label = next((element.get("text", "") for element in observation.elements
-                                     if element.get("ref") == action.ref), "")
-                transition = (control_key(observation), action.kind, target_label,
-                              action.value, control_key(after))
-                state_transitions[transition] = state_transitions.get(transition, 0) + 1
-                repeated = state_transitions[transition]
-                if repeated >= 2 and transition[0] != transition[-1]:
-                    cycle_recovery = True
-                    protocol.trace("orchestrator.control_cycle_detected", count=repeated,
-                                   action=action, before=control_key(observation), after=control_key(after))
-                if not self.validator.action(observation, after, action):
-                    # A successful browser command is still progress even when
-                    # the page has not exposed a visible change yet. This is
-                    # common for input events, autocomplete menus and async
-                    # navigation. Start the next observation immediately;
-                    # only command errors consume the failure budget.
-                    protocol.trace("orchestrator.action.uncertain", action=action,
-                                   reason="command succeeded but page snapshot did not change",
-                                   current_url=after.url)
-                    self._progress(step, "progress_uncertain", completed,
-                                   current_url=after.url, action=asdict(action),
-                                   advice="动作已执行，页面暂未显示可验证变化；继续基于最新页面观察推进。")
-                    observation = after
-                    continue
-                observation = after
-            if (not failed and goal_complete(
-                    observation,
-                    last_before,
-                    last_action,
-                    phase="after_action",
-                    allow_model=needs_model_verification())):
-                self._complete(step, completed, observation, verification_source)
-                protocol.log(f"flow=verify step={step.id} status=passed")
-                return None
-            if not failed:
-                if cycle_recovery and repeated >= 3:
-                    self._progress(step, "failed", completed, current_url=observation.url,
-                                   reason="同一控件状态与动作反复出现，恢复尝试仍未解除循环")
-                    return f"步骤 {step.id} 停止：控件状态往返循环，恢复尝试未能解除阻塞"
-                if no_progress >= 5:
-                    self._progress(step, "failed", completed, current_url=observation.url,
-                                   reason="连续动作无可观察进展，恢复尝试未能解除阻塞")
-                    return f"步骤 {step.id} 停止：连续动作无可观察进展，恢复尝试未能解除阻塞"
-                # Repeating the same navigation between two pages is a cycle,
-                # not progress.  Stop before it consumes the entire budget.
-                if last_before and last_action and page_key(last_before.url) != page_key(observation.url):
-                    acted_on = next((element.get("text", "") for element in last_before.elements
-                                     if element.get("ref") == last_action.ref), "")
-                    transition = (page_key(last_before.url), last_action.kind,
-                                  acted_on, last_action.value, page_key(observation.url))
-                    transitions[transition] = transitions.get(transition, 0) + 1
-                    if transitions[transition] >= 2:
-                        protocol.trace("orchestrator.cycle_detected", transition=transition,
-                                       count=transitions[transition])
-                        self._progress(step, "failed", completed, current_url=observation.url,
-                                       reason="页面往返循环，未能确认目标完成")
-                        return f"步骤 {step.id} 停止：页面往返循环，未能确认目标完成"
-                # The actions completed successfully but the step's final
-                # criterion is not visible yet. This is normal multi-action
-                # progress, so do not convert it into a failure.
-                slow = True
-                advice = "动作已执行但步骤尚未完成；继续观察当前页面并选择下一步。"
-                if no_progress >= 2 or cycle_recovery:
-                    advice = ("连续动作未产生可观察变化。请分析最近动作和当前页面，"
-                              "改用其他可验证的动作，不要重复无效点击或等待；"
-                              "检查输入联想候选是否确认、弹层是否阻挡以及是否缺少必要信息。"
-                              "仅在有加载证据时等待，不猜测业务参数。")
-                    if cycle_recovery:
-                        advice = ("控件状态正在往返循环，页面变化不代表业务进展。"
-                                  "请检查动作历史中改变了哪个字段、候选是否匹配目标；"
-                                  "不要重复导致错误选项的按键。改用明确匹配的候选或其他交互方式。"
-                                  "不要把轮播变化当成进展，不猜测业务参数。")
-                self._progress(step, "progressing", completed,
-                               current_url=observation.url, advice=advice)
+                    error = result.preview
+            except BindingLost:
+                raise
+            except Exception as exc:
+                error = str(exc)
+
+            # 即使命令报错，也可能已造成部分变化；始终刷新并废弃旧 ref。
+            after = self._capture(step)
+            if error and action.kind == "open" and url_matches(after.url, action.value):
+                error = ""
+            validation = self.validator.action(page, after, action)
+            state.last_before, state.last_action = page, action
+            state.results.append(
+                StepResult(
+                    asdict(action),
+                    page.version,
+                    after.version,
+                    "execution_failed" if error else validation.status,
+                    (error,) if error else validation.evidence,
+                    after.url,
+                )
+            )
+            self.memory.write("action_result", asdict(state.results[-1]))
+            cycle_reason = self._track_transition(state, page, after, action)
+            before, page = page, after
+
+            if error:
+                self._recover(step, state, page, error, completed)
                 continue
-            slow = failures >= 2
-        protocol.trace("orchestrator.step.exhausted", budget=self.budget.snapshot(), failures=failures)
-        self._progress(step, "failed", completed, reason="预算或重试次数耗尽",
-                       budget=asdict(self.budget.snapshot()), failures=failures)
-        return f"步骤 {step.id} 失败：预算或重试次数耗尽"
+            if validation.status == "loading":
+                continue
+            if validation.status == "unchanged":
+                self._recover(step, state, page, "连续动作无可观察进展", completed, no_op=True)
+                # L1 允许一次即时刷新，处理异步控件和失效 ref；不增加固定 sleep。
+                refreshed = self._capture(step)
+                if (
+                    refreshed.fingerprint != page.fingerprint
+                    and refreshed.stable
+                    and not refreshed.loading
+                ):
+                    state.budget.progressed()
+                    state.slow = False
+                    state.skill_cursor += 1
+                page = refreshed
+            elif not validation:
+                self._recover(step, state, page, "；".join(validation.evidence), completed)
+                continue
+            else:
+                state.budget.progressed()
+                state.slow = False
+                state.skill_cursor += 1
+
+            completion = self.gate.check(step, page, before, action)
+            if completion.accepted:
+                return self._outcome(step, state, "completed", completion=completion)
+            if cycle_reason:
+                return self._outcome(step, state, "replan", cycle_reason)
+
+        reason = (
+            "连续动作无可观察进展，恢复预算耗尽"
+            if state.budget.no_ops
+            else "预算或重试次数耗尽，步骤仍未完成"
+        )
+        status = "replan" if self.budget.allow() else "failed"
+        return self._outcome(step, state, status, reason)

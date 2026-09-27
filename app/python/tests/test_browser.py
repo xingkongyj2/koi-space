@@ -93,7 +93,9 @@ class TabSelection(unittest.TestCase):
         self.assertIsNone(self.select(tabs, None, "https://a.test", "Same"))
 
     def test_returns_none_when_the_target_is_absent(self):
-        self.assertIsNone(self.select([tab("t1", "https://a.test", "A")], None, "https://missing.test", ""))
+        self.assertIsNone(
+            self.select([tab("t1", "https://a.test", "A")], None, "https://missing.test", "")
+        )
 
     def test_ignores_non_page_targets(self):
         tabs = [
@@ -121,15 +123,19 @@ class FailureText(unittest.TestCase):
         self.assertEqual(browser.BrowserSession._failure_text("plain failure", ""), "plain failure")
 
     def test_reports_silence_explicitly(self):
-        self.assertEqual(browser.BrowserSession._failure_text("", ""), "agent-browser produced no output")
+        self.assertEqual(
+            browser.BrowserSession._failure_text("", ""), "agent-browser produced no output"
+        )
 
 
 class Environment(unittest.TestCase):
     def test_sets_only_the_vars_agent_browser_needs(self):
         env = make_session().env
         self.assertEqual(env["AGENT_BROWSER_CDP"], "56353")
-        self.assertEqual(env["AGENT_BROWSER_SESSION"], browser.session_name(
-            "62257e30-c753-4153-a8d9-b242cbad2987", 56353))
+        self.assertEqual(
+            env["AGENT_BROWSER_SESSION"],
+            browser.session_name("62257e30-c753-4153-a8d9-b242cbad2987", 56353),
+        )
         self.assertEqual(env["AGENT_BROWSER_SOCKET_DIR"], str(browser.socket_dir()))
         self.assertGreater(int(env["AGENT_BROWSER_IDLE_TIMEOUT_MS"]), 3_600_000)
 
@@ -140,6 +146,7 @@ class Environment(unittest.TestCase):
 
     def test_strips_vars_that_would_steer_the_binding(self):
         import os
+
         os.environ["AGENT_BROWSER_AUTO_CONNECT"] = "1"
         try:
             self.assertNotIn("AGENT_BROWSER_AUTO_CONNECT", make_session().env)

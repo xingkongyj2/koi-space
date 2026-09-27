@@ -1,8 +1,9 @@
 """Readable timing rows cover model planning, Jev and browser commands."""
+
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from koi_agent import protocol
@@ -20,9 +21,11 @@ class TimingLogTests(unittest.TestCase):
         self.log_path = Path(temporary.name) / "agent.log"
         self.entries = []
         original = protocol._record
+
         def record(kind, **data):
             self.entries.append({"kind": kind, **data})
             original(kind, **data)
+
         recorder = patch.object(protocol, "_record", side_effect=record)
         recorder.start()
         self.addCleanup(recorder.stop)
@@ -34,19 +37,27 @@ class TimingLogTests(unittest.TestCase):
         ai = Mock()
         ai.chat.side_effect = [
             '{"status":"ready","url":"https://example.com/","question":""}',
-            json.dumps({
-                "status": "ask", "needs_browser": True, "question": "请提供账号",
-                "direct_answer": "", "steps": [],
-            }),
+            json.dumps(
+                {
+                    "status": "ask",
+                    "needs_browser": True,
+                    "question": "请提供账号",
+                    "direct_answer": "",
+                    "steps": [],
+                }
+            ),
         ]
         planner = Planner(ai)
         planner.locate_entry("打开 example.com")
         planner.plan("打开 example.com")
 
-        self.assertEqual([entry["stage"] for entry in self.entries],
-                         ["planner.locate_entry", "planner.plan"])
-        self.assertEqual([entry["request_timings"][0]["stage"] for entry in self.entries],
-                         ["planning.entry.model_request", "planning.full.model_request"])
+        self.assertEqual(
+            [entry["stage"] for entry in self.entries], ["planner.locate_entry", "planner.plan"]
+        )
+        self.assertEqual(
+            [entry["request_timings"][0]["stage"] for entry in self.entries],
+            ["planning.entry.model_request", "planning.full.model_request"],
+        )
         self.assertTrue(all(entry["ms"] >= 0 for entry in self.entries))
         readable = self.log_path.read_text()
         self.assertIn("规划层 · ①入口定位", readable)
@@ -55,12 +66,20 @@ class TimingLogTests(unittest.TestCase):
 
     def test_jev_and_click_have_separate_durations(self):
         provider = Provider("decision", "https://api.example.com", "jev", "key")
-        observation = Observation("https://example.com/", "", "- button History [ref=e1]",
-                                  "", False, ({"ref": "@e1", "text": "button History"},))
-        response = {"answers": {
-            "operation": {"choice": "CLICK", "confidence": 0.9},
-            "click_target": {"choice": "1"},
-        }}
+        observation = Observation(
+            "https://example.com/",
+            "",
+            "- button History [ref=e1]",
+            "",
+            False,
+            ({"ref": "@e1", "text": "button History"},),
+        )
+        response = {
+            "answers": {
+                "operation": {"choice": "CLICK", "confidence": 0.9},
+                "click_target": {"choice": "1"},
+            }
+        }
         with patch("koi_agent.models._request_json", return_value=response):
             choice = JevDecision(provider).choose("打开历史记录", observation)
         self.assertEqual(choice["target"], "@e1")
@@ -79,7 +98,6 @@ class TimingLogTests(unittest.TestCase):
         for label in ("输入", "输出", "命令", "请求耗时", "耗时", "决策层 · JEV 请求"):
             self.assertIn(label, readable)
         self.assertNotIn('"request_timings"', readable)
-
 
 
 if __name__ == "__main__":

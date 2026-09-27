@@ -1,4 +1,5 @@
-"""Failure analysis hook used to produce the next decision's advice."""
+"""根据当前证据和失败原因生成恢复建议，不直接执行浏览器操作。"""
+
 from __future__ import annotations
 
 import json
@@ -15,12 +16,14 @@ class Reflection:
 
     @protocol.traced("reflection.advise")
     def advise(self, goal: str, observation, error: str = "") -> str:
-        protocol.log(
-            f"flow=reflection goal={goal[:80]!r} error={error[:120]!r}"
-        )
+        """根据错误给出恢复建议；反思模型不可用时返回确定性提示。"""
+        protocol.log(f"flow=reflection goal={goal[:80]!r} error={error[:120]!r}")
         if self.ai:
             try:
-                payload = json.dumps({"goal": goal, "snapshot": observation.snapshot, "error": error}, ensure_ascii=False)
+                payload = json.dumps(
+                    {"goal": goal, "snapshot": observation.snapshot, "error": error},
+                    ensure_ascii=False,
+                )
                 return self.ai.chat(REFLECTION_SYSTEM_PROMPT, payload)
             except Exception as exc:  # reflection must never stop recovery
                 protocol.trace_exception("reflection.model.fallback", exc)

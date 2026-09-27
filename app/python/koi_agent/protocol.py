@@ -1,24 +1,18 @@
-"""NDJSON event protocol between the Python agent and the Electron main process.
+"""Python 与 Electron 之间的 NDJSON 事件协议。
 
-The main process reads this process's stdout line by line and turns each line
-into an `HlEvent` (see `app/src/shared/session-schemas.ts`), which is persisted
-to SQLite and streamed to the renderer. One JSON object per line, no other
-stdout output — anything else on stdout is dropped by the parser.
-
-Layer inputs, outputs and timings share one readable file under the Python
-root's log directory. Intermediate diagnostics are not persisted.
-stdout remains exclusively the event protocol.
-"""
+stdout 每行只写一个 HlEvent，供宿主持久化并同步给界面。
+模块输入、输出和耗时写入 Python log 目录中的可读日志，
+避免中间诊断信息污染事件流或触发额外的界面更新。"""
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
 import time
-import inspect
-from contextvars import ContextVar
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -50,8 +44,10 @@ _LAYERS = {
 }
 _FRAME: ContextVar[dict | None] = ContextVar("log_frame", default=None)
 _REQUEST_STAGES = {
-    "planning.entry.model_request", "planning.full.model_request",
-    "decision.jev.request", "decision.jev.type_text_model_request",
+    "planning.entry.model_request",
+    "planning.full.model_request",
+    "decision.jev.request",
+    "decision.jev.type_text_model_request",
     "verification.model_request",
 }
 _STAGE_LABELS = {
@@ -67,38 +63,96 @@ _STAGE_LABELS = {
     "completion.model.unavailable": "验收层 · 模型不可用",
     "planner.repair": "规划层 · 修正计划",
     "planner.entry_locator.repair": "规划层 · 修正入口",
-
 }
 _FIELD_LABELS = {
-    "inputs": "输入", "result": "输出", "ms": "耗时（毫秒）",
-    "requests": "模型请求", "request": "请求", "request_timings": "请求耗时",
-    "commands": "命令", "errors": "错误", "error": "错误原因",
-    "error_type": "错误类型", "response": "响应", "messages": "最终消息",
-    "task": "任务输入", "stage": "阶段", "layer": "所属层",
-    "session_id": "任务编号", "step_id": "步骤编号", "iteration": "轮次",
-    "url": "网址", "title": "页面标题", "snapshot": "网页交互内容",
-    "page_text": "网页全文", "diff": "页面变化", "changed": "是否变化",
-    "elements": "交互元素", "ref": "元素引用", "text": "文本",
-    "goal": "目标", "step": "步骤", "steps": "步骤列表", "id": "编号",
-    "status": "状态", "needs_browser": "是否需要浏览器", "question": "追问",
-    "direct_answer": "直接答复", "success_criteria": "验收条件",
-    "depends_on": "依赖步骤", "start_url": "入口网址", "parallel_group": "并行组",
-    "needs_user_confirmation": "是否需要用户确认", "risk": "风险",
-    "user_input": "用户输入", "history": "历史", "context": "上下文",
-    "completed": "已完成步骤", "criteria": "校验条件", "observation": "网页观察",
-    "before": "操作前网页", "after": "操作后网页", "action": "动作",
-    "actions": "动作列表", "kind": "类型", "value": "参数", "expected": "预期结果",
-    "sensitive": "是否敏感", "route": "决策来源", "confidence": "置信度",
-    "operation": "操作", "target": "目标元素", "ok": "是否成功",
-    "args": "命令参数", "stdout": "标准输出", "stderr": "错误输出",
-    "code": "退出码", "preview": "结果预览", "attempt": "请求次数",
-    "reason": "原因", "model": "模型", "provider": "模型服务",
-    "provider_name": "模型服务", "body": "请求体", "timeout": "超时（秒）",
-    "instructions": "系统提示词", "input": "输入", "system": "系统提示词",
-    "enable_thinking": "是否启用思考", "summary": "总结", "iterations": "执行轮数",
-    "message": "消息", "type": "类型", "event": "最终事件", "level": "级别",
-    "advice": "反思建议", "recent_action": "上一次动作", "action_history": "动作历史",
-    "force_reasoning": "是否强制推理", "skills": "技能", "memory": "记忆",
+    "inputs": "输入",
+    "result": "输出",
+    "ms": "耗时（毫秒）",
+    "requests": "模型请求",
+    "request": "请求",
+    "request_timings": "请求耗时",
+    "commands": "命令",
+    "errors": "错误",
+    "error": "错误原因",
+    "error_type": "错误类型",
+    "response": "响应",
+    "messages": "最终消息",
+    "task": "任务输入",
+    "stage": "阶段",
+    "layer": "所属层",
+    "session_id": "任务编号",
+    "step_id": "步骤编号",
+    "iteration": "轮次",
+    "url": "网址",
+    "title": "页面标题",
+    "snapshot": "网页交互内容",
+    "page_text": "网页全文",
+    "diff": "页面变化",
+    "changed": "是否变化",
+    "elements": "交互元素",
+    "ref": "元素引用",
+    "text": "文本",
+    "goal": "目标",
+    "step": "步骤",
+    "steps": "步骤列表",
+    "id": "编号",
+    "status": "状态",
+    "needs_browser": "是否需要浏览器",
+    "question": "追问",
+    "direct_answer": "直接答复",
+    "success_criteria": "验收条件",
+    "depends_on": "依赖步骤",
+    "start_url": "入口网址",
+    "parallel_group": "并行组",
+    "needs_user_confirmation": "是否需要用户确认",
+    "risk": "风险",
+    "user_input": "用户输入",
+    "history": "历史",
+    "context": "上下文",
+    "completed": "已完成步骤",
+    "criteria": "校验条件",
+    "observation": "网页观察",
+    "before": "操作前网页",
+    "after": "操作后网页",
+    "action": "动作",
+    "actions": "动作列表",
+    "kind": "类型",
+    "value": "参数",
+    "expected": "预期结果",
+    "sensitive": "是否敏感",
+    "route": "决策来源",
+    "confidence": "置信度",
+    "operation": "操作",
+    "target": "目标元素",
+    "ok": "是否成功",
+    "args": "命令参数",
+    "stdout": "标准输出",
+    "stderr": "错误输出",
+    "code": "退出码",
+    "preview": "结果预览",
+    "attempt": "请求次数",
+    "reason": "原因",
+    "model": "模型",
+    "provider": "模型服务",
+    "provider_name": "模型服务",
+    "body": "请求体",
+    "timeout": "超时（秒）",
+    "instructions": "系统提示词",
+    "input": "输入",
+    "system": "系统提示词",
+    "enable_thinking": "是否启用思考",
+    "summary": "总结",
+    "iterations": "执行轮数",
+    "message": "消息",
+    "type": "类型",
+    "event": "最终事件",
+    "level": "级别",
+    "advice": "反思建议",
+    "recent_action": "上一次动作",
+    "action_history": "动作历史",
+    "force_reasoning": "是否强制推理",
+    "skills": "技能",
+    "memory": "记忆",
 }
 _CONTEXT: ContextVar[dict] = ContextVar("log_context", default={})
 _HISTORY: ContextVar[list[dict[str, Any]] | None] = ContextVar("task_history", default=None)
@@ -106,20 +160,18 @@ _CALLS = count(1)
 
 
 def set_context(**data: Any) -> None:
+    """合并当前任务的日志关联字段。"""
     _CONTEXT.set({**_CONTEXT.get(), **data})
 
 
 def current_iteration() -> int:
+    """读取当前动作轮次，尚未执行动作时为零。"""
     return _CONTEXT.get().get("iteration", 0)
 
 
 @contextmanager
 def capture_events(history: list[dict[str, Any]]):
-    """Keep emitted messages in the same history used by later planner calls.
-
-    Electron persists these exact events for the next process/resume. Context
-    scoping keeps independent tasks and tests from sharing a mutable history.
-    """
+    """把本轮事件追加到任务历史；上下文退出后恢复，避免跨任务污染。"""
     token = _HISTORY.set(history)
     try:
         yield
@@ -128,6 +180,7 @@ def capture_events(history: list[dict[str, Any]]):
 
 
 def _json_value(value: Any) -> Any:
+    """将数据类和路径转换为可记录对象，不序列化任意实例的内部状态。"""
     if is_dataclass(value) and not isinstance(value, type):
         to_dict = getattr(value, "to_dict", None)
         return to_dict() if callable(to_dict) else asdict(value)
@@ -137,7 +190,7 @@ def _json_value(value: Any) -> Any:
 
 
 def trace(stage: str, **data: Any) -> None:
-    """Fold useful request/command details into the enclosing layer."""
+    """将请求、响应和错误信息合并到当前模块的诊断记录。"""
     frame = _FRAME.get()
     if frame is None:
         return
@@ -159,7 +212,7 @@ def trace(stage: str, **data: Any) -> None:
 
 
 def timing(stage: str, started_at: float, **data: Any) -> float:
-    """Merge request durations into the final layer record."""
+    """计算耗时，并将模型请求时间追加到当前模块的日志。"""
     ms = round((time.monotonic() - started_at) * 1000, 2)
     frame = _FRAME.get()
     if frame is not None and stage in _REQUEST_STAGES:
@@ -169,7 +222,7 @@ def timing(stage: str, started_at: float, **data: Any) -> float:
 
 @contextmanager
 def measure(stage: str, **data: Any):
-    """Time a layer even when it fails, without adding a frontend event."""
+    """即使模块抛出异常也记录耗时，不额外发送界面事件。"""
     started_at = time.monotonic()
     try:
         yield
@@ -178,22 +231,27 @@ def measure(stage: str, **data: Any):
 
 
 def timed(stage: str):
-    """Decorator for whole-layer timing, including failure paths."""
+    """为整个函数记录耗时，包含失败和异常路径。"""
+
     def decorate(function):
         @wraps(function)
         def wrapped(*args, **kwargs):
             with measure(stage):
                 return function(*args, **kwargs)
+
         return wrapped
+
     return decorate
 
 
 def trace_exception(stage: str, exc: Exception) -> None:
+    """记录异常类型与信息。"""
     trace(stage, error=str(exc), error_type=type(exc).__name__)
 
 
 def traced(stage: str):
-    """Write one completed input/output/time block per layer or request."""
+    """每层只输出一组完整的输入、结果与耗时，并恢复父级日志上下文。"""
+
     def decorate(function):
         signature = inspect.signature(function)
 
@@ -225,19 +283,28 @@ def traced(stage: str):
                 if "request" in frame:
                     # The actual request contains the complete model input.
                     inputs = {}
-                entry = dict(stage=stage, layer=_LAYERS[stage], inputs=inputs,
-                             **output, **frame, ms=round((time.monotonic() - started) * 1000, 2))
+                entry = dict(
+                    stage=stage,
+                    layer=_LAYERS[stage],
+                    inputs=inputs,
+                    **output,
+                    **frame,
+                    ms=round((time.monotonic() - started) * 1000, 2),
+                )
                 if stage.startswith("model.") and parent is not None:
                     parent.setdefault("requests", []).append(entry)
                 else:
                     _record("layer", **entry)
                 _FRAME.reset(frame_token)
                 _CONTEXT.reset(token)
+
         return wrapped
+
     return decorate
 
 
 def _format_readable(entry: dict) -> str:
+    """把嵌套数据转成中文字段日志，长文本移到独立段落。"""
     stage = entry.get("stage", entry["kind"])
     header = f"[{entry['time']}] {entry.get('layer', stage)} | 耗时 {entry.get('ms', 0):,.2f} 毫秒"
     for key in ("session_id", "step_id", "iteration"):
@@ -245,18 +312,40 @@ def _format_readable(entry: dict) -> str:
             header += f" | {_FIELD_LABELS.get(key, key)}={entry[key]}"
     # Normalize dataclasses once so nested fields can also be rendered as text.
     # Header already carries timing and correlation; do not repeat metadata.
-    details = {key: value for key, value in entry.items()
-               if key not in {"time", "pid", "kind", "stage", "layer", "ms",
-                              "session_id", "step_id", "iteration", "call_id", "parent_call_id"}}
+    details = {
+        key: value
+        for key, value in entry.items()
+        if key
+        not in {
+            "time",
+            "pid",
+            "kind",
+            "stage",
+            "layer",
+            "ms",
+            "session_id",
+            "step_id",
+            "iteration",
+            "call_id",
+            "parent_call_id",
+        }
+    }
     normalized = json.loads(json.dumps(details, ensure_ascii=False, default=_json_value))
     blocks = []
 
     def expand(value, path=""):
         if isinstance(value, dict):
-            return {_FIELD_LABELS.get(key, key): expand(
-                _STAGE_LABELS.get(item, item) if key == "stage" and isinstance(item, str) else item,
-                f"{path}.{_FIELD_LABELS.get(key, key)}" if path else _FIELD_LABELS.get(key, key))
-                for key, item in value.items()}
+            return {
+                _FIELD_LABELS.get(key, key): expand(
+                    _STAGE_LABELS.get(item, item)
+                    if key == "stage" and isinstance(item, str)
+                    else item,
+                    f"{path}.{_FIELD_LABELS.get(key, key)}"
+                    if path
+                    else _FIELD_LABELS.get(key, key),
+                )
+                for key, item in value.items()
+            }
         if isinstance(value, list):
             return [expand(item, f"{path}[{index}]") for index, item in enumerate(value)]
         if isinstance(value, str):
@@ -278,8 +367,14 @@ def _format_readable(entry: dict) -> str:
 
 
 def _record(kind: str, **data: Any) -> None:
-    """One file per agent process, independent of cwd and Electron userData."""
-    entry = {"time": datetime.now(timezone.utc).isoformat(), "pid": os.getpid(), **_CONTEXT.get(), "kind": kind, **data}
+    """每个代理进程写独立日志，不依赖工作目录或 Electron 配置目录。"""
+    entry = {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "pid": os.getpid(),
+        **_CONTEXT.get(),
+        "kind": kind,
+        **data,
+    }
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as handle:
@@ -290,6 +385,7 @@ def _record(kind: str, **data: Any) -> None:
 
 
 def _emit(event: dict[str, Any]) -> None:
+    """先追加历史，再原子式输出一行 NDJSON 并刷新缓冲。"""
     history = _HISTORY.get()
     if history is not None:
         history.append(deepcopy(event))
@@ -304,30 +400,36 @@ def _emit(event: dict[str, Any]) -> None:
 
 
 def thinking(text: str) -> None:
+    """发送可持久化的规划或执行状态。"""
     _emit({"type": "thinking", "text": text})
 
 
 def tool_call(name: str, args: Any, iteration: int) -> None:
+    """记录即将执行的浏览器动作及参数。"""
     _emit({"type": "tool_call", "name": name, "args": args, "iteration": iteration})
 
 
 def tool_result(name: str, ok: bool, preview: str, ms: float) -> None:
+    """记录动作执行是否成功及其结果预览。"""
     _emit({"type": "tool_result", "name": name, "ok": ok, "preview": preview, "ms": round(ms, 1)})
 
 
 def notify(message: str, level: str = "info") -> None:
+    """发送用户可见提示，blocking 表示需要用户介入。"""
     _emit({"type": "notify", "message": message, "level": level})
 
 
 def error(message: str) -> None:
+    """发送任务失败事件，不伪装成完成结果。"""
     _emit({"type": "error", "message": message})
 
 
 def done(summary: str, iterations: int) -> None:
+    """发送本轮结束事件及已执行动作数量。"""
     _emit({"type": "done", "summary": summary, "iterations": iterations})
 
 
 def log(message: str) -> None:
-    """Compatibility hook for intermediate diagnostics, now omitted."""
+    """保留旧诊断接口；中间提示不再重复写入事件或日志。"""
     # Intermediate flow diagnostics are intentionally omitted.
     pass

@@ -1,21 +1,9 @@
-"""Minimal Chrome DevTools Protocol client — deliberately dependency-free.
+"""不依赖第三方库的最小 CDP 客户端。
 
-Only two capabilities are needed, and both exist so `browser.py` can answer one
-question: *which of the browser's page targets is the one this session owns?*
-
-- `list_targets()` — plain HTTP `GET /json/list`. Authoritative id → url/title
-  mapping, because the app hands us a CDP targetId and agent-browser does not
-  understand targetIds at all.
-- `evaluate()` — one `Runtime.evaluate` over the page-level WebSocket, used to
-  plant a unique `document.title` marker when several targets would otherwise be
-  indistinguishable (every fresh session view starts at `about:blank`).
-
-A real WebSocket client is written here rather than pulled in as a dependency so
-that a packaged app never depends on a pip install having succeeded. It covers
-text frames, continuation, ping/pong and close — enough for CDP, which sends one
-JSON object per frame. It is NOT a general-purpose implementation: no
-fragmentation reassembly across extensions, no permessage-deflate.
-"""
+通过 HTTP /json/list 查找 targetId，再使用页面级 WebSocket 执行
+Runtime.evaluate，给空白标签页添加可区分的标题标记。
+仅支持本地 CDP 所需的文本帧、ping/pong 和关闭帧；不实现通用
+WebSocket 的扩展、压缩及分片重组。"""
 
 from __future__ import annotations
 
@@ -37,13 +25,14 @@ DEFAULT_TIMEOUT = 10.0
 
 
 class CdpError(RuntimeError):
-    """CDP endpoint unreachable, target missing, or command rejected."""
+    """CDP 端点不可达、目标缺失或命令被拒绝。"""
 
 
 # ── HTTP discovery ──────────────────────────────────────────────────────────
 
+
 def list_targets(port: int, timeout: float = DEFAULT_TIMEOUT) -> list[dict[str, Any]]:
-    """Every target the browser exposes, as reported by `/json/list`."""
+    """通过 /json/list 获取浏览器当前暴露的全部目标。"""
     url = f"http://127.0.0.1:{port}/json/list"
     request = urllib.request.Request(url, headers={"Host": f"127.0.0.1:{port}"})
     try:
@@ -57,7 +46,7 @@ def list_targets(port: int, timeout: float = DEFAULT_TIMEOUT) -> list[dict[str, 
 
 
 def find_target(port: int, target_id: str, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
-    """The `/json/list` entry for `target_id`, or raise."""
+    """按 targetId 精确查找页面；不存在时抛出异常。"""
     for entry in list_targets(port, timeout=timeout):
         if entry.get("id") == target_id:
             return entry
@@ -69,16 +58,19 @@ def find_target(port: int, target_id: str, timeout: float = DEFAULT_TIMEOUT) -> 
 
 # ── WebSocket ───────────────────────────────────────────────────────────────
 
+
 def _parse_ws_url(ws_url: str) -> tuple[str, int, str]:
+    """解析本地明文 WebSocket 地址，不支持远程 TLS 连接。"""
     if not ws_url.startswith("ws://"):
         raise CdpError(f"only plain ws:// endpoints are supported, got {ws_url!r}")
-    rest = ws_url[len("ws://"):]
+    rest = ws_url[len("ws://") :]
     hostport, _, path = rest.partition("/")
     host, _, port_text = hostport.partition(":")
     return host or "127.0.0.1", int(port_text or 80), "/" + path
 
 
 def _handshake(sock: socket.socket, host: str, port: int, path: str) -> None:
+    """发送升级请求并验证 101 响应，不越界读取后续帧。"""
     key = base64.b64encode(os.urandom(16)).decode("ascii")
     request = (
         f"GET {path} HTTP/1.1\r\n"
@@ -107,10 +99,11 @@ def _handshake(sock: socket.socket, host: str, port: int, path: str) -> None:
 
 
 def _send_frame(sock: socket.socket, payload: bytes, opcode: int = FRAME_TEXT) -> None:
+    """编码单个带随机掩码的客户端帧，按负载长度选择帧头格式。"""
     length = len(payload)
     header = bytearray([0x80 | opcode])  # FIN + opcode
     if length < 126:
-        header.append(0x80 | length)      # client frames must be masked
+        header.append(0x80 | length)  # client frames must be masked
     elif length < 1 << 16:
         header.append(0x80 | 126)
         header += struct.pack(">H", length)
@@ -123,6 +116,7 @@ def _send_frame(sock: socket.socket, payload: bytes, opcode: int = FRAME_TEXT) -
 
 
 def _recv_exact(sock: socket.socket, count: int) -> bytes:
+    """循环读取指定字节数，中途断连则明确报错。"""
     chunks = []
     remaining = count
     while remaining > 0:
@@ -135,6 +129,7 @@ def _recv_exact(sock: socket.socket, count: int) -> bytes:
 
 
 def _recv_frame(sock: socket.socket) -> tuple[int, bytes]:
+    """解码单个帧的长度、操作码和可选掩码。"""
     head = _recv_exact(sock, 2)
     opcode = head[0] & 0x0F
     masked = bool(head[1] & 0x80)
@@ -151,7 +146,7 @@ def _recv_frame(sock: socket.socket) -> tuple[int, bytes]:
 
 
 class _Connection:
-    """One CDP page-level WebSocket, used as a context manager."""
+    """以上下文管理器维护单个页面的 CDP WebSocket 连接。"""
 
     def __init__(self, ws_url: str, timeout: float):
         self._host, self._port, self._path = _parse_ws_url(ws_url)
@@ -178,7 +173,7 @@ class _Connection:
                 self._sock = None
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Send one command and return its `result`, raising on a CDP error."""
+        """发送一个带 ID 的 CDP 命令，仅接收对应响应，忽略其他事件。"""
         assert self._sock is not None
         message_id = self._next_id
         self._next_id += 1
@@ -208,17 +203,20 @@ class _Connection:
 
 
 def evaluate(port: int, target_id: str, expression: str, timeout: float = DEFAULT_TIMEOUT) -> Any:
-    """Run `expression` in the target's page and return its value."""
+    """在指定 target 的页面中执行表达式，并返回可序列化结果。"""
     target = find_target(port, target_id, timeout=timeout)
     ws_url = target.get("webSocketDebuggerUrl")
     if not ws_url:
         raise CdpError(f"target {target_id} exposes no webSocketDebuggerUrl")
     with _Connection(ws_url, timeout) as conn:
-        result = conn.call("Runtime.evaluate", {
-            "expression": expression,
-            "returnByValue": True,
-            "awaitPromise": False,
-        })
+        result = conn.call(
+            "Runtime.evaluate",
+            {
+                "expression": expression,
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+        )
     if not isinstance(result, dict):
         raise CdpError(f"Runtime.evaluate returned {type(result).__name__}")
     exception = result.get("exceptionDetails")

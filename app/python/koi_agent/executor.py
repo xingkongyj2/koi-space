@@ -1,8 +1,9 @@
-"""The only module that translates safe actions to agent-browser commands."""
+"""把封闭动作集转换成 agent-browser 命令的唯一执行入口。"""
+
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import time
+from dataclasses import asdict, dataclass
 
 from . import protocol
 
@@ -14,6 +15,7 @@ class Action:
     ref: str = ""
     expected: str = ""
     sensitive: bool = False
+    observation_version: int | None = None
 
 
 class Executor:
@@ -24,6 +26,7 @@ class Executor:
 
     @protocol.traced("executor.execute")
     def execute(self, action: Action):
+        """统一校验动作和确认标记，记录事件后执行对应浏览器命令。"""
         if action.kind not in self.ALLOWED:
             raise ValueError(f"unsupported action: {action.kind}")
         if action.sensitive:
@@ -39,9 +42,7 @@ class Executor:
             "wait": ["wait", action.value or "500"],
             "scroll": ["scroll", action.value or "down"],
         }
-        protocol.log(
-            f"flow=execute action={action.kind} ref={action.ref or '-'}"
-        )
+        protocol.log(f"flow=execute action={action.kind} ref={action.ref or '-'}")
         name = f"browser.{action.kind}"
         action_data = asdict(action)
         if action.sensitive:
@@ -53,26 +54,36 @@ class Executor:
                 protocol.trace("executor.command", command=["fill", action.ref, ""])
                 cleared = self.session.run(["fill", action.ref, ""])
                 if not cleared.ok:
-                    protocol.tool_result(name, False, cleared.preview,
-                                         (time.monotonic() - started) * 1000)
+                    protocol.tool_result(
+                        name, False, cleared.preview, (time.monotonic() - started) * 1000
+                    )
                     return cleared
             if action.kind == "press" and action.ref:
-                # agent-browser press addresses the focused control, not a ref.
+                # press 操作当前焦点；指定 ref 时先聚焦对应控件。
                 protocol.trace("executor.command", command=["focus", action.ref])
                 focused = self.session.run(["focus", action.ref])
                 if not focused.ok:
-                    protocol.tool_result(name, False, focused.preview,
-                                         (time.monotonic() - started) * 1000)
+                    protocol.tool_result(
+                        name, False, focused.preview, (time.monotonic() - started) * 1000
+                    )
                     return focused
             protocol.trace("executor.command", command=commands[action.kind])
             result = self.session.run(commands[action.kind])
         except Exception as exc:
-            protocol.timing("browser.action.command", started, action=action.kind,
-                            target=action.ref or (action.value if action.kind == "open" else ""))
+            protocol.timing(
+                "browser.action.command",
+                started,
+                action=action.kind,
+                target=action.ref or (action.value if action.kind == "open" else ""),
+            )
             protocol.tool_result(name, False, str(exc), (time.monotonic() - started) * 1000)
             raise
-        protocol.timing("browser.action.command", started, action=action.kind,
-                        target=action.ref or (action.value if action.kind == "open" else ""))
+        protocol.timing(
+            "browser.action.command",
+            started,
+            action=action.kind,
+            target=action.ref or (action.value if action.kind == "open" else ""),
+        )
         preview = "<redacted>" if action.sensitive else result.preview
         protocol.tool_result(name, result.ok, preview, (time.monotonic() - started) * 1000)
         return result

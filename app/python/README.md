@@ -1,6 +1,6 @@
 # Koi Python Agent：执行层设计与优化方向
 
-本文是 `app/python/koi_agent/` 的执行层设计说明，结合 [`koi/Koi方案设计.md`](../../koi/Koi方案设计.md) 编写。它描述目标架构和实现顺序，方便后续继续改造 `orchestrator.run()`。
+本文是 `app/python/koi_agent/` 的执行层设计说明，结合 [`koi/Koi方案设计.md`](../../koi/Koi方案设计.md) 编写。本文同时记录目标架构、已落地行为与尚待宿主支持的多标签页并行。
 
 ## 目标
 
@@ -32,7 +32,7 @@
 
 ## 执行模型
 
-`orchestrator.run()` 负责任务级调度，单个步骤由 `_run_step()` 驱动。目标状态机如下：
+`orchestrator.run()` 负责任务级调度，单个步骤由 `_run_step()` 驱动。当前状态机如下：
 
 ```text
 首次观察
@@ -69,8 +69,8 @@ def run(plan):
             continue
         return task_state.fail(outcome)
 
-    # 任务级 Validator 后续接入：对照原始目标和全部 StepResult 收尾核验。
-    return task_state.success()
+    # 全部步骤结束后仍需一次任务级验收，不能直接宣布目标完成。
+    return task_validator.verify(original_goal, plan, task_state.results, final_page)
 
 
 def run_step(step, task_state):
@@ -86,9 +86,7 @@ def run_step(step, task_state):
         decision = choose_next_action(step, observation, state)
 
         if decision.terminal == "DONE":
-            done = completion_gate.accept_done(
-                step, observation, state.last_action, source="jev"
-            )
+            done = completion_gate.accept_done(step, observation, state.last_action, source="jev")
             if done.accepted:
                 return completed(step, observation, source=done.source)
             state.record_rejected_done(done)
@@ -110,21 +108,20 @@ def run_step(step, task_state):
             return waiting_user(step, action, state)
 
         result = executor.execute(action)
+        # 命令失败也可能已产生部分变化，必须刷新观察并废弃旧 ref。
+        after = observer.capture()
         if not result.ok:
             state.record_execution_failure(result)
+            observation = after
             continue
-
-        # 只在这里产生一次动作后观察，并把它传给下一轮。
-        after = observer.capture()
         action_result = validator.action(observation, after, action)
         if not action_result.passed:
             state.record_action_failure(action_result)
+            observation = after
             continue
 
         state.record_action(action, after, action_result)
-        completion = completion_gate.after_action(
-            step, observation, after, action, state
-        )
+        completion = completion_gate.after_action(step, observation, after, action, state)
         if completion.accepted:
             return completed(step, after, source=completion.source)
 
@@ -133,22 +130,28 @@ def run_step(step, task_state):
     return exhausted(step, state)
 ```
 
-当前实现仍以字符串摘要作为 `run()` 返回值，后续应改成结构化 `TaskOutcome`。推荐的状态包括：`completed`、`retry`、`waiting_user`、`blocked`、`replan` 和 `failed`。
+`run()` 返回 `TaskOutcome`，`_run_step()` 返回 `StepOutcome`；动作尝试记录为 `StepResult`。
+这些数据类位于 `koi_agent/outcomes.py`，保留状态、原因、当前 URL、验收来源、证据和动作记录。
+事件与记忆采用追加写入；重规划不会覆盖之前的失败尝试或已完成步骤。
+入口在输出 NDJSON 时使用 `outcome.summary`，同时持久化结构化 `task_outcome`。
+失败与阻塞输出 `error`；等待用户使用独立的 `waiting_user` 状态，不计为完成步骤。
 
-## 当前实现和目标设计的差距
+## 已落地行为与剩余边界
 
-README 中的伪代码是目标流程，当前代码仍有几处需要逐步收敛：
+| 位置 | 当前行为 |
+|---|---|
+| `Validator.precondition` | 校验动作集、观察版本、当前 ref 和导航 URL |
+| `Validator.action` | 返回四类状态，并检查机器可读 `expected` 与导航结果 |
+| `Validator.step` | 支持条件组合、元素、页面状态和已提供的提取字段，返回 evidence |
+| `CompletionGate` | 统一初始检查、动作后验收和 DONE；同一证据不重复调用完成模型 |
+| `TaskValidator` | 收尾一次，核对原始目标、原计划、当前计划、全部结果和最终页面 |
+| `BLOCKED` / no-op | 先升级慢路径，再在步骤预算耗尽或循环持续时增量重规划 |
+| `Budget` / `StepBudget` | 分离任务累计用量和步骤连续失败，实际 HTTP 请求单独分类计数 |
+| 依赖调度 | 每次选择前置步骤均已完成的步骤，无法满足依赖时返回 blocked |
+| `parallel_group` | 仍串行执行；当前信封只有一个 targetId，尚无独立标签页与上下文供应接口 |
 
-| 位置 | 当前行为 | 目标行为 |
-|---|---|---|
-| `Validator.action` | 主要判断页面是否变化 | 同时检查动作的前置条件、`expected` 和后置证据 |
-| `Validator.step` | 支持 URL、文本和少量结构化条件 | 支持条件组合、元素、页面状态和提取结果，并返回 evidence |
-| `CompletionVerifier` | 复杂步骤中可能多次调用 | 只在复杂/高风险动作后调用，最终任务收尾再调用一次 TaskValidator |
-| JEV `BLOCKED` | 可能直接结束步骤 | 先进入慢路径，再按连续失败触发增量重规划 |
-| `slow` 路径 | 需要明确跳过 JEV 才能真正升级 | 低置信度、no-op 和方向不明时升级大模型 |
-| `Budget` | 当前以全局步数和失败数为主 | 拆分任务预算、步骤预算和模型调用预算 |
-| `run()` 返回值 | 字符串摘要 | 结构化 `TaskOutcome` 和 `StepOutcome` |
-| `parallel_group` | 计划字段存在，执行器仍串行 | 只有独立标签页和独立上下文才执行并行分支 |
+无模型时只对纯导航任务做确定性的任务级收尾；复杂任务无法验收时返回阻塞，不宣布成功。
+`extracted_value` 只检查 `Observation.extracted` 中已有的数据，默认观察器不猜测业务字段。
 
 ## 验收和 JEV 的统一语义
 
@@ -185,6 +188,9 @@ Planner 的 `success_criteria` 应优先使用结构化条件，所有条件满�
 - `text_contains`
 - `element_text`
 - `element_count_at_least`
+- `all` / `any`：`value` 为非空条件数组
+- `page_state`：当前支持 `ready`
+- `extracted_value`：`value` 为 `{"key":"字段名","equals":"预期值"}`
 
 需要结合用户目标判断的复合条件使用：
 
@@ -192,7 +198,8 @@ Planner 的 `success_criteria` 应优先使用结构化条件，所有条件满�
 [{"type": "goal_state", "value": "已进入指定视频的继续观看状态"}]
 ```
 
-步骤开始只执行确定性条件。动作后再次执行确定性条件；只有高风险、复合条件或证据含糊时，才调用完成判断模型。
+步骤开始只执行确定性条件，不调用完成模型。纯确定性组合按代码验收；`goal_state`、旧版文本条件及中高风险步骤在动作后或 DONE 时进行语义复核。
+结构化组合中的确定性条件仍是硬门槛，语义模型不能绕过；旧版文本条件保留兼容的语义纠偏行为。模型不可用时，复杂/高风险步骤不会降级成成功。
 
 ### JEV `DONE`
 
@@ -235,7 +242,7 @@ JEV DONE
 
 ### 观察指纹和缓存
 
-为观察生成稳定指纹：URL、相关元素、验收字段和页面状态摘要。相同指纹不重复调用完成模型，不重复生成相同决策。
+为观察生成稳定指纹：URL、相关元素、验收字段和页面状态摘要。相同指纹不重复调用完成模型；快路径遇到已决策过的状态会升级慢路径。恢复尝试受步骤次数和慢路径预算限制。
 
 ### 取消无效等待
 
@@ -248,7 +255,25 @@ JEV DONE
 - 完成模型：复杂/高风险动作后的必要验证；
 - 任务级 Validator：任务结束时一次。
 
-每类调用都要单独计数，不能只统计总 token。
+真实 HTTP 请求按 `planner`、`jev`、`jev_text`、`slow`、`completion`、`replan`、`task_validator` 分类累计。
+首次并发规划与执行共用预算，线程共享计数由锁保护；token 仅累计模型服务返回的 usage，服务不提供 usage 时无法计量该次 token。
+模型预算熔断会穿透降级逻辑，不能再偷偷调用另一个模型。
+
+可在 TOML 的 `[runtime]` 下配置以下字段，也可使用对应环境变量：
+
+| 字段 | 环境变量 | 默认值 |
+|---|---|---:|
+| `max_steps` | `KOI_MAX_STEPS` | 30 |
+| `max_failures` | `KOI_MAX_FAILURES` | 3 |
+| `max_seconds` | `KOI_MAX_SECONDS` | 300 |
+| `max_model_calls` | `KOI_MAX_MODEL_CALLS` | 100 |
+| `max_tokens` | `KOI_MAX_TOKENS` | 100000 |
+| `max_step_actions` | `KOI_MAX_STEP_ACTIONS` | 15 |
+| `max_no_ops` | `KOI_MAX_NO_OPS` | 5 |
+| `max_slow_calls` | `KOI_MAX_SLOW_CALLS` | 5 |
+| `max_replans` | `KOI_MAX_REPLANS` | 2 |
+
+`max_failures` 现在限制每步连续失败；累计失败仍记录，但不会让后续已推进的步骤继承熔断状态。
 
 ## 容错和升级
 
@@ -281,7 +306,7 @@ L3：404、目标方向改变、步骤连续失败
 - `@ref` 不跨观察复用；
 - JEV、普通模型和网页内容都不能单独绕过完成门或确认门。
 
-## 建议实现顺序
+## 实现进度
 
 1. 将 `orchestrator.run()` 和 `_run_step()` 的返回值改为 `TaskOutcome`、`StepOutcome`；
 2. 把完成判断集中到 `CompletionGate`，统一代码条件、JEV `DONE` 和模型验证；
@@ -290,6 +315,19 @@ L3：404、目标方向改变、步骤连续失败
 5. 接通 L1、L2、L3 路由，修正 no-op、`BLOCKED` 和慢路径升级；
 6. 分离任务预算与步骤预算，保存完整 `StepResult`；
 7. 接入任务级 Validator，一次性核查原始目标和全部结果；
-8. 最后实现真正的依赖分支和多标签页并行。
+8. 依赖就绪调度已实现；多标签页并行仍待独立上下文支持。不能在一个 targetId 上并发执行分支。
 
-在任务级 Validator 和结构化步骤结果接入前，不应把“所有步骤完成”直接等同于“用户目标完成”。
+第 1～7 项已经接入。任务级 Validator 不接受仅凭“所有步骤完成”宣布用户目标完成。
+增量重规划当前只允许修改失败步骤及未完成下游，保留所有步骤 ID 和顺序；不能修改无关步骤、已完成步骤，或降低已有风险和确认要求。
+
+## 本地验证与代码风格
+
+核心模块使用中文职责说明和逻辑段落注释；不同阶段之间留空行，统一按 100 列格式化。
+
+```sh
+task python:test
+# 未安装 task 时，以下命令与 Taskfile 等价（在仓库根目录运行）：
+PYTHONPATH=app/python python3 -m unittest discover -s app/python/tests -p "test_*.py" -v
+```
+
+回归测试覆盖单动作/观察复用、过期 ref、完成门缓存、慢路径升级、no-op 熔断、确认门、依赖调度、预算分类、重规划保护和最终任务验收。

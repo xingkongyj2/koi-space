@@ -1,27 +1,34 @@
-"""OpenAI Responses client and Jev's typed browser decision adapter."""
-from __future__ import annotations
+"""Responses 文本模型客户端与 JEV 类型化决策适配器。"""
 
-from . import protocol
+from __future__ import annotations
 
 import json
 import re
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import asdict
 from urllib.parse import urlsplit
 
+from . import protocol
+from .budget import BudgetExceeded, before_model_request, model_scope, record_usage
 from .config import Provider
 
 
 class ModelError(RuntimeError):
-    """Raised when a configured model cannot return a usable response."""
+    """模型请求失败或返回内容无法使用。"""
 
 
 @protocol.traced("model.http")
-def _request_json(request: urllib.request.Request, body: dict, *, provider_name: str, timeout: float) -> dict:
-    # Request is logged only as its type; never serialize authentication headers.
-    protocol.trace("model.request", url=request.full_url, body=body, provider=provider_name, timeout=timeout)
+def _request_json(
+    request: urllib.request.Request, body: dict, *, provider_name: str, timeout: float
+) -> dict:
+    # 只记录请求类型和业务载荷，认证头不能写入日志。
+    """发送一次模型请求，记录真实调用预算、网络耗时及服务端用量。"""
+    protocol.trace(
+        "model.request", url=request.full_url, body=body, provider=provider_name, timeout=timeout
+    )
+    timeout = before_model_request(timeout)
     network_started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -37,29 +44,38 @@ def _request_json(request: urllib.request.Request, body: dict, *, provider_name:
         except (ValueError, AttributeError):
             message, code = "", ""
         if "free quota exhausted" in message.lower():
-            message = "免费额度已耗尽：请在模型服务控制台检查额度和‘仅使用免费额度’设置，或更换可用模型。"
+            message = (
+                "免费额度已耗尽：请在模型服务控制台检查额度和‘仅使用免费额度’设置，或更换可用模型。"
+            )
         detail = f": {message[:1000]}" if message else ""
         raise ModelError(f"{provider_name} HTTP {exc.code} {code}{detail}") from exc
     finally:
-        protocol.timing("model.http.network", network_started, provider=provider_name,
-                        endpoint=urlsplit(request.full_url).path)
+        protocol.timing(
+            "model.http.network",
+            network_started,
+            provider=provider_name,
+            endpoint=urlsplit(request.full_url).path,
+        )
     protocol.trace("model.response.raw", status=status, body=raw)
     data = json.loads(raw)
+    record_usage(data)
     protocol.trace("model.response.parsed", data=data)
     return data
 
 
 class OpenAICompatible:
-    """Minimal dependency-free client for the Responses protocol."""
+    """仅使用标准库实现 Responses 协议客户端。"""
 
     def __init__(self, provider: Provider) -> None:
         self.provider = provider
 
     def chat(self, system: str, user_input: str) -> str:
+        """保留通用文本模型调用接口，底层统一使用 Responses。"""
         return self.responses(system, user_input)
 
     @protocol.traced("model.responses")
     def responses(self, system: str, user_input: str) -> str:
+        """调用 Responses 接口并拼接文本输出，不返回模型的内部推理信息。"""
         body = {
             "model": self.provider.model,
             "instructions": system,
@@ -75,8 +91,9 @@ class OpenAICompatible:
             },
         )
         try:
-            data = _request_json(request, body, provider_name=self.provider.name,
-                                 timeout=self.provider.timeout)
+            data = _request_json(
+                request, body, provider_name=self.provider.name, timeout=self.provider.timeout
+            )
             texts = []
             for item in data.get("output", []):
                 if item.get("type") != "message":
@@ -89,14 +106,14 @@ class OpenAICompatible:
             if not texts:
                 raise ModelError(f"{self.provider.name} returned no message output")
             return "\n".join(texts)
-        except ModelError:
+        except (ModelError, BudgetExceeded):
             raise
         except Exception as exc:
             raise ModelError(f"{self.provider.name} responses request failed: {exc}") from exc
 
 
 class JevDecision:
-    """Use Jev as a small typed choice model for each browser step."""
+    """让 JEV 从当前可见元素和有限操作中选择浏览器动作。"""
 
     def __init__(self, provider: Provider, text_model: OpenAICompatible | None = None) -> None:
         self.provider = provider
@@ -104,10 +121,18 @@ class JevDecision:
 
     @protocol.timed("decision.jev.total")
     @protocol.traced("model.jev")
-    def choose(self, goal: str, observation, *, success_criteria=(), recent_action=None,
-               action_history=(), advice="") -> dict:
-        # TypeSafe System One selects from a finite set of observed actions.
-        # It does not implement OpenAI's /responses endpoint or generate text.
+    def choose(
+        self,
+        goal: str,
+        observation,
+        *,
+        success_criteria=(),
+        recent_action=None,
+        action_history=(),
+        advice="",
+    ) -> dict:
+        # JEV 从有限的可见动作中选择；它不提供 Responses 接口或自由文本生成。
+        """构建 JEV 有限选项，校验选择后只返回一个结构化动作。"""
         elements = list(observation.elements)
         if not elements:
             raise ModelError("Jev needs interactive elements in the current snapshot")
@@ -116,7 +141,10 @@ class JevDecision:
         text_targets = {
             index: element
             for index, element in click_targets.items()
-            if any(role in element["text"].lower() for role in ("textbox", "searchbox", "input", "combobox"))
+            if any(
+                role in element["text"].lower()
+                for role in ("textbox", "searchbox", "input", "combobox")
+            )
         }
         operations = {
             "CLICK": "Click one of the observed interactive elements.",
@@ -137,20 +165,21 @@ class JevDecision:
                     "acceptance_criteria": list(success_criteria),
                     "recent_action": asdict(recent_action) if recent_action is not None else None,
                     "advice": advice,
-                    "rules": ("Choose DONE only when the acceptance criteria and visible goal evidence are satisfied. "
-                              "Typing into an autocomplete or combobox does not confirm its underlying selection. "
-                              "Observe and select a matching visible option before moving to another field or submitting. "
-                              "Use keyboard navigation only in the currently focused control; Enter must confirm an "
-                              "observed matching selection, not blindly submit a form. Read validation errors and repair "
-                              "the affected field. Wait only with evidence of loading. Do not invent targets, parameters "
-                              "or hidden side effects."),
+                    "rules": (
+                        "Choose DONE only when the acceptance criteria and visible goal evidence are satisfied. "
+                        "Typing into an autocomplete or combobox does not confirm its underlying selection. "
+                        "Observe and select a matching visible option before moving to another field or submitting. "
+                        "Use keyboard navigation only in the currently focused control; Enter must confirm an "
+                        "observed matching selection, not blindly submit a form. Read validation errors and repair "
+                        "the affected field. Wait only with evidence of loading. Do not invent targets, parameters "
+                        "or hidden side effects."
+                    ),
                 },
             },
             "click_target": {
                 "type": "choice",
                 "criteria": {
-                    index: {"element": element["text"]}
-                    for index, element in click_targets.items()
+                    index: {"element": element["text"]} for index, element in click_targets.items()
                 },
                 "instructions": {"goal": goal, "operation": "CLICK"},
             },
@@ -164,15 +193,17 @@ class JevDecision:
                 "Escape": "Dismiss the current popup.",
                 "Tab": "Move focus to the next control.",
             },
-            "instructions": {"goal": goal, "operation": "PRESS",
-                             "rules": "Choose a key for the current focused control based on visible evidence. Do not submit an unconfirmed form."},
+            "instructions": {
+                "goal": goal,
+                "operation": "PRESS",
+                "rules": "Choose a key for the current focused control based on visible evidence. Do not submit an unconfirmed form.",
+            },
         }
         if "TYPE_TEXT" in operations:
             questions["type_text_target"] = {
                 "type": "choice",
                 "criteria": {
-                    index: {"element": element["text"]}
-                    for index, element in text_targets.items()
+                    index: {"element": element["text"]} for index, element in text_targets.items()
                 },
                 "instructions": {"goal": goal, "operation": "TYPE_TEXT"},
             }
@@ -180,14 +211,19 @@ class JevDecision:
         body = {
             "model": self.provider.model,
             "state": {
-                "page": {"url": observation.url, "title": observation.title,
-                         "text": (observation.page_text or observation.snapshot)[:8000]},
+                "page": {
+                    "url": observation.url,
+                    "title": observation.title,
+                    "text": (observation.page_text or observation.snapshot)[:8000],
+                },
                 "elements": [
                     {"index": index, "label": element["text"], "operations": ["CLICK"]}
                     for index, element in click_targets.items()
                 ],
-                "recent_actions": (list(action_history)[-6:] or
-                                   ([asdict(recent_action)] if recent_action is not None else [])),
+                "recent_actions": (
+                    list(action_history)[-6:]
+                    or ([asdict(recent_action)] if recent_action is not None else [])
+                ),
                 "acceptance_criteria": list(success_criteria),
             },
             "questions": questions,
@@ -195,12 +231,18 @@ class JevDecision:
         request = urllib.request.Request(
             f"{self.provider.base_url.rstrip('/')}/systemone",
             json.dumps(body, ensure_ascii=False).encode("utf8"),
-            {"Content-Type": "application/json", "Authorization": f"Bearer {self.provider.api_key}"},
+            {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.provider.api_key}",
+            },
         )
         try:
             with protocol.measure("decision.jev.request", model=self.provider.model):
-                data = _request_json(request, body, provider_name=self.provider.name,
-                                     timeout=self.provider.timeout)
+                data = _request_json(
+                    request, body, provider_name=self.provider.name, timeout=self.provider.timeout
+                )
+        except BudgetExceeded:
+            raise
         except Exception as exc:
             raise ModelError(f"Jev systemone request failed: {exc}") from exc
 
@@ -214,22 +256,35 @@ class JevDecision:
             key = (answers.get("press_key") or {}).get("choice")
             if key not in questions["press_key"]["criteria"]:
                 raise ModelError("Jev selected an unsupported key")
-            if key == "Enter" and recent_action is not None and recent_action.kind in {"fill", "type"}:
-                field = next((item["text"] for item in elements
-                              if item.get("ref") == recent_action.ref), "")
-                selection_control = any(token in field.lower() for token in
-                                        ("combobox", "autocomplete", "回车键选中", "上下键进行选择"))
-                selected_options = [item for item in elements
-                                    if re.search(r"\b(option|listitem|button)\b", item["text"], re.I)
-                                    and re.search(r"\[(?:selected|focused)(?:=true)?\]", item["text"], re.I)]
+            if (
+                key == "Enter"
+                and recent_action is not None
+                and recent_action.kind in {"fill", "type"}
+            ):
+                field = next(
+                    (item["text"] for item in elements if item.get("ref") == recent_action.ref), ""
+                )
+                selection_control = any(
+                    token in field.lower()
+                    for token in ("combobox", "autocomplete", "回车键选中", "上下键进行选择")
+                )
+                selected_options = [
+                    item
+                    for item in elements
+                    if re.search(r"\b(option|listitem|button)\b", item["text"], re.I)
+                    and re.search(r"\[(?:selected|focused)(?:=true)?\]", item["text"], re.I)
+                ]
                 matching_option = any(
-                    recent_action.value and recent_action.value in item["text"]
+                    recent_action.value
+                    and recent_action.value in item["text"]
                     and re.search(r"\b(option|listitem|button)\b", item["text"], re.I)
                     and re.search(r"\[(?:selected|focused)(?:=true)?\]", item["text"], re.I)
                     for item in elements
                 )
                 if selection_control and selected_options and not matching_option:
-                    raise ModelError("Cannot confirm a selection control with Enter without an observed matching option that is selected or focused; inspect the candidates and use another interaction.")
+                    raise ModelError(
+                        "Cannot confirm a selection control with Enter without an observed matching option that is selected or focused; inspect the candidates and use another interaction."
+                    )
             result["value"] = key
         if operation in {"CLICK", "TYPE_TEXT"}:
             targets = click_targets if operation == "CLICK" else text_targets
@@ -240,7 +295,7 @@ class JevDecision:
             result["target"] = target["ref"]
         if operation == "TYPE_TEXT":
             prompt = json.dumps({"goal": goal, "field": target["text"]}, ensure_ascii=False)
-            with protocol.measure("decision.jev.type_text_model_request"):
+            with model_scope("jev_text"), protocol.measure("decision.jev.type_text_model_request"):
                 raw = self.text_model.chat(
                     'Return only JSON with one key: {"text":"value to enter"}. Never include credentials.',
                     prompt,

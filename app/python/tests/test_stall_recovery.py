@@ -1,4 +1,5 @@
 """Recovery must interrupt successful commands that make no visible progress."""
+
 import json
 import unittest
 
@@ -29,28 +30,55 @@ class StallRecoveryTests(unittest.TestCase):
                 label = f'textbox "目的地" : {session.value}'
                 ref = f"@e{self.count}"
                 snapshot = f'- {label} [ref=e{self.count}]\n- heading "广告{self.count}"'
-                return Observation("https://example.com/", "", snapshot, "", True,
-                                   ({"ref": ref, "text": label},), f"广告{self.count}")
+                return Observation(
+                    "https://example.com/",
+                    "",
+                    snapshot,
+                    "",
+                    True,
+                    ({"ref": ref, "text": label},),
+                    f"广告{self.count}",
+                )
 
         class Choices:
             recovery = []
 
             def choose(self, goal, observation, *args, **kwargs):
                 self.recovery.append(kwargs["force_reasoning"])
-                action = (Action("fill", "潜江", observation.elements[0]["ref"])
-                          if session.value == "北京北" else Action("press", "Enter"))
+                action = (
+                    Action("fill", "潜江", observation.elements[0]["ref"])
+                    if session.value == "北京北"
+                    else Action("press", "Enter")
+                )
                 return DecisionResult((action,), 1.0, "test")
 
-        plan = parse_plan(json.dumps({
-            "status": "ready", "needs_browser": True, "question": "", "direct_answer": "",
-            "steps": [{"id": "s1", "goal": "查询结果", "success_criteria": ["text_contains:结果"],
-                       "depends_on": [], "start_url": "https://example.com/",
-                       "needs_user_confirmation": False, "risk": "low", "parallel_group": ""}],
-        }))
+        plan = parse_plan(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "needs_browser": True,
+                    "question": "",
+                    "direct_answer": "",
+                    "steps": [
+                        {
+                            "id": "s1",
+                            "goal": "查询结果",
+                            "success_criteria": ["text_contains:结果"],
+                            "depends_on": [],
+                            "start_url": "https://example.com/",
+                            "needs_user_confirmation": False,
+                            "risk": "low",
+                            "parallel_group": "",
+                        }
+                    ],
+                }
+            )
+        )
         choices = Choices()
-        result = Orchestrator(session, plan, decision=choices, observer=Pages(),
-                              budget=Budget(max_steps=20)).run()
-        self.assertIn("控件状态往返循环", result)
+        result = Orchestrator(
+            session, plan, decision=choices, observer=Pages(), budget=Budget(max_steps=20)
+        ).run()
+        self.assertIn("控件状态往返循环", result.summary)
         self.assertEqual(choices.recovery, [False, False, False, True, True])
 
     def test_recovery_bypasses_jev_and_supplies_action_history(self):
@@ -67,8 +95,13 @@ class StallRecoveryTests(unittest.TestCase):
         observation = Observation("https://example.com/", "", "form", "", False)
         history = [{"action": {"kind": "wait"}, "page_changed": False}]
         decision = Decision(ai=ai, jev=Jev()).choose(
-            "查询", observation, force_reasoning=True, action_history=history,
-            advice="不要重复等待", recent_action=Action("wait", "500"), slow=True,
+            "查询",
+            observation,
+            force_reasoning=True,
+            action_history=history,
+            advice="不要重复等待",
+            recent_action=Action("wait", "500"),
+            slow=True,
         )
         self.assertEqual(decision.actions[0].kind, "press")
         self.assertEqual(ai.payload["recent_actions"], history)
@@ -90,15 +123,31 @@ class StallRecoveryTests(unittest.TestCase):
                 self.recovery.append(kwargs["force_reasoning"])
                 return DecisionResult((Action("wait", "1"),), 1.0, "test")
 
-        plan = parse_plan(json.dumps({
-            "status": "ready", "needs_browser": True, "question": "", "direct_answer": "",
-            "steps": [{"id": "s1", "goal": "查询结果", "success_criteria": ["text_contains:结果"],
-                       "depends_on": [], "start_url": "https://example.com/",
-                       "needs_user_confirmation": False, "risk": "low", "parallel_group": ""}],
-        }))
+        plan = parse_plan(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "needs_browser": True,
+                    "question": "",
+                    "direct_answer": "",
+                    "steps": [
+                        {
+                            "id": "s1",
+                            "goal": "查询结果",
+                            "success_criteria": ["text_contains:结果"],
+                            "depends_on": [],
+                            "start_url": "https://example.com/",
+                            "needs_user_confirmation": False,
+                            "risk": "low",
+                            "parallel_group": "",
+                        }
+                    ],
+                }
+            )
+        )
         choices = Choices()
         result = Orchestrator(Session(), plan, decision=choices, budget=Budget(max_steps=20)).run()
-        self.assertIn("无可观察进展", result)
+        self.assertIn("无可观察进展", result.summary)
         self.assertEqual(choices.recovery, [False, False, True, True, True])
 
 

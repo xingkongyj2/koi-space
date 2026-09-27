@@ -9,13 +9,15 @@ if __name__ == "__main__":
     user_data_dir = None
     cdp_port = None
     target_id = None
-    raise SystemExit(run_debug(
-        user_input,
-        browser_path=browser_path,
-        user_data_dir=user_data_dir,
-        cdp_port=cdp_port,
-        target_id=target_id,
-    ))
+    raise SystemExit(
+        run_debug(
+            user_input,
+            browser_path=browser_path,
+            user_data_dir=user_data_dir,
+            cdp_port=cdp_port,
+            target_id=target_id,
+        )
+    )
 ```
 
 不需要设置命令行参数。PyCharm 使用 Python 3.11 或更高版本。

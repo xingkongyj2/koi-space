@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from koi_agent import cdp  # noqa: E402
 
-
 # ── server-side helpers, written independently of the code under test ─────────
+
 
 def recv_exactly(conn: socket.socket, count: int) -> bytes:
     buffer = b""
@@ -134,7 +134,10 @@ class ConnectionAgainstRealSocket(unittest.TestCase):
             message = json.loads(payload.decode("utf-8"))
             seen["opcode"] = opcode
             seen["message"] = message
-            reply = {"id": message["id"], "result": {"result": {"type": "string", "value": "marked"}}}
+            reply = {
+                "id": message["id"],
+                "result": {"result": {"type": "string", "value": "marked"}},
+            }
             conn.sendall(encode_frame(json.dumps(reply).encode("utf-8")))
 
         port = self._serve(handler)
@@ -151,9 +154,9 @@ class ConnectionAgainstRealSocket(unittest.TestCase):
     def test_skips_events_and_answers_to_a_ping(self):
         def handler(conn: socket.socket) -> None:
             self._accept_upgrade(conn)
-            read_frame(conn)                                   # the command
+            read_frame(conn)  # the command
             conn.sendall(encode_frame(b"ping!", opcode=0x9))
-            opcode, payload = read_frame(conn)                 # expect a pong echo
+            opcode, payload = read_frame(conn)  # expect a pong echo
             assert opcode == 0xA and payload == b"ping!", f"expected pong, got {opcode}/{payload!r}"
             # Events carry no `id` and must be skipped, not mistaken for a reply.
             conn.sendall(encode_frame(json.dumps({"method": "Runtime.consoleAPICalled"}).encode()))
@@ -168,7 +171,10 @@ class ConnectionAgainstRealSocket(unittest.TestCase):
             self._accept_upgrade(conn)
             _, payload = read_frame(conn)
             message = json.loads(payload.decode("utf-8"))
-            reply = {"id": message["id"], "error": {"code": -32601, "message": "'Method not found'"}}
+            reply = {
+                "id": message["id"],
+                "error": {"code": -32601, "message": "'Method not found'"},
+            }
             conn.sendall(encode_frame(json.dumps(reply).encode("utf-8")))
 
         port = self._serve(handler)

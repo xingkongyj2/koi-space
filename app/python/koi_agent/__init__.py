@@ -1,11 +1,8 @@
-"""Koi agent — Python backend that drives the app's browser view.
+"""Koi 浏览器代理的 Python 后端。
 
-Speaks NDJSON HlEvents to the Electron main process and owns the entire browser
-contract: `cdp.py` talks to Chrome DevTools Protocol directly to identify which
-target is ours, `browser.py` is the only module that shells out to
-`agent-browser`. See `app/src/main/hl/engines/python/adapter.ts` for the other
-end of the envelope.
-"""
+通过 NDJSON HlEvent 与 Electron 通信。cdp.py 负责识别所属 target，
+browser.py 负责 agent-browser 命令与绑定，Executor 统一执行动作。
+宿主接入点位于 app/src/main/hl/engines/python/adapter.ts。"""
 
 from . import browser, cdp, protocol
 

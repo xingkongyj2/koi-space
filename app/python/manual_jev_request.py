@@ -1,4 +1,5 @@
 """PyCharm 直接运行：只向 Jev /systemone 发一次请求，不启动浏览器。"""
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,8 @@ def build_simulated_body(goal: str, observation: dict, model: str) -> dict:
         raise ValueError("SIMULATED_OBSERVATION.elements 不能为空")
     click_targets = {str(index): element for index, element in enumerate(elements, 1)}
     text_targets = {
-        index: element for index, element in click_targets.items()
+        index: element
+        for index, element in click_targets.items()
         if any(role in element["text"].lower() for role in ("textbox", "searchbox", "input"))
     }
     operations = {
@@ -32,20 +34,25 @@ def build_simulated_body(goal: str, observation: dict, model: str) -> dict:
         "operation": {
             "type": "choice",
             "criteria": operations,
-            "instructions": {"goal": goal, "rules": "Choose one safe next action; do not invent a target."},
+            "instructions": {
+                "goal": goal,
+                "rules": "Choose one safe next action; do not invent a target.",
+            },
         },
         "click_target": {
             "type": "choice",
-            "criteria": {index: {"element": element["text"]}
-                         for index, element in click_targets.items()},
+            "criteria": {
+                index: {"element": element["text"]} for index, element in click_targets.items()
+            },
             "instructions": {"goal": goal, "operation": "CLICK"},
         },
     }
     if text_targets:
         questions["type_text_target"] = {
             "type": "choice",
-            "criteria": {index: {"element": element["text"]}
-                         for index, element in text_targets.items()},
+            "criteria": {
+                index: {"element": element["text"]} for index, element in text_targets.items()
+            },
             "instructions": {"goal": goal, "operation": "TYPE_TEXT"},
         }
     return {
@@ -86,12 +93,15 @@ def request_once(base_url: str, api_key: str, body: dict, timeout: float) -> Non
     encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
     url = f"{base_url.rstrip('/')}/systemone"
     request = urllib.request.Request(
-        url, encoded,
+        url,
+        encoded,
         {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
     print(f"Jev URL: {url}")
-    print(f"model={body.get('model')} elements={len(body.get('state', {}).get('elements', []))} "
-          f"request_bytes={len(encoded)} timeout={timeout}s")
+    print(
+        f"model={body.get('model')} elements={len(body.get('state', {}).get('elements', []))} "
+        f"request_bytes={len(encoded)} timeout={timeout}s"
+    )
     started = time.perf_counter()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -107,9 +117,11 @@ def request_once(base_url: str, api_key: str, body: dict, timeout: float) -> Non
         print(f"请求失败，耗时 {(time.perf_counter() - started) * 1000:.2f} ms: {exc}")
         return
 
-    print(f"HTTP {status} | 等待响应头 {(headers_at - started) * 1000:.2f} ms | "
-          f"读取响应体 {(body_at - headers_at) * 1000:.2f} ms | "
-          f"请求总计 {(body_at - started) * 1000:.2f} ms | response_bytes={len(raw.encode('utf-8'))}")
+    print(
+        f"HTTP {status} | 等待响应头 {(headers_at - started) * 1000:.2f} ms | "
+        f"读取响应体 {(body_at - headers_at) * 1000:.2f} ms | "
+        f"请求总计 {(body_at - started) * 1000:.2f} ms | response_bytes={len(raw.encode('utf-8'))}"
+    )
     try:
         value = json.loads(raw)
     except json.JSONDecodeError:
@@ -123,22 +135,24 @@ def request_once(base_url: str, api_key: str, body: dict, timeout: float) -> Non
 if __name__ == "__main__":
     # 只改这里，然后在 PyCharm 直接 Run。本文件只发一次 /systemone 请求。
     current = load_settings().decision
-    BASE_URL = current.base_url    # 或手动改成 "https://api.typesafe.ai/v1"
-    API_KEY = current.api_key      # 或手动填写自己的 key；不会打印
-    MODEL = current.model          # 或手动改成 "jev-latest"
+    BASE_URL = current.base_url  # 或手动改成 "https://api.typesafe.ai/v1"
+    API_KEY = current.api_key  # 或手动填写自己的 key；不会打印
+    MODEL = current.model  # 或手动改成 "jev-latest"
     TIMEOUT = current.timeout
 
     # 默认使用下面可直接修改的模拟数据，不依赖任何旧日志文件。
     # 若要重放真实请求，改成 True，并填写实际存在的 .jsonl 日志路径。
     USE_RECORDED_REQUEST = False
-    RECORDED_LOG = Path(__file__).resolve().parent / "log" / "agent-20260926T113115813705Z-41619.log"
+    RECORDED_LOG = (
+        Path(__file__).resolve().parent / "log" / "agent-20260926T113115813705Z-41619.log"
+    )
     RECORDED_CALL_NUMBER = 2
 
     GOAL = "在历史记录列表中查找标题包含“灵境行者”的条目，并点击进入播放页以继续观看"
     SIMULATED_OBSERVATION = {
         "url": "https://v.qq.com/biu/u/history/",
         "title": "腾讯视频 - 历史记录",
-        "snapshot": "- link \"历史\" [ref=e1]\n- generic \"灵境行者第01集 · 看至40%\" [ref=e2] clickable\n- link \"首页\" [ref=e3]",
+        "snapshot": '- link "历史" [ref=e1]\n- generic "灵境行者第01集 · 看至40%" [ref=e2] clickable\n- link "首页" [ref=e3]',
         "elements": [
             {"ref": "@e1", "text": 'link "历史"'},
             {"ref": "@e2", "text": 'generic "灵境行者第01集 · 看至40%" clickable'},
@@ -148,7 +162,9 @@ if __name__ == "__main__":
 
     if USE_RECORDED_REQUEST:
         if not RECORDED_LOG.is_file():
-            raise SystemExit(f"找不到日志：{RECORDED_LOG}\n请修改 RECORDED_LOG，或将 USE_RECORDED_REQUEST 改为 False 使用模拟数据。")
+            raise SystemExit(
+                f"找不到日志：{RECORDED_LOG}\n请修改 RECORDED_LOG，或将 USE_RECORDED_REQUEST 改为 False 使用模拟数据。"
+            )
         BODY = body_from_log(RECORDED_LOG, RECORDED_CALL_NUMBER)
         BODY["model"] = MODEL
         print(f"重放日志：{RECORDED_LOG.name}，第 {RECORDED_CALL_NUMBER} 次 Jev 请求")
