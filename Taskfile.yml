@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  APP_DIR: app
+  APP_DIR: desktop
 
 tasks:
   default:
@@ -47,9 +47,9 @@ tasks:
       - |
         NAME="{{default "" .NAME}}"
         if [ -n "$NAME" ]; then
-          node app/scripts/dev-profile.mjs path --name "$NAME"
+          node desktop/scripts/dev-profile.mjs path --name "$NAME"
         else
-          node app/scripts/dev-profile.mjs path
+          node desktop/scripts/dev-profile.mjs path
         fi
 
   worktree:up:
@@ -58,9 +58,9 @@ tasks:
       - |
         NAME="{{default "" .NAME}}"
         if [ -n "$NAME" ]; then
-          PROFILE="$(node app/scripts/dev-profile.mjs path --name "$NAME")"
+          PROFILE="$(node desktop/scripts/dev-profile.mjs path --name "$NAME")"
         else
-          PROFILE="$(node app/scripts/dev-profile.mjs path)"
+          PROFILE="$(node desktop/scripts/dev-profile.mjs path)"
         fi
         AGB_USER_DATA_DIR="$PROFILE" task up
 
@@ -72,7 +72,7 @@ tasks:
         TARGET="{{default "" .TARGET}}"
         FORCE="{{default "" .FORCE}}"
         ALLOW_RUNNING="{{default "" .ALLOW_RUNNING}}"
-        TARGET="$TARGET" FORCE="$FORCE" ALLOW_RUNNING="$ALLOW_RUNNING" node app/scripts/dev-profile.mjs clean
+        TARGET="$TARGET" FORCE="$FORCE" ALLOW_RUNNING="$ALLOW_RUNNING" node desktop/scripts/dev-profile.mjs clean
 
   db:worktree:copy:
     desc: Copy sessions.db from FROM profile into this branch profile, then check schema
@@ -83,7 +83,7 @@ tasks:
         TO="{{default "" .TO}}"
         FORCE="{{default "" .FORCE}}"
         ALLOW_RUNNING="{{default "" .ALLOW_RUNNING}}"
-        DB_ONLY=1 FROM="$FROM" TO="$TO" FORCE="$FORCE" ALLOW_RUNNING="$ALLOW_RUNNING" node app/scripts/dev-profile.mjs copy
+        DB_ONLY=1 FROM="$FROM" TO="$TO" FORCE="$FORCE" ALLOW_RUNNING="$ALLOW_RUNNING" node desktop/scripts/dev-profile.mjs copy
 
   db:worktree:doctor:
     desc: Diagnose this branch profile's sessions.db schema against the checkout
@@ -94,9 +94,9 @@ tasks:
         JSON="{{default "" .JSON}}"
         ALLOW_RUNNING="{{default "" .ALLOW_RUNNING}}"
         if [ "$JSON" = "1" ]; then
-          JSON=1 TARGET="$TARGET" ALLOW_RUNNING="$ALLOW_RUNNING" node app/scripts/dev-profile.mjs doctor
+          JSON=1 TARGET="$TARGET" ALLOW_RUNNING="$ALLOW_RUNNING" node desktop/scripts/dev-profile.mjs doctor
         else
-          TARGET="$TARGET" ALLOW_RUNNING="$ALLOW_RUNNING" node app/scripts/dev-profile.mjs doctor
+          TARGET="$TARGET" ALLOW_RUNNING="$ALLOW_RUNNING" node desktop/scripts/dev-profile.mjs doctor
         fi
 
   windows:node:check:
@@ -184,7 +184,7 @@ tasks:
         console.error('Set PROMPT, e.g. task windows:agent:run PROMPT=open-example ENGINE=python');
         process.exit(1);
         }
-        const args=['app/scripts/run-task.mjs'];
+        const args=['desktop/scripts/run-task.mjs'];
         if (json) args.push('--json');
         if (engine) args.push('--engine', engine);
         args.push(prompt);
@@ -230,7 +230,7 @@ tasks:
         if (-not $Files) { Write-Host ('No logs found in ' + $LogDir); exit 1 };
         $Lines = if ($env:LINES) { [int]$env:LINES } else { 200 };
         if (-not $env:LOG_COLOR) { $env:LOG_COLOR = '1' };
-        Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs --mode=all"
+        Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node desktop/scripts/pretty-logs.mjs --mode=all"
 
   windows:logs:service:
     desc: "Windows: tail one local app log channel with colored formatting, e.g. task windows:logs:service SERVICE=browser"
@@ -254,7 +254,7 @@ tasks:
         $PrettyArgs = @('--mode=all');
         if ($SessionId) { $PrettyArgs += ('--session=' + $SessionId) };
         if ($Level) { $PrettyArgs += ('--level=' + $Level) };
-        Get-Content -LiteralPath $File -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs @PrettyArgs"
+        Get-Content -LiteralPath $File -Tail $Lines -Wait | node desktop/scripts/pretty-logs.mjs @PrettyArgs"
 
   windows:logs:app:
     desc: "Windows: tail desktop app lifecycle logs"
@@ -319,7 +319,7 @@ tasks:
     cmds:
       - >-
         node -e "const {spawnSync}=require('node:child_process');
-        const args=['app/scripts/agent-logs.mjs'];
+        const args=['desktop/scripts/agent-logs.mjs'];
         const session=(process.env.TASK_SESSION_ID||'').trim();
         const follow=(process.env.TASK_FOLLOW||'1').trim();
         const json=(process.env.TASK_JSON||'').trim();
@@ -344,7 +344,7 @@ tasks:
         if (-not $Files) { Write-Host ('No logs found in ' + $LogDir); exit 1 };
         $Lines = if ($env:LINES) { [int]$env:LINES } else { 200 };
         if (-not $env:LOG_COLOR) { $env:LOG_COLOR = '1' };
-        Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs --mode=all --level=warn"
+        Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node desktop/scripts/pretty-logs.mjs --mode=all --level=warn"
 
   windows:logs:startup:
     desc: "Windows: tail browser startup timing logs with colored human-readable timing"
@@ -359,7 +359,7 @@ tasks:
         if (-not (Test-Path -LiteralPath $File)) { Write-Host ('No log file found: ' + $File); exit 1 };
         $Lines = if ($env:LINES) { [int]$env:LINES } else { 200 };
         if (-not $env:LOG_COLOR) { $env:LOG_COLOR = '1' };
-        Get-Content -LiteralPath $File -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs --mode=startup"
+        Get-Content -LiteralPath $File -Tail $Lines -Wait | node desktop/scripts/pretty-logs.mjs --mode=startup"
 
   windows:logs:navigation:
     desc: "Windows: tail browser URL navigation timing logs with colored human-readable timing"
@@ -374,7 +374,7 @@ tasks:
         if (-not (Test-Path -LiteralPath $File)) { Write-Host ('No log file found: ' + $File); exit 1 };
         $Lines = if ($env:LINES) { [int]$env:LINES } else { 200 };
         if (-not $env:LOG_COLOR) { $env:LOG_COLOR = '1' };
-        Get-Content -LiteralPath $File -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs --mode=navigation"
+        Get-Content -LiteralPath $File -Tail $Lines -Wait | node desktop/scripts/pretty-logs.mjs --mode=navigation"
 
   windows:logs:session:
     desc: "Windows: tail app/browser/engine log lines for one session, e.g. task windows:logs:session SESSION_ID=abc123"
@@ -392,7 +392,7 @@ tasks:
         $Lines = if ($env:LINES) { [int]$env:LINES } else { 200 };
         if (-not $env:LOG_COLOR) { $env:LOG_COLOR = '1' };
         $PrettyArgs = @('--mode=all', ('--session=' + $SessionId));
-        Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node app/scripts/pretty-logs.mjs @PrettyArgs"
+        Get-Content -LiteralPath $Files.FullName -Tail $Lines -Wait | node desktop/scripts/pretty-logs.mjs @PrettyArgs"
 
   agent:run:
     desc: Submit a task to a running local app, e.g. task agent:run PROMPT='open example.com' ENGINE=python
@@ -407,13 +407,13 @@ tasks:
           exit 1
         fi
         if [ -n "$ENGINE" ] && [ "$JSON" = "1" ]; then
-          node app/scripts/run-task.mjs --json --engine "$ENGINE" "$PROMPT"
+          node desktop/scripts/run-task.mjs --json --engine "$ENGINE" "$PROMPT"
         elif [ -n "$ENGINE" ]; then
-          node app/scripts/run-task.mjs --engine "$ENGINE" "$PROMPT"
+          node desktop/scripts/run-task.mjs --engine "$ENGINE" "$PROMPT"
         elif [ "$JSON" = "1" ]; then
-          node app/scripts/run-task.mjs --json "$PROMPT"
+          node desktop/scripts/run-task.mjs --json "$PROMPT"
         else
-          node app/scripts/run-task.mjs "$PROMPT"
+          node desktop/scripts/run-task.mjs "$PROMPT"
         fi
 
   lint:
@@ -430,9 +430,8 @@ tasks:
 
   python:test:
     desc: Run the Python agent's unit tests (stdlib unittest, no dependencies)
-    dir: "{{.APP_DIR}}"
     cmds:
-      - PYTHONPATH=python python3 -m unittest discover -s python/tests -p "test_*.py" -v
+      - PYTHONPATH=agent python3 -m unittest discover -s agent/tests -p "test_*.py" -v
 
   db:schema:check:
     desc: Verify the tracked SessionDb schema identity manifest
@@ -456,7 +455,7 @@ tasks:
           echo "No logs found in $LOG_DIR"
           exit 1
         fi
-        tail -n "${LINES:-200}" -F "$LOG_DIR"/*.log | LOG_COLOR="${LOG_COLOR:-1}" node app/scripts/pretty-logs.mjs --mode=all
+        tail -n "${LINES:-200}" -F "$LOG_DIR"/*.log | LOG_COLOR="${LOG_COLOR:-1}" node desktop/scripts/pretty-logs.mjs --mode=all
 
   logs:service:
     desc: Tail one local app log channel with colored formatting, e.g. task logs:service SERVICE=browser
@@ -485,7 +484,7 @@ tasks:
         set --
         if [ -n "$SESSION_ID" ]; then set -- "$@" --session="$SESSION_ID"; fi
         if [ -n "$LEVEL" ]; then set -- "$@" --level="$LEVEL"; fi
-        tail -n "${LINES:-200}" -F "$FILE" | LOG_COLOR="${LOG_COLOR:-1}" node app/scripts/pretty-logs.mjs --mode=all "$@"
+        tail -n "${LINES:-200}" -F "$FILE" | LOG_COLOR="${LOG_COLOR:-1}" node desktop/scripts/pretty-logs.mjs --mode=all "$@"
 
   logs:app:
     desc: Tail desktop app lifecycle logs
@@ -550,7 +549,7 @@ tasks:
           set -- "$@" --lines "$LINES"
         fi
         if [ "$JSON" = "1" ]; then set -- "$@" --json; fi
-        node app/scripts/agent-logs.mjs "$@"
+        node desktop/scripts/agent-logs.mjs "$@"
 
   logs:errors:
     desc: Tail warnings and errors across all log files
@@ -562,7 +561,7 @@ tasks:
           echo "No logs found in $LOG_DIR"
           exit 1
         fi
-        tail -n "${LINES:-200}" -F "$LOG_DIR"/*.log | LOG_COLOR="${LOG_COLOR:-1}" node app/scripts/pretty-logs.mjs --mode=all --level=warn
+        tail -n "${LINES:-200}" -F "$LOG_DIR"/*.log | LOG_COLOR="${LOG_COLOR:-1}" node desktop/scripts/pretty-logs.mjs --mode=all --level=warn
 
   logs:startup:
     desc: Tail browser startup timing logs with colored human-readable timing
@@ -575,7 +574,7 @@ tasks:
           echo "No log file found: $FILE"
           exit 1
         fi
-        tail -n "${LINES:-200}" -F "$FILE" | LOG_COLOR="${LOG_COLOR:-1}" node app/scripts/pretty-logs.mjs --mode=startup
+        tail -n "${LINES:-200}" -F "$FILE" | LOG_COLOR="${LOG_COLOR:-1}" node desktop/scripts/pretty-logs.mjs --mode=startup
 
   logs:navigation:
     desc: Tail browser URL navigation timing logs with colored human-readable timing
@@ -588,7 +587,7 @@ tasks:
           echo "No log file found: $FILE"
           exit 1
         fi
-        tail -n "${LINES:-200}" -F "$FILE" | LOG_COLOR="${LOG_COLOR:-1}" node app/scripts/pretty-logs.mjs --mode=navigation
+        tail -n "${LINES:-200}" -F "$FILE" | LOG_COLOR="${LOG_COLOR:-1}" node desktop/scripts/pretty-logs.mjs --mode=navigation
 
   logs:session:
     desc: Tail app/browser/engine log lines for one session, e.g. task logs:session SESSION_ID=abc123
@@ -605,7 +604,7 @@ tasks:
           echo "No logs found in $LOG_DIR"
           exit 1
         fi
-        tail -n "${LINES:-200}" -F "$LOG_DIR"/*.log | LOG_COLOR="${LOG_COLOR:-1}" node app/scripts/pretty-logs.mjs --mode=all --session="$SESSION_ID"
+        tail -n "${LINES:-200}" -F "$LOG_DIR"/*.log | LOG_COLOR="${LOG_COLOR:-1}" node desktop/scripts/pretty-logs.mjs --mode=all --session="$SESSION_ID"
 
   package:
     desc: Build an unpackaged app (electron-forge package)
@@ -625,7 +624,7 @@ tasks:
       - bash scripts/build-linux-docker.sh
 
   linux:verify-artifacts:
-    desc: Verify Linux .deb, .rpm, AppImage, and update feed artifacts exist under app/out/make
+    desc: Verify Linux .deb, .rpm, AppImage, and update feed artifacts exist under desktop/out/make
     cmds:
       - node scripts/verify-linux-artifacts.mjs
 
@@ -702,11 +701,11 @@ tasks:
           exit 1
         fi
 
-        package_version=$(node -p "require('./app/package.json').version")
+        package_version=$(node -p "require('./desktop/package.json').version")
         if [ "$package_version" != "$VERSION" ]; then
-          echo "→ bumping app/package.json from $package_version to $VERSION"
-          node -e "const fs=require('fs'); const p='app/package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version=process.argv[1]; fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');" "$VERSION"
-          git add app/package.json
+          echo "→ bumping desktop/package.json from $package_version to $VERSION"
+          node -e "const fs=require('fs'); const p='desktop/package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version=process.argv[1]; fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');" "$VERSION"
+          git add desktop/package.json
           git commit -m "Prepare release $tag" -m "Align the packaged Electron app version with the release tag so auto-update metadata advertises the same version that the app reports at runtime." -m "Constraint: electron-updater compares the published manifest version against app.getVersion()" -m "Confidence: high" -m "Scope-risk: narrow" -m "Tested: release.yml validates tag/package version before publishing" -m "Not-tested: signed CI build before tag push"
           git push origin HEAD:main
         else
@@ -812,7 +811,7 @@ tasks:
     cmds:
       - |
         if [ ! -f .env.signing ]; then
-          echo "Create app/.env.signing with APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID first"
+          echo "Create desktop/.env.signing with APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID first"
           exit 1
         fi
         set -a; . ./.env.signing; set +a
@@ -855,7 +854,7 @@ tasks:
       - |
         TARGET="{{default "" .PATH}}"
         if [ -z "$TARGET" ]; then
-          echo "Set PATH, e.g. task notary:staple PATH=app/out/make/.../Browser-Use.dmg"
+          echo "Set PATH, e.g. task notary:staple PATH=desktop/out/make/.../Browser-Use.dmg"
           exit 1
         fi
         xcrun stapler staple "$TARGET"

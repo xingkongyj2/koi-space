@@ -1,0 +1,10 @@
+agent/.env
+agent/.env.*
+agent/.venv/
+agent/logger/*.log
+agent/logger/*.jsonl
+agent/**/__pycache__/
+agent/**/*.py[cod]
+agent/build/
+agent/dist/
+agent/*.egg-info/
