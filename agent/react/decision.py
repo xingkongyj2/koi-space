@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from urllib.parse import urlsplit
 
 from llm.models import JevDecision, OpenAICompatible
-from logger import log
+from logger import logger
 
 from react.budget import BudgetExceeded, model_scope
 from react.executor import Action
@@ -58,7 +58,7 @@ class Decision:
             return replace(action, kind="type")
         return action
 
-    @log.traced("decision.choose")
+    @logger.traced("decision.choose")
     def choose(
         self,
         goal,
@@ -118,8 +118,8 @@ class Decision:
             except BudgetExceeded:
                 raise
             except Exception as exc:
-                log.trace_exception("decision.jev.fallback", exc)
-                log.debug(f"flow=decision jev_error={exc}")
+                logger.trace_exception("decision.jev.fallback", exc)
+                logger.debug(f"flow=decision jev_error={exc}")
 
         if self.ai:
             try:
@@ -142,12 +142,12 @@ class Decision:
                 )
                 with model_scope("slow"):
                     raw = self.ai.chat(DECISION_SYSTEM_PROMPT, payload)
-                log.trace("decision.model.raw", data=raw)
+                logger.trace("decision.model.raw", data=raw)
                 data = json.loads(raw)
                 confidence = float(data.get("confidence", 0.5))
                 if not 0 <= confidence <= 1:
                     raise ValueError("模型置信度必须是 0 到 1 的有限数值")
-                log.trace("decision.model.parsed", data=data)
+                logger.trace("decision.model.parsed", data=data)
                 # 每次只保留一个动作；点击或输入后页面可能变化，后续动作必须重新决策。
                 actions = tuple(
                     Action(
@@ -176,8 +176,8 @@ class Decision:
             except BudgetExceeded:
                 raise
             except Exception as exc:
-                log.trace_exception("decision.model.fallback", exc)
-                log.debug(f"flow=decision model_error={exc}")
+                logger.trace_exception("decision.model.fallback", exc)
+                logger.debug(f"flow=decision model_error={exc}")
 
         return DecisionResult((), 0.0, "none", "no safe action available")
 

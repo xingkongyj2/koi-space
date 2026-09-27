@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from llm.models import OpenAICompatible
-from logger import log
+from logger import logger
 
 REFLECTION_SYSTEM_PROMPT = "根据任务目标、当前页面快照和执行错误，给出下一次决策可直接使用的简短建议。只使用页面中存在的元素，不猜测密码或目标。"
 
@@ -14,10 +14,10 @@ class Reflection:
     def __init__(self, ai: OpenAICompatible | None = None) -> None:
         self.ai = ai
 
-    @log.traced("reflection.advise")
+    @logger.traced("reflection.advise")
     def advise(self, goal: str, observation, error: str = "") -> str:
         """根据错误给出恢复建议；反思模型不可用时返回确定性提示。"""
-        log.debug(f"flow=reflection goal={goal[:80]!r} error={error[:120]!r}")
+        logger.debug(f"flow=reflection goal={goal[:80]!r} error={error[:120]!r}")
         if self.ai:
             try:
                 payload = json.dumps(
@@ -26,6 +26,6 @@ class Reflection:
                 )
                 return self.ai.chat(REFLECTION_SYSTEM_PROMPT, payload)
             except Exception as exc:  # reflection must never stop recovery
-                log.trace_exception("reflection.model.fallback", exc)
-                log.debug(f"flow=reflection failed={exc}")
+                logger.trace_exception("reflection.model.fallback", exc)
+                logger.debug(f"flow=reflection failed={exc}")
         return "重新观察页面，只使用当前 snapshot 中仍存在的元素引用。"

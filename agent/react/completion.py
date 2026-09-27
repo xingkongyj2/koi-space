@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass
 
 from llm.models import OpenAICompatible
-from logger import log
+from logger import logger
 
 from react.budget import BudgetExceeded, model_scope
 from react.validator import Validator
@@ -21,7 +21,7 @@ class CompletionVerifier:
     def __init__(self, ai: OpenAICompatible | None = None) -> None:
         self.ai = ai
 
-    @log.traced("completion.verify")
+    @logger.traced("completion.verify")
     def verify(self, step, before, after, action=None) -> bool | None:
         """根据当前可见证据返回完成结论；无模型或无有效结果时不背书。"""
         if self.ai is None or not after.url:
@@ -56,11 +56,11 @@ class CompletionVerifier:
             },
         }
         try:
-            with log.measure("verification.model_request"):
+            with logger.measure("verification.model_request"):
                 raw = self.ai.chat(
                     COMPLETION_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
                 )
-            log.trace("completion.model.raw", response=raw)
+            logger.trace("completion.model.raw", response=raw)
             value = json.loads(raw)
             if not isinstance(value, dict) or set(value) != {
                 "complete",
@@ -80,7 +80,7 @@ class CompletionVerifier:
                 raise ValueError("evidence must be a nonempty string")
             self.last_evidence = evidence
             accepted = value["complete"] and confidence >= 0.8
-            log.trace(
+            logger.trace(
                 "completion.model.verdict",
                 complete=value["complete"],
                 confidence=confidence,
@@ -92,7 +92,7 @@ class CompletionVerifier:
             raise
         except Exception as exc:
             # 验收模型不可用时保留失败状态，继续由执行循环决定恢复或停止。
-            log.trace_exception("completion.model.unavailable", exc)
+            logger.trace_exception("completion.model.unavailable", exc)
             return None
 
 
@@ -242,7 +242,7 @@ class TaskValidator:
         except BudgetExceeded:
             raise
         except Exception as exc:
-            log.trace_exception("task_verification.unavailable", exc)
+            logger.trace_exception("task_verification.unavailable", exc)
             return CompletionResult(
                 False, "task_model", ("任务级验收未能取得有效证据",)
             )

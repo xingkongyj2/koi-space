@@ -6,14 +6,14 @@ import json
 import time
 from pathlib import Path
 
-from logger import log
+from logger import logger
 
 
 class Memory:
     def __init__(self, path=None) -> None:
         self.path = Path(path).expanduser() if path else None
 
-    @log.traced("memory.write")
+    @logger.traced("memory.write")
     def write(self, kind: str, data: dict) -> None:
         """只追加一条时间戳记录，不改写既有执行历史。"""
         if not self.path:

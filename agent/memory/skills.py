@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from logger import log
+from logger import logger
 from react.executor import Action
 
 
@@ -28,7 +28,7 @@ class SkillLibrary:
             except ValueError:
                 continue
 
-    @log.traced("skills.match")
+    @logger.traced("skills.match")
     def match(self, goal: str, url: str = ""):
         """按目标词和精确主机名选择匹配的技能。"""
         terms = set(re.findall(r"\w+", goal.lower()))
@@ -41,7 +41,7 @@ class SkillLibrary:
                 best = (score, item)
         return best[1] if best else None
 
-    @log.traced("skills.save")
+    @logger.traced("skills.save")
     def save(self, goal: str, actions, url: str = "") -> None:
         """追加保存技能动作；跨观察的元素操作还需要可重绑的语义目标。"""
         if not self.path:

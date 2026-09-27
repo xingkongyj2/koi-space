@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from llm.models import OpenAICompatible
-from logger import log
+from logger import logger
 from react.budget import model_scope
 
 PLANNER_SYSTEM_PROMPT = """
@@ -327,11 +327,11 @@ def _url(value: str, label: str) -> None:
         )
 
 
-@log.traced("planner.parse")
+@logger.traced("planner.parse")
 def parse_plan(text: str) -> Plan:
     """校验步骤字段、依赖拓扑和并行组，构造不可变执行计划。"""
     obj = _json_object(text)
-    log.trace("planner.json.decoded", data=obj)
+    logger.trace("planner.json.decoded", data=obj)
     _fields(
         obj, {"status", "needs_browser", "question", "direct_answer", "steps"}, "plan"
     )
@@ -418,7 +418,7 @@ class Planner:
         self.ai = ai
         self._history: list[dict[str, Any]] = []
 
-    @log.traced("planner.locate_entry")
+    @logger.traced("planner.locate_entry")
     def locate_entry(
         self, user_input: str, *, history: list[dict] | None = None
     ) -> EntryPoint:
@@ -427,13 +427,13 @@ class Planner:
             payload = json.dumps(
                 {"user_input": user_input, "history": history or []}, ensure_ascii=False
             )
-            with log.measure("planning.entry.model_request", attempt=1):
+            with logger.measure("planning.entry.model_request", attempt=1):
                 raw = self.ai.chat(ENTRY_LOCATOR_SYSTEM_PROMPT, payload)
-            log.trace("planner.entry_locator.raw", response=raw)
+            logger.trace("planner.entry_locator.raw", response=raw)
             try:
                 entry = parse_entry_point(raw)
             except PlanError as exc:
-                log.trace("planner.entry_locator.repair", error=str(exc))
+                logger.trace("planner.entry_locator.repair", error=str(exc))
                 repair = json.dumps(
                     {
                         "user_input": user_input,
@@ -444,13 +444,13 @@ class Planner:
                     },
                     ensure_ascii=False,
                 )
-                with log.measure(
+                with logger.measure(
                     "planning.entry.model_request", attempt=2, reason="repair"
                 ):
                     entry = parse_entry_point(
                         self.ai.chat(ENTRY_LOCATOR_SYSTEM_PROMPT, repair)
                     )
-            log.trace("planner.entry_locator.result", result=asdict(entry))
+            logger.trace("planner.entry_locator.result", result=asdict(entry))
             return entry
 
         # 无模型时只处理显式网址，不根据站点名称猜测地址。
@@ -465,8 +465,8 @@ class Planner:
                 return EntryPoint("ready", url=url)
         return EntryPoint("ask", question="请提供要打开的网站或完整网址。")
 
-    @log.timed("planning.full.total")
-    @log.traced("planner.plan")
+    @logger.timed("planning.full.total")
+    @logger.traced("planner.plan")
     def plan(
         self,
         user_input: str,
@@ -501,7 +501,7 @@ class Planner:
         if not user_input.strip() and not events:
             plan = Plan("ask", False, question="请告诉我你希望完成什么任务？")
         elif self.ai:
-            with log.measure("planning.full.model_request", attempt=1):
+            with logger.measure("planning.full.model_request", attempt=1):
                 raw = self.ai.chat(
                     PLANNER_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
                 )
@@ -509,13 +509,13 @@ class Planner:
                 plan = parse_plan(raw)
             except PlanError as exc:
                 # 保留完整上下文，只修正一次格式；不执行无效计划或无限重试。
-                log.trace("planner.repair", error=str(exc))
+                logger.trace("planner.repair", error=str(exc))
                 payload["repair"] = {
                     "invalid_output": raw,
                     "error": str(exc),
                     "instruction": "按系统契约重新返回完整 JSON；只修正错误，不丢失原任务与历史。",
                 }
-                with log.measure(
+                with logger.measure(
                     "planning.full.model_request", attempt=2, reason="repair"
                 ):
                     plan = parse_plan(

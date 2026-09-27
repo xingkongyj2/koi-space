@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any
 
-from logger import log
+from logger import logger
 
 _HISTORY: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "task_history", default=None
@@ -31,7 +31,7 @@ def _emit(event: dict[str, Any]) -> None:
     history = _HISTORY.get()
     if history is not None:
         history.append(deepcopy(event))
-    log.record_event(event)
+    logger.record_event(event)
     sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import debug_task
 from config.config import Provider, Settings
-from logger import log
+from logger import logger
 
 
 class DebugTaskTests(unittest.TestCase):
@@ -19,11 +19,11 @@ class DebugTaskTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.profile = Path(temporary.name)
-        patcher = patch.object(log, "LOG_PATH", self.profile / "debug.jsonl")
+        patcher = patch.object(logger, "LOG_PATH", self.profile / "debug.jsonl")
         patcher.start()
         self.addCleanup(patcher.stop)
-        token = log._CONTEXT.set({})
-        self.addCleanup(log._CONTEXT.reset, token)
+        token = logger._CONTEXT.set({})
+        self.addCleanup(logger._CONTEXT.reset, token)
 
     def test_default_routes_to_app_without_local_browser_or_model(self):
         with (

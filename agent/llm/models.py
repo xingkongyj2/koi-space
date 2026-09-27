@@ -11,7 +11,7 @@ from dataclasses import asdict
 from urllib.parse import urlsplit
 
 from config.config import Provider
-from logger import log
+from logger import logger
 from react.budget import BudgetExceeded, before_model_request, model_scope, record_usage
 
 
@@ -19,13 +19,13 @@ class ModelError(RuntimeError):
     """模型请求失败或返回内容无法使用。"""
 
 
-@log.traced("model.http")
+@logger.traced("model.http")
 def _request_json(
     request: urllib.request.Request, body: dict, *, provider_name: str, timeout: float
 ) -> dict:
     # 只记录请求类型和业务载荷，认证头不能写入日志。
     """发送一次模型请求，记录真实调用预算、网络耗时及服务端用量。"""
-    log.trace(
+    logger.trace(
         "model.request",
         url=request.full_url,
         body=body,
@@ -40,7 +40,7 @@ def _request_json(
             status = response.status
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
-        log.trace("model.response.http_error", status=exc.code, body=error_body)
+        logger.trace("model.response.http_error", status=exc.code, body=error_body)
         try:
             error = json.loads(error_body).get("error", {})
             message = str(error.get("message") or "") if isinstance(error, dict) else ""
@@ -52,16 +52,16 @@ def _request_json(
         detail = f": {message[:1000]}" if message else ""
         raise ModelError(f"{provider_name} HTTP {exc.code} {code}{detail}") from exc
     finally:
-        log.timing(
+        logger.timing(
             "model.http.network",
             network_started,
             provider=provider_name,
             endpoint=urlsplit(request.full_url).path,
         )
-    log.trace("model.response.raw", status=status, body=raw)
+    logger.trace("model.response.raw", status=status, body=raw)
     data = json.loads(raw)
     record_usage(data)
-    log.trace("model.response.parsed", data=data)
+    logger.trace("model.response.parsed", data=data)
     return data
 
 
@@ -75,7 +75,7 @@ class OpenAICompatible:
         """保留通用文本模型调用接口，底层统一使用 Responses。"""
         return self.responses(system, user_input)
 
-    @log.traced("model.responses")
+    @logger.traced("model.responses")
     def responses(self, system: str, user_input: str) -> str:
         """调用 Responses 接口并拼接文本输出，不返回模型的内部推理信息。"""
         body = {
@@ -128,8 +128,8 @@ class JevDecision:
         self.provider = provider
         self.text_model = text_model
 
-    @log.timed("decision.jev.total")
-    @log.traced("model.jev")
+    @logger.timed("decision.jev.total")
+    @logger.traced("model.jev")
     def choose(
         self,
         goal: str,
@@ -250,7 +250,7 @@ class JevDecision:
             },
         )
         try:
-            with log.measure("decision.jev.request", model=self.provider.model):
+            with logger.measure("decision.jev.request", model=self.provider.model):
                 data = _request_json(
                     request,
                     body,
@@ -332,7 +332,7 @@ class JevDecision:
             )
             with (
                 model_scope("jev_text"),
-                log.measure("decision.jev.type_text_model_request"),
+                logger.measure("decision.jev.type_text_model_request"),
             ):
                 raw = self.text_model.chat(
                     'Return only JSON with one key: {"text":"value to enter"}. Never include credentials.',

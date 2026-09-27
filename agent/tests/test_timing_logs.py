@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import protocol.protocol as protocol
 from config.config import Provider
 from llm.models import JevDecision
-from logger import log
+from logger import logger
 from planner.planner import Planner
 from react.executor import Action, Executor
 from react.observer import Observation
@@ -21,16 +21,16 @@ class TimingLogTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.log_path = Path(temporary.name) / "agent.log"
         self.entries = []
-        original = log._record
+        original = logger._record
 
         def record(kind, **data):
             self.entries.append({"kind": kind, **data})
             original(kind, **data)
 
-        recorder = patch.object(log, "_record", side_effect=record)
+        recorder = patch.object(logger, "_record", side_effect=record)
         recorder.start()
         self.addCleanup(recorder.stop)
-        patcher = patch.object(log, "LOG_PATH", self.log_path)
+        patcher = patch.object(logger, "LOG_PATH", self.log_path)
         patcher.start()
         self.addCleanup(patcher.stop)
 

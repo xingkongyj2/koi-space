@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from logger import log
+from logger import logger
 
 from react import cdp
 
@@ -149,7 +149,7 @@ class BrowserSession:
 
     # ── agent-browser plumbing ──────────────────────────────────────────────
 
-    @log.traced("browser.cli")
+    @logger.traced("browser.cli")
     def _cli(self, args: list[str], timeout: float = 30.0) -> tuple[bool, str, str]:
         """执行内部绑定命令，将超时统一转换为失败返回值。"""
         try:
@@ -213,7 +213,7 @@ class BrowserSession:
         try:
             entry = cdp.find_target(self.cdp_port, self.target_id)
         except cdp.CdpError as exc:
-            log.debug(f"target lookup failed, binding by marker only: {exc}")
+            logger.debug(f"target lookup failed, binding by marker only: {exc}")
             return "", ""
         return entry.get("url") or "", entry.get("title") or ""
 
@@ -227,7 +227,7 @@ class BrowserSession:
             )
             return True
         except cdp.CdpError as exc:
-            log.debug(f"could not plant marker: {exc}")
+            logger.debug(f"could not plant marker: {exc}")
             return False
 
     @staticmethod
@@ -251,7 +251,7 @@ class BrowserSession:
                 return loose[0]["tabId"]
         return None
 
-    @log.traced("browser.bind")
+    @logger.traced("browser.bind")
     def bind(self) -> str:
         """将 agent-browser 会话绑定到宿主指定的视图，返回唯一匹配的 tabId。"""
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -283,7 +283,7 @@ class BrowserSession:
             self.pid_cache.write_text(self._daemon_pid or "", encoding="utf-8")
         except OSError:
             pass  # best effort; worst case the next command rebinds again
-        log.debug(
+        logger.debug(
             f"bound {self.session} -> {tab_id} (target {self.target_id[:8]}, {len(tabs)} candidates)"
         )
         return tab_id
@@ -319,14 +319,14 @@ class BrowserSession:
         current = self._read_pid()
         if current == self._daemon_pid and self._pid_alive(current):
             return
-        log.debug(
+        logger.debug(
             f"daemon pid changed ({self._daemon_pid!r} -> {current!r}); rebinding"
         )
         self.bind()
 
     # ── execution ───────────────────────────────────────────────────────────
 
-    @log.traced("browser.run")
+    @logger.traced("browser.run")
     def run(self, args: list[str], timeout: float = DEFAULT_TIMEOUT) -> BrowserResult:
         """校验绑定后执行一个命令，返回统一的成功、错误与耗时信息。"""
         if not args:
@@ -363,7 +363,7 @@ class BrowserSession:
             # A command can also fail because the daemon died underneath it; give
             # one rebind-and-retry before reporting, then surface honestly.
             if self._read_pid() != self._daemon_pid:
-                log.debug(
+                logger.debug(
                     "daemon changed under a failed command; rebinding and retrying once"
                 )
                 self._daemon_pid = None
@@ -384,6 +384,6 @@ class BrowserSession:
 
 def log_environment() -> None:
     """通过诊断接口记录 Python 和 agent-browser 的解析路径。"""
-    log.debug(
+    logger.debug(
         f"python={sys.version.split()[0]} agent-browser={shutil.which('agent-browser') or 'NOT FOUND'}"
     )

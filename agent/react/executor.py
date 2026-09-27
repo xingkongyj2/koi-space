@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict, dataclass
 
 import protocol.protocol as protocol
-from logger import log
+from logger import logger
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class Executor:
     def __init__(self, session) -> None:
         self.session = session
 
-    @log.traced("executor.execute")
+    @logger.traced("executor.execute")
     def execute(self, action: Action):
         """统一校验动作和确认标记，记录事件后执行对应浏览器命令。"""
         if action.kind not in self.ALLOWED:
@@ -43,16 +43,16 @@ class Executor:
             "wait": ["wait", action.value or "500"],
             "scroll": ["scroll", action.value or "down"],
         }
-        log.debug(f"flow=execute action={action.kind} ref={action.ref or '-'}")
+        logger.debug(f"flow=execute action={action.kind} ref={action.ref or '-'}")
         name = f"browser.{action.kind}"
         action_data = asdict(action)
         if action.sensitive:
             action_data["value"] = "<redacted>"
-        protocol.tool_call(name, action_data, log.current_iteration())
+        protocol.tool_call(name, action_data, logger.current_iteration())
         started = time.monotonic()
         try:
             if action.kind == "type":
-                log.trace("executor.command", command=["fill", action.ref, ""])
+                logger.trace("executor.command", command=["fill", action.ref, ""])
                 cleared = self.session.run(["fill", action.ref, ""])
                 if not cleared.ok:
                     protocol.tool_result(
@@ -64,7 +64,7 @@ class Executor:
                     return cleared
             if action.kind == "press" and action.ref:
                 # press 操作当前焦点；指定 ref 时先聚焦对应控件。
-                log.trace("executor.command", command=["focus", action.ref])
+                logger.trace("executor.command", command=["focus", action.ref])
                 focused = self.session.run(["focus", action.ref])
                 if not focused.ok:
                     protocol.tool_result(
@@ -74,10 +74,10 @@ class Executor:
                         (time.monotonic() - started) * 1000,
                     )
                     return focused
-            log.trace("executor.command", command=commands[action.kind])
+            logger.trace("executor.command", command=commands[action.kind])
             result = self.session.run(commands[action.kind])
         except Exception as exc:
-            log.timing(
+            logger.timing(
                 "browser.action.command",
                 started,
                 action=action.kind,
@@ -87,7 +87,7 @@ class Executor:
                 name, False, str(exc), (time.monotonic() - started) * 1000
             )
             raise
-        log.timing(
+        logger.timing(
             "browser.action.command",
             started,
             action=action.kind,

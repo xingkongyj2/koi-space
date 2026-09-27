@@ -26,7 +26,7 @@ _LAYERS = {
     "planner.plan": "规划层 · ②任务拆分",
     "orchestrator.run": "执行层 · 最终结果",
     "orchestrator.step": "执行层 · 子任务",
-    "observer.capture": "观察层 · 网页内容",
+    "observer.capture": "观察层 · 页面摘要",
     "decision.choose": "决策层",
     "executor.execute": "执行层 · 本轮命令",
     "validator.action": "验证层 · 动作结果",
@@ -49,6 +49,12 @@ _REQUEST_STAGES = {
 }
 _STAGE_LABELS = {
     **_LAYERS,
+    "model.http": "模型 IO · HTTP 请求",
+    "model.request": "模型 IO · 请求参数",
+    "model.response.raw": "模型 IO · 原始响应",
+    "model.response.parsed": "模型 IO · 解析响应",
+    "model.response.http_error": "模型 IO · HTTP 错误",
+    "browser.action.command": "浏览器 IO · 命令结果",
     "planning.entry.model_request": "规划层 · 入口定位模型请求",
     "planning.full.model_request": "规划层 · 任务拆分模型请求",
     "decision.jev.request": "决策层 · JEV 请求",
@@ -87,6 +93,9 @@ _FIELD_LABELS = {
     "diff": "页面变化",
     "changed": "是否变化",
     "elements": "交互元素",
+    "element_count": "交互元素数",
+    "has_page_text": "包含网页正文",
+    "has_diff": "包含页面变化",
     "ref": "元素引用",
     "text": "文本",
     "goal": "目标",
@@ -125,6 +134,9 @@ _FIELD_LABELS = {
     "args": "命令参数",
     "stdout": "标准输出",
     "stderr": "错误输出",
+    "stdout_bytes": "标准输出字节数",
+    "stderr_bytes": "错误输出字节数",
+    "exit_code": "退出码",
     "code": "退出码",
     "preview": "结果预览",
     "attempt": "请求次数",
@@ -150,9 +162,20 @@ _FIELD_LABELS = {
     "force_reasoning": "是否强制推理",
     "skills": "技能",
     "memory": "记忆",
+    "version": "观察版本",
+    "loading": "是否加载中",
+    "stable": "页面是否稳定",
+    "extracted": "提取结果",
+    "rationale": "决策理由",
+    "terminal": "终止状态",
 }
 _CONTEXT: ContextVar[dict] = ContextVar("log_context", default={})
 _CALLS = count(1)
+
+# 页面快照只供决策和验收使用，不写入诊断日志。日志保留 URL、状态、
+# 元素数量等足以定位问题的摘要；模型 IO 仍保留请求和响应的结构化摘要。
+_WEB_CONTENT_KEYS = frozenset({"snapshot", "page_text", "diff", "elements"})
+_MAX_LOG_TEXT = 1200
 
 
 def set_context(**data: Any) -> None:
@@ -167,12 +190,92 @@ def current_iteration() -> int:
 
 def _json_value(value: Any) -> Any:
     """将数据类和路径转换为可记录对象，不序列化任意实例的内部状态。"""
+    class_name = type(value).__name__
+    if class_name == "Observation":
+        return {
+            "url": value.url,
+            "title": value.title,
+            "changed": value.changed,
+            "version": value.version,
+            "loading": value.loading,
+            "stable": value.stable,
+            "element_count": len(value.elements),
+            "has_page_text": bool(value.page_text),
+            "has_diff": bool(value.diff),
+            "extracted": value.extracted,
+        }
+    if class_name == "BrowserResult":
+        args = tuple(value.args)
+        is_snapshot = "snapshot" in args
+        result = {
+            "ok": value.ok,
+            "args": list(args),
+            "exit_code": value.exit_code,
+            "ms": round(value.ms, 2),
+            "stdout_bytes": len(value.stdout.encode("utf-8")),
+            "stderr_bytes": len(value.stderr.encode("utf-8")),
+        }
+        # URL 查询和失败原因是核心结果；snapshot 命令的 stdout 永不落盘。
+        if args == ("get", "url") and value.stdout:
+            result["url"] = value.stdout.strip()[:500]
+        elif not is_snapshot and value.stderr:
+            result["error"] = value.stderr.strip()[:500]
+        return result
+    # 测试会话和兼容适配器可能返回轻量 Result 对象；同样只留命令结果摘要。
+    if class_name == "Result" and hasattr(value, "ok"):
+        return {
+            "ok": bool(value.ok),
+            "preview": str(getattr(value, "preview", ""))[:300],
+        }
+    if class_name == "Action":
+        return {
+            "kind": value.kind,
+            "ref": value.ref,
+            "expected": value.expected,
+            "sensitive": value.sensitive,
+            "observation_version": value.observation_version,
+            "value": "<redacted>" if value.sensitive else value.value,
+        }
     if is_dataclass(value) and not isinstance(value, type):
         to_dict = getattr(value, "to_dict", None)
         return to_dict() if callable(to_dict) else asdict(value)
     if isinstance(value, Path):
         return str(value)
     return f"<{type(value).__name__}>"
+
+
+def _compact_log_value(value: Any, *, parent_key: str = "") -> Any:
+    """压缩日志数据并移除网页正文，避免把快照重复写入每个模块日志。"""
+    if isinstance(value, dict):
+        compact = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text in _WEB_CONTENT_KEYS:
+                continue
+            # JEV 的 state.page.text 也是网页正文，但普通 text 可能是用户输入
+            # 或模型输出，因此只在 page/observation 上下文中移除。
+            if key_text == "text" and parent_key in {"page", "observation", "before", "after"}:
+                continue
+            compact[key_text] = _compact_log_value(item, parent_key=key_text)
+        return compact
+    if isinstance(value, list):
+        return [_compact_log_value(item, parent_key=parent_key) for item in value]
+    if isinstance(value, tuple):
+        return [_compact_log_value(item, parent_key=parent_key) for item in value]
+    if isinstance(value, str):
+        # 请求体中的 input 经常是 JSON 字符串；解析后才能去掉嵌套的 snapshot。
+        stripped = value.strip()
+        if parent_key == "input" and stripped[:1] in {"{", "["}:
+            try:
+                parsed = json.loads(stripped)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                return _compact_log_value(parsed, parent_key=parent_key)
+        if len(value) > _MAX_LOG_TEXT:
+            return f"<文本已省略，长度={len(value)} 字符>"
+        return value
+    return value
 
 
 def trace(stage: str, **data: Any) -> None:
@@ -321,6 +424,10 @@ def _format_readable(entry: dict) -> str:
     normalized = json.loads(
         json.dumps(details, ensure_ascii=False, default=_json_value)
     )
+    # 生产日志只由 layer/event 记录；trace 保留给旧的格式化接口测试和离线诊断
+    # 使用，避免改变它对任意原始字段的通用语义。
+    if entry.get("kind") != "trace":
+        normalized = _compact_log_value(normalized)
     blocks = []
 
     def expand(value, path=""):
@@ -341,7 +448,7 @@ def _format_readable(entry: dict) -> str:
                 expand(item, f"{path}[{index}]") for index, item in enumerate(value)
             ]
         if isinstance(value, str):
-            # Raw model bodies often contain JSON encoded inside a string.
+            # 请求/响应的多行 JSON 保留为独立段落，网页正文已经在压缩阶段移除。
             display = value
             try:
                 parsed = json.loads(value)

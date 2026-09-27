@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 
 from config.config import Provider
 from llm.models import JevDecision, ModelError, OpenAICompatible
-from logger import log
+from logger import logger
 from planner.planner import Planner
 from react.decision import Decision
 from react.observer import Observation
@@ -29,20 +29,20 @@ class TracingTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "trace.log"
         self.entries = []
-        original = log._record
+        original = logger._record
 
         def record(kind, **data):
-            self.entries.append({**log._CONTEXT.get(), "kind": kind, **data})
+            self.entries.append({**logger._CONTEXT.get(), "kind": kind, **data})
             original(kind, **data)
 
-        recorder = patch.object(log, "_record", side_effect=record)
+        recorder = patch.object(logger, "_record", side_effect=record)
         recorder.start()
         self.addCleanup(recorder.stop)
-        patcher = patch.object(log, "LOG_PATH", self.path)
+        patcher = patch.object(logger, "LOG_PATH", self.path)
         patcher.start()
         self.addCleanup(patcher.stop)
-        token = log._CONTEXT.set({"session_id": "test-session"})
-        self.addCleanup(log._CONTEXT.reset, token)
+        token = logger._CONTEXT.set({"session_id": "test-session"})
+        self.addCleanup(logger._CONTEXT.reset, token)
         self.provider = Provider(
             "test", "https://example.com/v1", "secret-not-for-logs", "test-model"
         )
@@ -110,7 +110,7 @@ class TracingTests(unittest.TestCase):
         self.assertEqual(self.records("model.responses")[0]["response"], "not json")
         self.assertIn("not json", self.path.read_text())
         self.assertIn("error", self.records("model.responses")[0])
-        self.assertNotIn("call_id", log._CONTEXT.get())
+        self.assertNotIn("call_id", logger._CONTEXT.get())
 
     def test_http_failure_body_is_preserved(self):
         error = HTTPError(
@@ -186,7 +186,7 @@ class TracingTests(unittest.TestCase):
         self.assertEqual(
             self.records("executor.execute")[0]["call_id"], execute["call_id"]
         )
-        self.assertNotIn("step_id", log._CONTEXT.get())
+        self.assertNotIn("step_id", logger._CONTEXT.get())
 
     def test_caught_decision_failure_logs_fallback(self):
         observation = Observation("", "", "", "", False)

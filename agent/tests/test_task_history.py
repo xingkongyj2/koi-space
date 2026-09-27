@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import main as entrypoint
 import protocol.protocol as protocol
 from config.config import Provider, Settings
-from logger import log
+from logger import logger
 from memory.history import task_history
 from planner.planner import Plan, Step
 from react.budget import Budget
@@ -26,7 +26,7 @@ class TaskHistoryTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        patcher = patch.object(log, "LOG_PATH", Path(temporary.name) / "agent.jsonl")
+        patcher = patch.object(logger, "LOG_PATH", Path(temporary.name) / "agent.jsonl")
         patcher.start()
         self.addCleanup(patcher.stop)
         self.settings = Settings(
@@ -197,9 +197,10 @@ class TaskHistoryTests(unittest.TestCase):
         self.assertEqual(calls[0]["name"], "browser.open")
         self.assertEqual(calls[0]["args"]["value"], "https://v.qq.com/")
         self.assertTrue(results[0]["ok"])
-        readable = log.LOG_PATH.read_text()
-        self.assertIn("观察层 · 网页内容", readable)
-        self.assertIn("Play", readable)
+        readable = logger.LOG_PATH.read_text()
+        self.assertIn("观察层 · 页面摘要", readable)
+        self.assertNotIn("Play", readable)
+        self.assertIn("交互元素数", readable)
         self.assertIn("https://v.qq.com/", readable)
         self.assertFalse(
             any(

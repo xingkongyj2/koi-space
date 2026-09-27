@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from logger import log
+from logger import logger
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class Observer:
         self._last_snapshot = ""
         self._last_page_text = ""
 
-    @log.traced("observer.capture")
+    @logger.traced("observer.capture")
     def capture(self) -> Observation:
         """先按需捕获正文，再生成最终交互引用，避免完整快照使 ref 失效。"""
         url = self.session.current_url()
@@ -63,7 +63,7 @@ class Observer:
         stable = result.ok and (full.ok if self.include_full else True)
         current_url = self.session.current_url()
         if current_url != url:
-            log.trace(
+            logger.trace(
                 "observer.page_navigated_during_capture", before=url, after=current_url
             )
             stable = False
@@ -74,13 +74,13 @@ class Observer:
         self._last_snapshot = snapshot
         self._last_page_text = page_text
         elements = tuple(self._elements(snapshot))
-        log.debug(
+        logger.debug(
             f"flow=observe url={url or '<unknown>'} "
             f"bytes={len(snapshot)} full_bytes={len(page_text)} "
             f"elements={len(elements)} changed={bool(diff) or page_changed}"
         )
         # 完整观察已由装饰器记录；这里只写摘要，不为每次抓取增加界面事件。
-        log.trace(
+        logger.trace(
             "observer.summary",
             url=url,
             ok=result.ok,

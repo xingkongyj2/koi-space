@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from logger import log
+from logger import logger
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ class Validator:
                 return ValidationResult("unexpected_change", (str(exc),))
         return ValidationResult("passed")
 
-    @log.traced("validator.action")
+    @logger.traced("validator.action")
     def action(self, before, after, action) -> ValidationResult:
         # 加载中不能当作 no-op，更不能据此确认步骤完成。
         if after.loading or not after.stable:
@@ -90,7 +90,7 @@ class Validator:
 
         return ValidationResult("passed", (after.diff or f"页面已更新：{after.url}",))
 
-    @log.traced("validator.step")
+    @logger.traced("validator.step")
     def step(
         self, observation, criteria, start_url="", *, semantic_verified=False
     ) -> ValidationResult:

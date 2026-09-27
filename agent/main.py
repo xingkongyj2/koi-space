@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import protocol.protocol as protocol
 from config.config import load_settings
 from llm.models import JevDecision, ModelError, OpenAICompatible
-from logger import log
+from logger import logger
 from memory.history import execution_context, task_history
 from memory.memory import Memory
 from memory.skills import SkillLibrary
@@ -50,7 +50,7 @@ def browser_target(task: dict) -> tuple[int, str]:
 
 def emit_plan(plan: Plan) -> None:
     """持久化完整规划契约，方便后续回复和进程重启后恢复。"""
-    log.debug(
+    logger.debug(
         f"planner status={plan.status} needs_browser={plan.needs_browser} steps={len(plan.steps)}"
     )
     # 保存完整契约，包括目标、网址、依赖和追问，供下一轮规划恢复。
@@ -79,14 +79,14 @@ def open_entry(session: browser.BrowserSession, entry: EntryPoint) -> bool:
         and actual.netloc == wanted.netloc
         and (not wanted.path or actual.path.startswith(wanted.path))
     )
-    log.trace(
+    logger.trace(
         "planner.entry_open.result", ok=result.ok, current_url=current, reached=reached
     )
     return reached
 
 
-@log.timed("task.total")
-@log.traced("task.run")
+@logger.timed("task.total")
+@logger.traced("task.run")
 def main() -> int:
     """解析请求并设置事件上下文，stdout 始终只输出协议事件。"""
     try:
@@ -97,8 +97,8 @@ def main() -> int:
 
     user_input = str(task.get("userInput", task.get("prompt")) or "")
     session_id = str(task.get("sessionId") or "?")
-    log.set_context(session_id=session_id)
-    log.trace("task.received", task=task)
+    logger.set_context(session_id=session_id)
+    logger.trace("task.received", task=task)
 
     try:
         history = task_history(task, user_input)
@@ -135,7 +135,7 @@ def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) 
 
 def _run_task(task, user_input, session_id, history, settings, budget):
     """规划预热和正式执行共享任务预算，跨线程的模型用量不会丢失。"""
-    log.trace(
+    logger.trace(
         "task.configuration",
         planner={
             "model": settings.planner.model,
@@ -169,7 +169,7 @@ def _run_task(task, user_input, session_id, history, settings, budget):
             cdp_port, target_id = browser_target(task)
             browser.log_environment()
             session = browser.BrowserSession(session_id, cdp_port, target_id)
-            with log.measure("planning.resume.browser_bind"):
+            with logger.measure("planning.resume.browser_bind"):
                 session.bind()
             current_url = session.current_url()
             restored.update({"current_url": current_url, "resume": True})
@@ -193,13 +193,13 @@ def _run_task(task, user_input, session_id, history, settings, budget):
 
             def locate_entry():
                 """运行轻量入口定位；后续回复必须结合原任务历史理解。"""
-                with log.measure("planning.entry.total"):
+                with logger.measure("planning.entry.total"):
                     return Planner(ai=planner_client).locate_entry(
                         user_input, history=history
                     )
 
             parallel_started = time.monotonic()
-            log.trace("planner.parallel.started", phases=["entry_locator", "full_plan"])
+            logger.trace("planner.parallel.started", phases=["entry_locator", "full_plan"])
             entry_future = submit_with_task_context(locate_entry)
             plan_future = submit_with_task_context(
                 planner.plan,
@@ -213,7 +213,7 @@ def _run_task(task, user_input, session_id, history, settings, budget):
             except PlanError as exc:
                 protocol.error(f"flow=entry_locator invalid: {exc}")
                 return 0
-            log.trace(
+            logger.trace(
                 "planner.entry_locator.completed",
                 result={"status": entry.status, "url": entry.url},
             )
@@ -230,17 +230,17 @@ def _run_task(task, user_input, session_id, history, settings, budget):
             browser.log_environment()
             session = browser.BrowserSession(session_id, cdp_port, target_id)
             try:
-                with log.measure("planning.entry.browser_bind"):
+                with logger.measure("planning.entry.browser_bind"):
                     tab = session.bind()
-                log.debug(f"flow=bind tab={tab}")
-                with log.measure("planning.entry.browser_open"):
+                logger.debug(f"flow=bind tab={tab}")
+                with logger.measure("planning.entry.browser_open"):
                     if not open_entry(session, entry):
                         protocol.error(f"flow=entry_locator could not open {entry.url}")
                         return 0
                 # 页面加载与规划并行；完整计划返回前不执行任何业务步骤。
-                with log.measure("planning.full.wait_after_browser_open"):
+                with logger.measure("planning.full.wait_after_browser_open"):
                     plan = plan_future.result()
-                log.timing("planning.full.parallel_wall", parallel_started)
+                logger.timing("planning.full.parallel_wall", parallel_started)
             except PlanError as exc:
                 protocol.error(f"flow=planner invalid: {exc}")
                 return 0
@@ -283,7 +283,7 @@ def _run_task(task, user_input, session_id, history, settings, budget):
         except browser.BindingLost as exc:
             protocol.error(f"flow=bind failed: {exc}")
             return 0
-        log.debug(f"flow=bind tab={tab}")
+        logger.debug(f"flow=bind tab={tab}")
 
     try:
         decision = Decision(ai=planner_client)
@@ -304,7 +304,7 @@ def _run_task(task, user_input, session_id, history, settings, budget):
             memory=Memory(settings.memory_path),
             skills=SkillLibrary(settings.skills_path),
         )
-        with log.measure("runtime.orchestrator.total"):
+        with logger.measure("runtime.orchestrator.total"):
             outcome = orchestrator.run()
     except browser.BindingLost as exc:
         protocol.error(f"flow=runtime binding lost: {exc}")
@@ -329,6 +329,6 @@ if __name__ == "__main__":
         protocol.error(f"模型服务请求失败：{exc}")
         sys.exit(0)
     except Exception as exc:  # Last resort: never leave the task hanging.
-        log.debug(f"unhandled exception: {exc!r}")
+        logger.debug(f"unhandled exception: {exc!r}")
         protocol.error(f"agent crashed: {exc}")
         sys.exit(0)

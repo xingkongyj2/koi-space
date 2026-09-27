@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import main as entrypoint
 from config.config import Provider, Settings
-from logger import log
+from logger import logger
 from planner.planner import EntryPoint, Plan, Step
 from react.outcomes import TaskOutcome
 
@@ -73,7 +73,7 @@ class ParallelPlanningTests(unittest.TestCase):
         session.current_url.return_value = current_url
         with (
             tempfile.TemporaryDirectory() as temporary,
-            patch.object(log, "LOG_PATH", Path(temporary) / "agent.jsonl"),
+            patch.object(logger, "LOG_PATH", Path(temporary) / "agent.jsonl"),
             patch.object(entrypoint, "load_settings", return_value=settings),
             patch.object(entrypoint.Planner, "locate_entry") as locator,
             patch.object(entrypoint.Planner, "plan", return_value=previous) as planner,
@@ -161,7 +161,7 @@ class ParallelPlanningTests(unittest.TestCase):
         task = {"browser": {"cdpPort": 9222, "targetId": "target-1"}}
         with (
             tempfile.TemporaryDirectory() as temporary,
-            patch.object(log, "LOG_PATH", Path(temporary) / "agent.jsonl"),
+            patch.object(logger, "LOG_PATH", Path(temporary) / "agent.jsonl"),
             patch.object(entrypoint, "load_settings", return_value=settings),
             patch.object(entrypoint.Planner, "locate_entry", new=locate_entry),
             patch.object(entrypoint.Planner, "plan", new=plan),
@@ -229,7 +229,7 @@ class ParallelPlanningTests(unittest.TestCase):
         task = {"browser": {"cdpPort": 9222, "targetId": "target-1"}}
         with (
             tempfile.TemporaryDirectory() as temporary,
-            patch.object(log, "LOG_PATH", Path(temporary) / "agent.jsonl"),
+            patch.object(logger, "LOG_PATH", Path(temporary) / "agent.jsonl"),
             patch.object(entrypoint, "load_settings", return_value=settings),
             patch.object(entrypoint.Planner, "locate_entry", new=locate_entry),
             patch.object(entrypoint.Planner, "plan", new=plan),

@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field, replace
 from urllib.parse import urlsplit
 
 import protocol.protocol as protocol
-from logger import log
+from logger import logger
 from memory.memory import Memory
 from reflection.reflection import Reflection
 
@@ -150,7 +150,7 @@ class Orchestrator:
             self.memory.record_failure(summary)
         return outcome
 
-    @log.traced("orchestrator.run")
+    @logger.traced("orchestrator.run")
     def run(self) -> TaskOutcome:
         """按依赖执行步骤，必要时增量重规划，最后统一验证原始用户目标。"""
         completed = set()
@@ -174,8 +174,8 @@ class Orchestrator:
                     self._progress(
                         step, "started", sorted(completed), start_url=step.start_url
                     )
-                    log.set_context(step_id=step.id, iteration=self.budget.steps + 1)
-                    with log.measure("runtime.step.total", step_id=step.id):
+                    logger.set_context(step_id=step.id, iteration=self.budget.steps + 1)
+                    with logger.measure("runtime.step.total", step_id=step.id):
                         try:
                             outcome = self._run_step(step, sorted(completed))
                         except BudgetExceeded as exc:
@@ -365,7 +365,7 @@ class Orchestrator:
                 return "页面往返循环，慢路径恢复仍无进展"
         return ""
 
-    @log.traced("orchestrator.step")
+    @logger.traced("orchestrator.step")
     def _run_step(self, step, completed) -> StepOutcome:
         """用当前观察驱动一个动作，动作后验收并复用新观察进入下一轮。"""
         state = StepRuntimeState()
@@ -380,7 +380,7 @@ class Orchestrator:
 
         while state.budget.allow(self.budget):
             state.budget.attempts += 1
-            log.set_context(iteration=self.budget.steps + 1)
+            logger.set_context(iteration=self.budget.steps + 1)
             if not page.stable or page.loading:
                 # 不稳定观察不可驱动动作；轮询次数也受步骤尝试预算约束。
                 page = self._capture(step)
