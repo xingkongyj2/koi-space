@@ -134,164 +134,182 @@ def run_task(task: dict, user_input: str, session_id: str, history: list[dict]) 
 
 
 def _run_task(task, user_input, session_id, history, settings, budget):
-    """规划预热和正式执行共享任务预算，跨线程的模型用量不会丢失。"""
-    logger.trace(
-        "task.configuration",
-        planner={
-            "model": settings.planner.model,
-            "base_url": settings.planner.base_url,
-            "configured": bool(settings.planner.api_key),
-        },
-        decision={
-            "model": settings.decision.model,
-            "base_url": settings.decision.base_url,
-            "configured": bool(settings.decision.api_key),
-        },
-        max_steps=settings.max_steps,
-        max_failures=settings.max_failures,
-        max_seconds=settings.max_seconds,
-    )
+    """串接规划、浏览器准备和执行；模型预算由外层 run_task 统一管理。"""
     planner_client = (
         OpenAICompatible(settings.planner) if settings.planner.api_key else None
     )
-
     planner = Planner(ai=planner_client)
-    restored = execution_context(history)
-    previous = restored.get("active_plan", {})
-
-    if (
-        planner_client
-        and previous.get("status") == "ready"
-        and previous.get("needs_browser")
-    ):
-        # 进程重启后重新绑定原标签页；用户回复参数不应触发返回首页。
-        try:
-            cdp_port, target_id = browser_target(task)
-            browser.log_environment()
-            session = browser.BrowserSession(session_id, cdp_port, target_id)
-            with logger.measure("planning.resume.browser_bind"):
-                session.bind()
-            current_url = session.current_url()
-            restored.update({"current_url": current_url, "resume": True})
-            if current_url.startswith(("https://", "http://")):
-                restored.update(
-                    {"entry_url": current_url, "entry_locator": "completed"}
-                )
-            plan = planner.plan(user_input, history=history, context=restored)
-        except (ValueError, PlanError, browser.BindingLost) as exc:
-            protocol.error(f"flow=resume failed: {exc}")
-            return 0
-    elif planner_client:
-        # 入口定位与完整规划独立并发；定位结果先打开页面，正式执行等待完整计划。
-        with ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="koi-plan"
-        ) as workers:
-
-            def submit_with_task_context(function, *args, **kwargs):
-                context = copy_context()
-                return workers.submit(context.run, function, *args, **kwargs)
-
-            def locate_entry():
-                """运行轻量入口定位；后续回复必须结合原任务历史理解。"""
-                with logger.measure("planning.entry.total"):
-                    return Planner(ai=planner_client).locate_entry(
-                        user_input, history=history
-                    )
-
-            parallel_started = time.monotonic()
-            logger.trace("planner.parallel.started", phases=["entry_locator", "full_plan"])
-            entry_future = submit_with_task_context(locate_entry)
-            plan_future = submit_with_task_context(
-                planner.plan,
-                user_input,
-                history=history,
-                context={"entry_locator": "pending"},
-            )
-
-            try:
-                entry = entry_future.result()
-            except PlanError as exc:
-                protocol.error(f"flow=entry_locator invalid: {exc}")
-                return 0
-            logger.trace(
-                "planner.entry_locator.completed",
-                result={"status": entry.status, "url": entry.url},
-            )
-            if entry.status == "ask":
-                protocol.notify(entry.question, "info")
-                protocol.done(entry.question, 0)
-                return 0
-
-            try:
-                cdp_port, target_id = browser_target(task)
-            except ValueError as exc:
-                protocol.error(f"flow=browser_gate {exc}")
-                return 0
-            browser.log_environment()
-            session = browser.BrowserSession(session_id, cdp_port, target_id)
-            try:
-                with logger.measure("planning.entry.browser_bind"):
-                    tab = session.bind()
-                logger.debug(f"flow=bind tab={tab}")
-                with logger.measure("planning.entry.browser_open"):
-                    if not open_entry(session, entry):
-                        protocol.error(f"flow=entry_locator could not open {entry.url}")
-                        return 0
-                # 页面加载与规划并行；完整计划返回前不执行任何业务步骤。
-                with logger.measure("planning.full.wait_after_browser_open"):
-                    plan = plan_future.result()
-                logger.timing("planning.full.parallel_wall", parallel_started)
-            except PlanError as exc:
-                protocol.error(f"flow=planner invalid: {exc}")
-                return 0
-            except browser.BindingLost as exc:
-                protocol.error(f"flow=bind failed: {exc}")
-                return 0
-            # 定位结果只用于预热；步骤目标、入口及验收条件始终以完整规划为准。
-    else:
-        # 无模型时仍支持显式网址导航，方便本地和 PyCharm 调试。
-        try:
-            plan = planner.plan(user_input, history=history)
-        except PlanError as exc:
-            protocol.error(f"flow=planner invalid: {exc}")
-            return 0
-        session = None
+    plan, session = _prepare_plan(
+        task, user_input, session_id, history, planner, planner_client
+    )
+    if plan is None:  # 子流程已输出明确错误或追问。
+        return 0
 
     emit_plan(plan)
+    if _finish_non_browser_plan(plan):
+        return 0
+    if session is None:
+        session = _bind_session(task, session_id)
+        if session is None:
+            return 0
+
+    return _execute_plan(
+        session, plan, user_input, settings, budget, planner, planner_client
+    )
+
+
+def _prepare_plan(task, user_input, session_id, history, planner, planner_client):
+    """选择历史恢复、入口预热或无模型规划，并返回计划与会话。"""
+    restored = execution_context(history)
+    previous = restored.get("active_plan", {})
+    if planner_client and previous.get("status") == "ready" and previous.get("needs_browser"):
+        return _resume_plan(task, user_input, session_id, history, planner, restored)
+    if planner_client:
+        return _plan_with_entry(task, user_input, session_id, history, planner, planner_client)
+    # 无模型时只支持显式网址导航，方便本地和 PyCharm 调试。
+    try:
+        return planner.plan(user_input, history=history), None
+    except PlanError as exc:
+        protocol.error(f"flow=planner invalid: {exc}")
+        return None, None
+
+
+def _resume_plan(task, user_input, session_id, history, planner, restored):
+    """续接历史任务，绑定原标签页并把当前 URL 交给 Planner。"""
+    try:
+        session = _new_session(task, session_id)
+        with logger.measure("planning.resume.browser_bind"):
+            session.bind()
+        current_url = session.current_url()
+        restored.update({"current_url": current_url, "resume": True})
+        if current_url.startswith(("https://", "http://")):
+            restored.update({"entry_url": current_url, "entry_locator": "completed"})
+        return planner.plan(user_input, history=history, context=restored), session
+    except (ValueError, PlanError, browser.BindingLost) as exc:
+        protocol.error(f"flow=resume failed: {exc}")
+        return None, None
+
+
+def _submit_with_context(workers, function, *args, **kwargs):
+    """把当前任务的日志与模型预算上下文复制到规划线程。"""
+    context = copy_context()
+    return workers.submit(context.run, function, *args, **kwargs)
+
+
+def _locate_entry(planner_client, user_input, history):
+    """独立 Planner 查找入口；它与完整规划同时运行。"""
+    with logger.measure("planning.entry.total"):
+        return Planner(ai=planner_client).locate_entry(user_input, history=history)
+
+
+def _plan_with_entry(task, user_input, session_id, history, planner, planner_client):
+    """并发定位入口和完整规划；先打开入口，再等待规划结果。"""
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="koi-plan") as workers:
+        started = time.monotonic()
+        entry_future = _submit_with_context(
+            workers, _locate_entry, planner_client, user_input, history
+        )
+        plan_future = _submit_with_context(
+            workers, planner.plan, user_input,
+            history=history, context={"entry_locator": "pending"},
+        )
+        entry = _await_entry(entry_future)
+        if entry is None:
+            return None, None
+        session = _open_planned_entry(task, session_id, entry)
+        if session is None:
+            return None, None
+        return _await_plan(plan_future, started, session)
+
+
+def _await_entry(entry_future):
+    """等待入口定位结果，统一处理追问和入口契约错误。"""
+    try:
+        entry = entry_future.result()
+    except PlanError as exc:
+        protocol.error(f"flow=entry_locator invalid: {exc}")
+        return None
+    if entry.status == "ask":
+        protocol.notify(entry.question, "info")
+        protocol.done(entry.question, 0)
+        return None
+    return entry
+
+
+def _await_plan(plan_future, started, session):
+    """入口打开后等待完整规划，记录并发耗时并返回会话。"""
+    try:
+        # 页面加载与规划并行；完整计划返回前不执行任何业务步骤。
+        with logger.measure("planning.full.wait_after_browser_open"):
+            plan = plan_future.result()
+        logger.timing("planning.full.parallel_wall", started)
+        return plan, session
+    except PlanError as exc:
+        protocol.error(f"flow=planner invalid: {exc}")
+        return None, None
+
+
+def _new_session(task, session_id):
+    """按宿主指定的 CDP target 创建会话，不猜测其他标签页。"""
+    cdp_port, target_id = browser_target(task)
+    browser.log_environment()
+    return browser.BrowserSession(session_id, cdp_port, target_id)
+
+
+def _open_planned_entry(task, session_id, entry):
+    """绑定指定标签页并预热入口；失败时输出对应协议错误。"""
+    try:
+        session = _new_session(task, session_id)
+    except ValueError as exc:
+        protocol.error(f"flow=browser_gate {exc}")
+        return None
+    try:
+        with logger.measure("planning.entry.browser_bind"):
+            session.bind()
+        with logger.measure("planning.entry.browser_open"):
+            if not open_entry(session, entry):
+                protocol.error(f"flow=entry_locator could not open {entry.url}")
+                return None
+        return session
+    except browser.BindingLost as exc:
+        protocol.error(f"flow=bind failed: {exc}")
+        return None
+
+
+def _finish_non_browser_plan(plan):
+    """直接答复或追问无需启动执行器；返回是否已经结束本轮。"""
 
     if plan.status == "ask":
         protocol.notify(plan.question, "info")
         protocol.done(plan.question, 0)
-        return 0
+        return True
     if plan.status == "direct" or not plan.needs_browser:
         answer = plan.direct_answer or "已完成规划，无需打开浏览器。"
         protocol.notify(answer, "info")
         protocol.done(answer, 0)
-        return 0
+        return True
+    return False
 
-    if session is None:
-        try:
-            cdp_port, target_id = browser_target(task)
-        except ValueError as exc:
-            protocol.error(f"flow=browser_gate {exc}")
-            return 0
 
-        browser.log_environment()
-        session = browser.BrowserSession(session_id, cdp_port, target_id)
-        try:
-            tab = session.bind()
-        except browser.BindingLost as exc:
-            protocol.error(f"flow=bind failed: {exc}")
-            return 0
-        logger.debug(f"flow=bind tab={tab}")
-
+def _bind_session(task, session_id):
+    """无预热会话时，按完整计划要求绑定宿主标签页。"""
     try:
-        decision = Decision(ai=planner_client)
-        if settings.decision.api_key:
-            decision = Decision(
-                jev=JevDecision(settings.decision, text_model=planner_client),
-                ai=planner_client,
-            )
+        session = _new_session(task, session_id)
+    except ValueError as exc:
+        protocol.error(f"flow=browser_gate {exc}")
+        return None
+    try:
+        session.bind()
+        return session
+    except browser.BindingLost as exc:
+        protocol.error(f"flow=bind failed: {exc}")
+        return None
+
+
+def _execute_plan(session, plan, user_input, settings, budget, planner, planner_client):
+    """构造执行组件、运行计划，并统一输出任务结果事件。"""
+    try:
+        decision = _build_decision(settings, planner_client)
         orchestrator = Orchestrator(
             session,
             plan,
@@ -310,16 +328,29 @@ def _run_task(task, user_input, session_id, history, settings, budget):
         protocol.error(f"flow=runtime binding lost: {exc}")
         return 0
 
+    _emit_outcome(outcome, budget.steps)
+    return 0
+
+
+def _build_decision(settings, planner_client):
+    """有 JEV 配置时启用快路径，文本 Planner 作为慢路径。"""
+    if settings.decision.api_key:
+        return Decision(
+            jev=JevDecision(settings.decision, text_model=planner_client),
+            ai=planner_client,
+        )
+    return Decision(ai=planner_client)
+
+
+def _emit_outcome(outcome, step_count):
+    """持久化完整结果，并向宿主发送唯一完成或错误事件。"""
     protocol.thinking(
         json.dumps({"kind": "task_outcome", **outcome.to_dict()}, ensure_ascii=False)
     )
-    if outcome.status == "completed":
-        protocol.done(outcome.summary, budget.steps)
-    elif outcome.status == "waiting_user":
-        protocol.done(outcome.summary, budget.steps)
+    if outcome.status in {"completed", "waiting_user"}:
+        protocol.done(outcome.summary, step_count)
     else:
         protocol.error(outcome.summary)
-    return 0
 
 
 if __name__ == "__main__":

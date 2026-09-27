@@ -105,25 +105,43 @@ class Validator:
         return ValidationResult("passed" if all(checks) else "unproven", evidence)
 
     def _criterion(self, page, criterion, semantic_verified=False) -> ValidationResult:
+        """解析并验证一个条件，组合条件与原子条件分别处理。"""
+        parsed = self._parse_criterion(criterion)
+        if parsed is None:
+            return ValidationResult("unproven", ("条件格式无效",))
+        kind, value = parsed
+        if kind is None:
+            return ValidationResult("unproven", ("不支持的旧格式条件",))
+        if kind in {"all", "any"}:
+            return self._composite_criterion(page, kind, value, semantic_verified)
+        return self._atomic_criterion(page, kind, value, semantic_verified)
+
+    @staticmethod
+    def _parse_criterion(criterion):
+        """兼容旧版字符串和新版 type/value 对象。"""
         if isinstance(criterion, str):
             kind, separator, value = criterion.partition(":")
             if not separator:
-                return ValidationResult("unproven", ("不支持的旧格式条件",))
+                return None, None
+            return kind, value
         elif isinstance(criterion, dict):
-            kind, value = criterion.get("type"), criterion.get("value")
-        else:
-            return ValidationResult("unproven", ("条件格式无效",))
+            return criterion.get("type"), criterion.get("value")
+        return None
 
-        if kind in {"all", "any"}:
-            if not isinstance(value, (list, tuple)) or not value:
-                return ValidationResult("unproven", ("组合条件为空",))
-            checks = [self._criterion(page, item, semantic_verified) for item in value]
-            passed = all(checks) if kind == "all" else any(checks)
-            return ValidationResult(
-                "passed" if passed else "unproven",
-                tuple(text for check in checks for text in check.evidence),
-            )
+    def _composite_criterion(self, page, kind, value, semantic_verified):
+        """递归检查 all/any 条件，并汇总每个子条件的证据。"""
+        if not isinstance(value, (list, tuple)) or not value:
+            return ValidationResult("unproven", ("组合条件为空",))
+        checks = [self._criterion(page, item, semantic_verified) for item in value]
+        passed = all(checks) if kind == "all" else any(checks)
+        return ValidationResult(
+            "passed" if passed else "unproven",
+            tuple(text for check in checks for text in check.evidence),
+        )
 
+    @staticmethod
+    def _atomic_criterion(page, kind, value, semantic_verified):
+        """根据当前页面证据检查单个原子条件。"""
         text = (page.snapshot + "\n" + page.page_text).casefold()
         wanted = str(value).strip().casefold() if value is not None else ""
         passed = False

@@ -253,56 +253,61 @@ def _criteria(value: Any, label: str) -> tuple[Any, ...]:
     """递归校验结构化验收条件，同时兼容旧版条件字符串。"""
     if not isinstance(value, list) or not value:
         raise PlanError(f"{label} must be a nonempty array")
-    result: list[Any] = []
-    for index, item in enumerate(value, 1):
-        item_label = f"{label}[{index}]"
-        if isinstance(item, str):
-            criterion = _string(item, item_label, nonempty=True)
-            kind, separator, criterion_value = criterion.partition(":")
-            if (
-                kind not in {"url_prefix", "url_contains", "text_contains"}
-                or not separator
-                or not criterion_value.strip()
-            ):
-                raise PlanError(
-                    f"{item_label} must use url_prefix:, url_contains: or text_contains: with a value"
-                )
-            if kind == "url_prefix":
-                _url(criterion_value.strip(), f"{item_label} url_prefix")
-            result.append(criterion)
-            continue
-        if not isinstance(item, dict) or set(item) != {"type", "value"}:
-            raise PlanError(
-                f"{item_label} must be a legacy criterion string or an object with exactly type and value"
-            )
-        kind = _string(item["type"], f"{item_label}.type", nonempty=True)
-        if kind not in CRITERION_TYPES:
-            raise PlanError(f"{item_label}.type is unsupported")
-        criterion_value = item["value"]
-        if kind in {"all", "any"}:
-            criterion_value = list(_criteria(criterion_value, item_label + ".value"))
-        elif kind == "page_state":
-            if criterion_value != "ready":
-                raise PlanError(f"{item_label}.value must be ready")
-        elif kind == "extracted_value":
-            if (
-                not isinstance(criterion_value, dict)
-                or set(criterion_value) != {"key", "equals"}
-                or not isinstance(criterion_value["key"], str)
-                or not criterion_value["key"].strip()
-            ):
-                raise PlanError(f"{item_label}.value requires key and equals")
-        elif kind == "element_count_at_least":
-            if type(criterion_value) is not int or criterion_value < 1:
-                raise PlanError(f"{item_label}.value must be a positive integer")
-        else:
-            criterion_value = _string(
-                criterion_value, f"{item_label}.value", nonempty=True
-            )
-            if kind == "url_prefix":
-                _url(criterion_value, f"{item_label}.value")
-        result.append({"type": kind, "value": criterion_value})
-    return tuple(result)
+    return tuple(
+        _criterion_item(item, f"{label}[{index}]")
+        for index, item in enumerate(value, 1)
+    )
+
+
+def _criterion_item(item: Any, label: str) -> Any:
+    """校验单个旧版或结构化条件，并递归展开组合条件。"""
+    if isinstance(item, str):
+        return _legacy_criterion(item, label)
+    if not isinstance(item, dict) or set(item) != {"type", "value"}:
+        raise PlanError(
+            f"{label} must be a legacy criterion string or an object with exactly type and value"
+        )
+    return _structured_criterion(item, label)
+
+
+def _legacy_criterion(item: str, label: str) -> str:
+    """校验兼容格式的 URL 或文本条件。"""
+    criterion = _string(item, label, nonempty=True)
+    kind, separator, value = criterion.partition(":")
+    if kind not in {"url_prefix", "url_contains", "text_contains"} or not separator or not value.strip():
+        raise PlanError(f"{label} must use url_prefix:, url_contains: or text_contains: with a value")
+    if kind == "url_prefix":
+        _url(value.strip(), f"{label} url_prefix")
+    return criterion
+
+
+def _structured_criterion(item: dict, label: str) -> dict:
+    """校验结构化条件的类型和值。"""
+    kind = _string(item["type"], f"{label}.type", nonempty=True)
+    if kind not in CRITERION_TYPES:
+        raise PlanError(f"{label}.type is unsupported")
+    value = item["value"]
+    if kind in {"all", "any"}:
+        value = list(_criteria(value, label + ".value"))
+    elif kind == "page_state":
+        if value != "ready":
+            raise PlanError(f"{label}.value must be ready")
+    elif kind == "extracted_value":
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"key", "equals"}
+            or not isinstance(value["key"], str)
+            or not value["key"].strip()
+        ):
+            raise PlanError(f"{label}.value requires key and equals")
+    elif kind == "element_count_at_least":
+        if type(value) is not int or value < 1:
+            raise PlanError(f"{label}.value must be a positive integer")
+    else:
+        value = _string(value, f"{label}.value", nonempty=True)
+        if kind == "url_prefix":
+            _url(value, f"{label}.value")
+    return {"type": kind, "value": value}
 
 
 def _url(value: str, label: str) -> None:
@@ -332,6 +337,15 @@ def parse_plan(text: str) -> Plan:
     """校验步骤字段、依赖拓扑和并行组，构造不可变执行计划。"""
     obj = _json_object(text)
     logger.trace("planner.json.decoded", data=obj)
+    terminal = _parse_terminal_plan(obj)
+    if terminal is not None:
+        return terminal
+    steps = _parse_steps(obj["steps"])
+    return Plan("ready", True, steps=tuple(steps), raw=obj)
+
+
+def _parse_terminal_plan(obj: dict[str, Any]) -> Plan | None:
+    """校验 ask/direct 结果，并返回无需解析步骤的终态计划。"""
     _fields(
         obj, {"status", "needs_browser", "question", "direct_answer", "steps"}, "plan"
     )
@@ -361,56 +375,70 @@ def parse_plan(text: str) -> Plan:
         raise PlanError(
             "ready requires needs_browser=true, 1-12 steps, empty question and direct_answer"
         )
+    return None
 
+
+def _parse_steps(items: list[Any]) -> list[Step]:
+    """逐步校验步骤，并在同一处维护依赖祖先和并行组约束。"""
     steps: list[Step] = []
     ancestors: dict[str, set[str]] = {}
     groups: dict[str, str] = {}
-    for index, item in enumerate(obj["steps"], 1):
-        label = f"step {index}"
-        if not isinstance(item, dict):
-            raise PlanError(f"{label} must be an object")
-        _fields(item, set(Step.__dataclass_fields__), label)
-        step_id = _string(item["id"], f"{label}.id", nonempty=True)
-        if not re.fullmatch(r"s[1-9][0-9]*", step_id) or step_id in ancestors:
-            raise PlanError(f"{label}.id must be unique and formatted as s1, s2, ...")
-        goal = _string(item["goal"], f"{label}.goal", nonempty=True)
-        dependencies = _strings(item["depends_on"], f"{label}.depends_on")
-        if len(set(dependencies)) != len(dependencies) or any(
-            dep not in ancestors for dep in dependencies
-        ):
-            raise PlanError(
-                f"{label}.depends_on must reference unique earlier steps; no self, unknown, forward or cyclic dependencies"
-            )
-        start_url = _string(item["start_url"], f"{label}.start_url", nonempty=True)
-        _url(start_url, f"{label}.start_url")
-        criteria = _criteria(item["success_criteria"], f"{label}.success_criteria")
-        confirmation = item["needs_user_confirmation"]
-        if type(confirmation) is not bool:
-            raise PlanError(f"{label}.needs_user_confirmation must be a boolean")
-        risk = _string(item["risk"], f"{label}.risk")
-        if risk not in {"low", "medium", "high"}:
-            raise PlanError(f"{label}.risk must be low/medium/high")
-        group = _string(item["parallel_group"], f"{label}.parallel_group")
-        inherited = set(dependencies)
-        for dep in dependencies:
-            inherited.update(ancestors[dep])
+    for index, item in enumerate(items, 1):
+        step, inherited, group = _parse_step(item, index, ancestors)
         if group and any(groups[dep] == group for dep in inherited):
-            raise PlanError(f"{label}.parallel_group cannot contain dependent steps")
-        ancestors[step_id], groups[step_id] = inherited, group
-        # 不能因为目标以“打开”开头就弱化后续业务要求。
-        steps.append(
-            Step(
-                step_id,
-                goal,
-                criteria,
-                dependencies,
-                start_url,
-                confirmation,
-                risk,
-                group,
-            )
+            raise PlanError(f"step {index}.parallel_group cannot contain dependent steps")
+        ancestors[step.id], groups[step.id] = inherited, group
+        steps.append(step)
+    return steps
+
+
+def _parse_step(item: Any, index: int, ancestors: dict[str, set[str]]) -> tuple[Step, set[str], str]:
+    """解析单个步骤字段，返回步骤、传递祖先集合和并行组。"""
+    label = f"step {index}"
+    if not isinstance(item, dict):
+        raise PlanError(f"{label} must be an object")
+    _fields(item, set(Step.__dataclass_fields__), label)
+    step_id, goal, dependencies = _parse_step_identity(item, label, ancestors)
+    start_url, criteria, confirmation, risk, group = _parse_step_options(item, label)
+    inherited = set(dependencies)
+    for dep in dependencies:
+        inherited.update(ancestors[dep])
+    return (
+        Step(step_id, goal, criteria, dependencies, start_url, confirmation, risk, group),
+        inherited,
+        group,
+    )
+
+
+def _parse_step_identity(item: dict, label: str, ancestors: dict[str, set[str]]):
+    """校验步骤 ID、目标和直接依赖。"""
+    step_id = _string(item["id"], f"{label}.id", nonempty=True)
+    if not re.fullmatch(r"s[1-9][0-9]*", step_id) or step_id in ancestors:
+        raise PlanError(f"{label}.id must be unique and formatted as s1, s2, ...")
+    goal = _string(item["goal"], f"{label}.goal", nonempty=True)
+    dependencies = _strings(item["depends_on"], f"{label}.depends_on")
+    if len(set(dependencies)) != len(dependencies) or any(
+        dep not in ancestors for dep in dependencies
+    ):
+        raise PlanError(
+            f"{label}.depends_on must reference unique earlier steps; no self, unknown, forward or cyclic dependencies"
         )
-    return Plan(status, needs_browser, steps=tuple(steps), raw=obj)
+    return step_id, goal, dependencies
+
+
+def _parse_step_options(item: dict, label: str):
+    """校验步骤 URL、验收条件、风险和并行设置。"""
+    start_url = _string(item["start_url"], f"{label}.start_url", nonempty=True)
+    _url(start_url, f"{label}.start_url")
+    criteria = _criteria(item["success_criteria"], f"{label}.success_criteria")
+    confirmation = item["needs_user_confirmation"]
+    if type(confirmation) is not bool:
+        raise PlanError(f"{label}.needs_user_confirmation must be a boolean")
+    risk = _string(item["risk"], f"{label}.risk")
+    if risk not in {"low", "medium", "high"}:
+        raise PlanError(f"{label}.risk must be low/medium/high")
+    group = _string(item["parallel_group"], f"{label}.parallel_group")
+    return start_url, criteria, confirmation, risk, group
 
 
 class Planner:
@@ -424,36 +452,43 @@ class Planner:
     ) -> EntryPoint:
         """运行轻量入口定位；后续回复必须结合原任务历史理解。"""
         if self.ai:
-            payload = json.dumps(
-                {"user_input": user_input, "history": history or []}, ensure_ascii=False
-            )
-            with logger.measure("planning.entry.model_request", attempt=1):
-                raw = self.ai.chat(ENTRY_LOCATOR_SYSTEM_PROMPT, payload)
-            logger.trace("planner.entry_locator.raw", response=raw)
-            try:
-                entry = parse_entry_point(raw)
-            except PlanError as exc:
-                logger.trace("planner.entry_locator.repair", error=str(exc))
-                repair = json.dumps(
-                    {
-                        "user_input": user_input,
-                        "invalid_output": raw,
-                        "history": history or [],
-                        "error": str(exc),
-                        "instruction": "只返回符合入口 JSON 契约的对象。",
-                    },
-                    ensure_ascii=False,
-                )
-                with logger.measure(
-                    "planning.entry.model_request", attempt=2, reason="repair"
-                ):
-                    entry = parse_entry_point(
-                        self.ai.chat(ENTRY_LOCATOR_SYSTEM_PROMPT, repair)
-                    )
-            logger.trace("planner.entry_locator.result", result=asdict(entry))
-            return entry
+            return self._locate_with_model(user_input, history or [])
+        return self._locate_without_model(user_input)
 
-        # 无模型时只处理显式网址，不根据站点名称猜测地址。
+    def _locate_with_model(self, user_input: str, history: list[dict]) -> EntryPoint:
+        """请求入口定位模型，并在契约错误时做一次有界修复。"""
+        payload = json.dumps({"user_input": user_input, "history": history}, ensure_ascii=False)
+        with logger.measure("planning.entry.model_request", attempt=1):
+            raw = self.ai.chat(ENTRY_LOCATOR_SYSTEM_PROMPT, payload)
+        logger.trace("planner.entry_locator.raw", response=raw)
+        try:
+            entry = parse_entry_point(raw)
+        except PlanError as exc:
+            entry = self._repair_entry(user_input, history, raw, exc)
+        logger.trace("planner.entry_locator.result", result=asdict(entry))
+        return entry
+
+    def _repair_entry(
+        self, user_input: str, history: list[dict], raw: str, error: PlanError
+    ) -> EntryPoint:
+        """保留入口上下文，只修复入口 JSON 契约。"""
+        logger.trace("planner.entry_locator.repair", error=str(error))
+        repair = json.dumps(
+            {
+                "user_input": user_input,
+                "invalid_output": raw,
+                "history": history,
+                "error": str(error),
+                "instruction": "只返回符合入口 JSON 契约的对象。",
+            },
+            ensure_ascii=False,
+        )
+        with logger.measure("planning.entry.model_request", attempt=2, reason="repair"):
+            return parse_entry_point(self.ai.chat(ENTRY_LOCATOR_SYSTEM_PROMPT, repair))
+
+    @staticmethod
+    def _locate_without_model(user_input: str) -> EntryPoint:
+        """无模型时只处理显式网址，不根据站点名称猜测地址。"""
         match = re.search(r'https?://[^\s<>"\']+', user_input, re.I)
         if match:
             url = match.group(0).rstrip("。！？!,.，")
@@ -474,67 +509,56 @@ class Planner:
         history: list[dict] | None = None,
         context: dict | None = None,
     ) -> Plan:
-        # 宿主传入的完整历史优先；未传入时才使用本实例的连续调用历史。
         """结合完整历史生成计划；格式错误时只允许一次有界修正。"""
+        events, payload = self._prepare_plan_input(user_input, history, context)
+        if not user_input.strip() and not events:
+            plan = Plan("ask", False, question="请告诉我你希望完成什么任务？")
+        elif self.ai:
+            plan = self._request_plan(payload)
+        else:
+            plan = self._without_model(user_input, events)
+        self._remember_plan(events, plan)
+        return plan
+
+    def _prepare_plan_input(self, user_input, history, context):
+        """复制并校验历史，构造稳定的规划请求输入。"""
+        # 宿主传入的完整历史优先；未传入时才使用本实例的连续调用历史。
         events = deepcopy(self._history if history is None else history)
-        if not isinstance(events, list) or any(
-            not isinstance(event, dict) for event in events
-        ):
+        if not isinstance(events, list) or any(not isinstance(event, dict) for event in events):
             raise PlanError("history must be a chronological array of event objects")
         if context is not None and not isinstance(context, dict):
             raise PlanError("context must be an object")
-        current = {"type": "user_input", "text": user_input}
         if (
             history is None
             or not events
             or events[-1].get("type") != "user_input"
             or events[-1].get("text") != user_input
-        ):
-            if user_input.strip():
-                events.append(current)
-        # 历史放在输入前部，让后续请求保留稳定的时间序前缀。
-        payload = {
-            "history": events,
-            "user_input": user_input,
-            "context": context or {},
-        }
-        if not user_input.strip() and not events:
-            plan = Plan("ask", False, question="请告诉我你希望完成什么任务？")
-        elif self.ai:
-            with logger.measure("planning.full.model_request", attempt=1):
-                raw = self.ai.chat(
-                    PLANNER_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
-                )
-            try:
-                plan = parse_plan(raw)
-            except PlanError as exc:
-                # 保留完整上下文，只修正一次格式；不执行无效计划或无限重试。
-                logger.trace("planner.repair", error=str(exc))
-                payload["repair"] = {
-                    "invalid_output": raw,
-                    "error": str(exc),
-                    "instruction": "按系统契约重新返回完整 JSON；只修正错误，不丢失原任务与历史。",
-                }
-                with logger.measure(
-                    "planning.full.model_request", attempt=2, reason="repair"
-                ):
-                    plan = parse_plan(
-                        self.ai.chat(
-                            PLANNER_SYSTEM_PROMPT,
-                            json.dumps(payload, ensure_ascii=False),
-                        )
-                    )
-        else:
-            plan = self._without_model(user_input, events)
-        self._history = events + [
-            {
-                "type": "thinking",
-                "text": json.dumps(
-                    {"kind": "planner_plan", "plan": plan.to_dict()}, ensure_ascii=False
-                ),
+        ) and user_input.strip():
+            events.append({"type": "user_input", "text": user_input})
+        return events, {"history": events, "user_input": user_input, "context": context or {}}
+
+    def _request_plan(self, payload: dict[str, Any]) -> Plan:
+        """请求完整计划，并在格式错误时只重试一次。"""
+        with logger.measure("planning.full.model_request", attempt=1):
+            raw = self.ai.chat(PLANNER_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False))
+        try:
+            return parse_plan(raw)
+        except PlanError as exc:
+            logger.trace("planner.repair", error=str(exc))
+            payload["repair"] = {
+                "invalid_output": raw,
+                "error": str(exc),
+                "instruction": "按系统契约重新返回完整 JSON；只修正错误，不丢失原任务与历史。",
             }
-        ]
-        return plan
+            with logger.measure("planning.full.model_request", attempt=2, reason="repair"):
+                return parse_plan(self.ai.chat(PLANNER_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)))
+
+    def _remember_plan(self, events: list[dict], plan: Plan) -> None:
+        """把规划结果追加到连续历史，供下一轮恢复使用。"""
+        self._history = events + [{
+            "type": "thinking",
+            "text": json.dumps({"kind": "planner_plan", "plan": plan.to_dict()}, ensure_ascii=False),
+        }]
 
     def incremental_replan(
         self, user_goal, plan, outcomes, failed_id, page, *, reason=""
@@ -542,7 +566,14 @@ class Planner:
         """只修改失败步骤及其未完成下游，严格保留其他步骤和已验证结果。"""
         if self.ai is None:
             raise PlanError("未配置增量重规划模型")
+        affected = self._affected_steps(plan, outcomes, failed_id)
+        updated = self._request_replan(user_goal, plan, outcomes, affected, page, reason)
+        self._validate_replan(plan, updated, affected)
+        return updated
 
+    @staticmethod
+    def _affected_steps(plan: Plan, outcomes, failed_id: str) -> set[str]:
+        """计算失败步骤及所有未完成下游，已完成步骤保持冻结。"""
         completed = {item.step_id for item in outcomes if item.status == "completed"}
         affected = {failed_id} - completed
         while True:
@@ -552,9 +583,11 @@ class Planner:
                 if step.id not in completed and set(step.depends_on) & affected
             }
             if expanded == affected:
-                break
+                return affected
             affected = expanded
 
+    def _request_replan(self, user_goal, plan, outcomes, affected, page, reason) -> Plan:
+        """请求增量计划，保留原计划、执行结果和页面上下文。"""
         payload = {
             "original_goal": user_goal,
             "plan": plan.to_dict(),
@@ -565,16 +598,15 @@ class Planner:
             "instruction": "返回完整 ready 计划，保持所有步骤 ID 和顺序，只修改 affected_steps。保留已有授权，不能扩大权限或降低风险。",
         }
         with model_scope("replan"):
-            updated = parse_plan(
-                self.ai.chat(
-                    PLANNER_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
-                )
-            )
+            return parse_plan(self.ai.chat(PLANNER_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)))
+
+    @staticmethod
+    def _validate_replan(plan: Plan, updated: Plan, affected: set[str]) -> None:
+        """验证重规划只改变受影响步骤，且不会降低风险边界。"""
         if updated.status != "ready" or [step.id for step in updated.steps] != [
             step.id for step in plan.steps
         ]:
             raise PlanError("增量重规划必须保留步骤 ID 和顺序")
-
         risk_order = {"low": 0, "medium": 1, "high": 2}
         for old, new in zip(plan.steps, updated.steps):
             if old.id not in affected and old != new:
@@ -584,46 +616,24 @@ class Planner:
                 or (old.needs_user_confirmation and not new.needs_user_confirmation)
             ):
                 raise PlanError(f"重规划降低了安全边界：{old.id}")
-        return updated
 
     @staticmethod
     def _without_model(user_input: str, events: list[dict]) -> Plan:
         # 无模型只能识别明确导航；复杂请求中包含网址不等于已有可执行计划。
         """无模型时只接受明确的单轮导航，不把复杂任务中的网址当作完整计划。"""
-        match = re.fullmatch(
-            r"\s*(?:(?:请|帮我)?(?:打开|访问|进入|导航到)|(?:open|visit)\s+)\s*(https?://[^\s]+?)\s*[。！!]?\s*",
-            user_input,
-            re.I,
-        )
         user_texts = [
             event.get("text", "")
             for event in events
             if event.get("type") == "user_input"
         ]
-        if match and len(user_texts) == 1:
-            url = match.group(1)
-            try:
-                _url(url, "start_url")
-            except PlanError:
-                pass
-            else:
-                return Plan(
-                    "ready",
-                    True,
-                    steps=(
-                        Step(
-                            "s1",
-                            user_input.strip(),
-                            (f"url_prefix:{url}",),
-                            start_url=url,
-                        ),
-                    ),
-                )
-        has_url = any(
-            re.search(r"https?://", text)
-            for text in user_texts
-            if isinstance(text, str)
-        )
+        url = Planner._explicit_navigation_url(user_input)
+        if url and len(user_texts) == 1 and Planner._valid_url(url):
+            return Plan(
+                "ready",
+                True,
+                steps=(Step("s1", user_input.strip(), (f"url_prefix:{url}",), start_url=url),),
+            )
+        has_url = any(re.search(r"https?://", text) for text in user_texts if isinstance(text, str))
         return Plan(
             "ask",
             True,
@@ -633,3 +643,22 @@ class Planner:
                 else "这个任务需要访问哪个网站？请提供明确的完整网址。"
             ),
         )
+
+    @staticmethod
+    def _explicit_navigation_url(user_input: str) -> str | None:
+        """提取仅包含明确打开指令和完整网址的单轮请求。"""
+        match = re.fullmatch(
+            r"\s*(?:(?:请|帮我)?(?:打开|访问|进入|导航到)|(?:open|visit)\s+)\s*(https?://[^\s]+?)\s*[。！!]?\s*",
+            user_input,
+            re.I,
+        )
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _valid_url(url: str) -> bool:
+        """复用计划 URL 契约判断无模型导航是否安全。"""
+        try:
+            _url(url, "start_url")
+        except PlanError:
+            return False
+        return True

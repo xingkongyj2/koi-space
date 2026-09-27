@@ -26,16 +26,28 @@ class CompletionVerifier:
         """根据当前可见证据返回完成结论；无模型或无有效结果时不背书。"""
         if self.ai is None or not after.url:
             return None
-        acted_on = ""
-        if before is not None and action is not None and action.ref:
-            acted_on = next(
-                (
-                    element.get("text", "")
-                    for element in before.elements
-                    if element.get("ref") == action.ref
-                ),
-                "",
-            )
+        try:
+            raw = self._request(step, before, after, action)
+            return self._parse_verdict(raw)
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            # 验收模型不可用时保留失败状态，继续由执行循环决定恢复或停止。
+            logger.trace_exception("completion.model.unavailable", exc)
+            return None
+
+    @staticmethod
+    def _acted_on(before, action) -> str:
+        """从操作前快照提取实际被操作元素，供验收模型对照。"""
+        if before is None or action is None or not action.ref:
+            return ""
+        return next(
+            (element.get("text", "") for element in before.elements if element.get("ref") == action.ref),
+            "",
+        )
+
+    def _request(self, step, before, after, action) -> str:
+        """构造精简页面证据并请求步骤验收模型。"""
         payload = {
             "goal": step.goal,
             "entry_url": step.start_url,
@@ -44,56 +56,41 @@ class CompletionVerifier:
                 "url": before.url,
                 "interactive": before.snapshot[:6000],
                 "page": before.page_text[:9000],
-            }
-            if before
-            else None,
+            } if before else None,
             "action": asdict(action) if action is not None else None,
-            "acted_on": acted_on,
+            "acted_on": self._acted_on(before, action),
             "current": {
                 "url": after.url,
                 "interactive": after.snapshot[:8000],
                 "page": after.page_text[:12000],
             },
         }
-        try:
-            with logger.measure("verification.model_request"):
-                raw = self.ai.chat(
-                    COMPLETION_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
-                )
-            logger.trace("completion.model.raw", response=raw)
-            value = json.loads(raw)
-            if not isinstance(value, dict) or set(value) != {
-                "complete",
-                "confidence",
-                "evidence",
-            }:
-                raise ValueError(
-                    "completion response must have complete, confidence and evidence"
-                )
-            if type(value["complete"]) is not bool:
-                raise ValueError("complete must be a boolean")
-            confidence = value["confidence"]
-            if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
-                raise ValueError("confidence must be a number from 0 to 1")
-            evidence = value["evidence"]
-            if not isinstance(evidence, str) or not evidence.strip():
-                raise ValueError("evidence must be a nonempty string")
-            self.last_evidence = evidence
-            accepted = value["complete"] and confidence >= 0.8
-            logger.trace(
-                "completion.model.verdict",
-                complete=value["complete"],
-                confidence=confidence,
-                evidence=evidence,
-                accepted=accepted,
-            )
-            return accepted
-        except BudgetExceeded:
-            raise
-        except Exception as exc:
-            # 验收模型不可用时保留失败状态，继续由执行循环决定恢复或停止。
-            logger.trace_exception("completion.model.unavailable", exc)
-            return None
+        with logger.measure("verification.model_request"):
+            raw = self.ai.chat(COMPLETION_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False))
+        logger.trace("completion.model.raw", response=raw)
+        return raw
+
+    def _parse_verdict(self, raw: str) -> bool:
+        """校验模型验收契约，并应用置信度门槛。"""
+        value = json.loads(raw)
+        if not isinstance(value, dict) or set(value) != {"complete", "confidence", "evidence"}:
+            raise ValueError("completion response must have complete, confidence and evidence")
+        if type(value["complete"]) is not bool:
+            raise ValueError("complete must be a boolean")
+        confidence = value["confidence"]
+        if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
+            raise ValueError("confidence must be a number from 0 to 1")
+        evidence = value["evidence"]
+        if not isinstance(evidence, str) or not evidence.strip():
+            raise ValueError("evidence must be a nonempty string")
+        self.last_evidence = evidence
+        accepted = value["complete"] and confidence >= 0.8
+        logger.trace(
+            "completion.model.verdict",
+            complete=value["complete"], confidence=confidence,
+            evidence=evidence, accepted=accepted,
+        )
+        return accepted
 
 
 @dataclass(frozen=True)
@@ -144,36 +141,30 @@ class CompletionGate:
             return CompletionResult(bool(check), "criteria", check.evidence)
         if initial:
             return CompletionResult(False, "criteria", check.evidence)
-
-        # 只以步骤契约和当前页面证据作键；重复 DONE 或 ref 重编号不增加调用。
-        key = (
-            step.id,
-            step.goal,
-            repr(step.success_criteria),
-            step.risk,
-            page.fingerprint,
-        )
-        if key not in self._cache:
-            with model_scope("completion"):
-                verdict = self.verifier.verify(step, before, page, action)
-                self._cache[key] = (
-                    verdict,
-                    getattr(self.verifier, "last_evidence", ""),
-                )
-        verdict, evidence = self._cache[key]
+        verdict, evidence = self._semantic_verdict(step, page, before, action)
         if verdict is True:
-            # 新契约中的确定性条件仍是硬门槛，语义判断只补齐 goal_state。
-            if any(isinstance(item, dict) for item in step.success_criteria):
-                confirmed = self.validator.step(
-                    page, step.success_criteria, semantic_verified=True
-                )
-                if not confirmed:
-                    return CompletionResult(False, "criteria", confirmed.evidence)
-            evidence = evidence or "完成模型确认当前页面满足目标"
-            return CompletionResult(True, "goal_verifier", (evidence,))
+            return self._accept_semantic(step, page, evidence)
 
         # 模型缺失/失败不能让语义或高风险验收降级为成功。
         return CompletionResult(False, "goal_verifier", check.evidence)
+
+    def _semantic_verdict(self, step, page, before, action):
+        """缓存同一页面证据的语义验收结果，避免重复调用模型。"""
+        key = (step.id, step.goal, repr(step.success_criteria), step.risk, page.fingerprint)
+        if key not in self._cache:
+            with model_scope("completion"):
+                verdict = self.verifier.verify(step, before, page, action)
+                self._cache[key] = (verdict, getattr(self.verifier, "last_evidence", ""))
+        return self._cache[key]
+
+    def _accept_semantic(self, step, page, evidence):
+        """把模型判断与结构化条件合并成最终步骤结论。"""
+        if any(isinstance(item, dict) for item in step.success_criteria):
+            confirmed = self.validator.step(page, step.success_criteria, semantic_verified=True)
+            if not confirmed:
+                return CompletionResult(False, "criteria", confirmed.evidence)
+        evidence = evidence or "完成模型确认当前页面满足目标"
+        return CompletionResult(True, "goal_verifier", (evidence,))
 
 
 TASK_SYSTEM_PROMPT = """你是浏览器任务的最终验收器。核对原始用户目标、完整计划、全部步骤结果及最终页面。
@@ -190,55 +181,14 @@ class TaskValidator:
         self, goal, plan, outcomes, page, *, original_plan=None
     ) -> CompletionResult:
         """只在所有步骤结束后调用一次；无模型时仅证明纯导航任务。"""
-        successful = {
-            item.step_id: item for item in outcomes if item.status == "completed"
-        }
-        if not plan.steps or any(step.id not in successful for step in plan.steps):
+        if not self._all_steps_completed(plan, outcomes):
             return CompletionResult(False, "task", ("计划尚有未完成步骤",))
 
         if self.ai is None:
-            navigation = len(plan.steps) == 1 and all(
-                (isinstance(item, str) and item.startswith("url_prefix:"))
-                or (isinstance(item, dict) and item.get("type") == "url_prefix")
-                for item in plan.steps[0].success_criteria
-            )
-            accepted = navigation and bool(
-                Validator().step(page, plan.steps[0].success_criteria)
-            )
-            return CompletionResult(
-                accepted,
-                "task_criteria",
-                ("纯导航目标已验证" if accepted else "缺少任务级语义验收模型",),
-            )
-
-        payload = {
-            "original_goal": goal,
-            "plan": plan.to_dict(),
-            "original_plan": (original_plan or plan).to_dict(),
-            "step_results": [asdict(item) for item in outcomes],
-            "final_page": asdict(page),
-        }
+            return self._verify_without_model(plan, page)
+        payload = self._task_payload(goal, plan, outcomes, page, original_plan)
         try:
-            with model_scope("task_validator"):
-                raw = self.ai.chat(
-                    TASK_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
-                )
-            data = json.loads(raw)
-            valid = (
-                isinstance(data, dict)
-                and type(data.get("complete")) is bool
-                and type(data.get("confidence")) in (int, float)
-                and 0 <= data["confidence"] <= 1
-                and isinstance(data.get("evidence"), str)
-                and bool(data["evidence"].strip())
-            )
-            if not valid:
-                raise ValueError("任务验收返回值不符合契约")
-            return CompletionResult(
-                data["complete"] and data["confidence"] >= 0.8,
-                "task_model",
-                (data["evidence"],),
-            )
+            return self._request_task_verdict(payload)
         except BudgetExceeded:
             raise
         except Exception as exc:
@@ -246,3 +196,54 @@ class TaskValidator:
             return CompletionResult(
                 False, "task_model", ("任务级验收未能取得有效证据",)
             )
+
+    @staticmethod
+    def _all_steps_completed(plan, outcomes) -> bool:
+        """确认计划中的每个步骤都有完成结果。"""
+        successful = {item.step_id for item in outcomes if item.status == "completed"}
+        return bool(plan.steps) and all(step.id in successful for step in plan.steps)
+
+    @staticmethod
+    def _verify_without_model(plan, page) -> CompletionResult:
+        """无模型时只允许可确定验证的纯导航任务通过。"""
+        navigation = len(plan.steps) == 1 and all(
+            (isinstance(item, str) and item.startswith("url_prefix:"))
+            or (isinstance(item, dict) and item.get("type") == "url_prefix")
+            for item in plan.steps[0].success_criteria
+        )
+        accepted = navigation and bool(Validator().step(page, plan.steps[0].success_criteria))
+        return CompletionResult(
+            accepted, "task_criteria",
+            ("纯导航目标已验证" if accepted else "缺少任务级语义验收模型",),
+        )
+
+    @staticmethod
+    def _task_payload(goal, plan, outcomes, page, original_plan):
+        """构造最终任务验收请求，保留原计划和执行证据。"""
+        return {
+            "original_goal": goal,
+            "plan": plan.to_dict(),
+            "original_plan": (original_plan or plan).to_dict(),
+            "step_results": [asdict(item) for item in outcomes],
+            "final_page": asdict(page),
+        }
+
+    def _request_task_verdict(self, payload) -> CompletionResult:
+        """请求并校验任务级验收模型结果。"""
+        with model_scope("task_validator"):
+            raw = self.ai.chat(TASK_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False))
+        data = json.loads(raw)
+        valid = (
+            isinstance(data, dict)
+            and type(data.get("complete")) is bool
+            and type(data.get("confidence")) in (int, float)
+            and 0 <= data["confidence"] <= 1
+            and isinstance(data.get("evidence"), str)
+            and bool(data["evidence"].strip())
+        )
+        if not valid:
+            raise ValueError("任务验收返回值不符合契约")
+        return CompletionResult(
+            data["complete"] and data["confidence"] >= 0.8,
+            "task_model", (data["evidence"],),
+        )

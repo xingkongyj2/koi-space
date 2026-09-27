@@ -88,42 +88,41 @@ def _number(data: dict, key: str, env: str, default, cast):
 def load_settings(path: str | None = None) -> Settings:
     """加载 dotenv 与 TOML，再构造不可变的运行配置。"""
     _load_dotenv()
-    config_path = Path(
-        path or os.getenv("KOI_CONFIG", "~/.koi/config.toml")
-    ).expanduser()
-    data = {}
-    if config_path.exists():
-        with config_path.open("rb") as handle:
-            data = tomllib.load(handle)
-
+    data = _read_config(path)
     runtime = data.get("runtime", {})
     return Settings(
-        planner=_provider(
-            "planner", "KOI_PLANNER", ("https://api.openai.com/v1", "gpt-4o-mini"), data
-        ),
-        decision=_provider(
-            "decision",
-            "KOI_DECISION",
-            ("https://api.typesafe.ai/v1", "jev-latest"),
-            data,
-        ),
-        memory_path=str(
-            data.get("memory_path", os.getenv("KOI_MEMORY_PATH", "~/.koi/memory.jsonl"))
-        ),
-        skills_path=str(
-            data.get("skills_path", os.getenv("KOI_SKILLS_PATH", "~/.koi/skills.jsonl"))
-        ),
-        max_steps=_number(runtime, "max_steps", "KOI_MAX_STEPS", 30, int),
-        max_failures=_number(runtime, "max_failures", "KOI_MAX_FAILURES", 3, int),
-        max_model_calls=_number(
-            runtime, "max_model_calls", "KOI_MAX_MODEL_CALLS", 100, int
-        ),
-        max_tokens=_number(runtime, "max_tokens", "KOI_MAX_TOKENS", 100000, int),
-        max_step_actions=_number(
-            runtime, "max_step_actions", "KOI_MAX_STEP_ACTIONS", 15, int
-        ),
-        max_no_ops=_number(runtime, "max_no_ops", "KOI_MAX_NO_OPS", 5, int),
-        max_slow_calls=_number(runtime, "max_slow_calls", "KOI_MAX_SLOW_CALLS", 5, int),
-        max_replans=_number(runtime, "max_replans", "KOI_MAX_REPLANS", 2, int),
-        max_seconds=_number(runtime, "max_seconds", "KOI_MAX_SECONDS", 300, float),
+        planner=_provider("planner", "KOI_PLANNER", ("https://api.openai.com/v1", "gpt-4o-mini"), data),
+        decision=_provider("decision", "KOI_DECISION", ("https://api.typesafe.ai/v1", "jev-latest"), data),
+        memory_path=_path_setting(data, "memory_path", "KOI_MEMORY_PATH", "~/.koi/memory.jsonl"),
+        skills_path=_path_setting(data, "skills_path", "KOI_SKILLS_PATH", "~/.koi/skills.jsonl"),
+        **_runtime_settings(runtime),
     )
+
+
+def _read_config(path: str | None) -> dict:
+    """按显式路径或环境路径读取 TOML；不存在时返回空配置。"""
+    config_path = Path(path or os.getenv("KOI_CONFIG", "~/.koi/config.toml")).expanduser()
+    if not config_path.exists():
+        return {}
+    with config_path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _path_setting(data: dict, key: str, env: str, default: str) -> str:
+    """解析文件路径配置，保持配置文件优先于环境变量。"""
+    return str(data.get(key, os.getenv(env, default)))
+
+
+def _runtime_settings(runtime: dict) -> dict:
+    """集中解析执行预算，避免设置构造函数混入解析细节。"""
+    return {
+        "max_steps": _number(runtime, "max_steps", "KOI_MAX_STEPS", 30, int),
+        "max_failures": _number(runtime, "max_failures", "KOI_MAX_FAILURES", 3, int),
+        "max_model_calls": _number(runtime, "max_model_calls", "KOI_MAX_MODEL_CALLS", 100, int),
+        "max_tokens": _number(runtime, "max_tokens", "KOI_MAX_TOKENS", 100000, int),
+        "max_step_actions": _number(runtime, "max_step_actions", "KOI_MAX_STEP_ACTIONS", 15, int),
+        "max_no_ops": _number(runtime, "max_no_ops", "KOI_MAX_NO_OPS", 5, int),
+        "max_slow_calls": _number(runtime, "max_slow_calls", "KOI_MAX_SLOW_CALLS", 5, int),
+        "max_replans": _number(runtime, "max_replans", "KOI_MAX_REPLANS", 2, int),
+        "max_seconds": _number(runtime, "max_seconds", "KOI_MAX_SECONDS", 300, float),
+    }

@@ -257,26 +257,11 @@ class BrowserSession:
         self.dir.mkdir(parents=True, exist_ok=True)
         url, title = self._target_fingerprint()
         planted = self._plant_marker()
-
         tabs = self._list_tabs()
-        tab_id = self._select(tabs, self.marker if planted else None, url, title)
+        tab_id = self._find_tab(tabs, planted, url, title)
         if tab_id is None:
-            seen = (
-                ", ".join(f"{t.get('tabId')}={str(t.get('url'))[:60]}" for t in tabs)
-                or "none"
-            )
-            raise BindingLost(
-                f"could not uniquely identify target {self.target_id} "
-                f"(url={url or '?'!r}) among {len(tabs)} tabs: {seen}. "
-                "Refusing to guess — picking the wrong tab would drive another session's page."
-            )
-
-        ok, stdout, stderr = self._cli(["tab", tab_id], timeout=15.0)
-        if not ok:
-            raise BindingLost(
-                f"`agent-browser tab {tab_id}` failed: {self._failure_text(stdout, stderr)[:300]}"
-            )
-
+            raise self._binding_lost(url, tabs)
+        self._activate_tab(tab_id)
         self._bound_tab = tab_id
         self._daemon_pid = self._read_pid()
         try:
@@ -287,6 +272,29 @@ class BrowserSession:
             f"bound {self.session} -> {tab_id} (target {self.target_id[:8]}, {len(tabs)} candidates)"
         )
         return tab_id
+
+    def _find_tab(self, tabs, planted, url, title):
+        """用唯一标记或 URL/标题精确选择目标标签页。"""
+        return self._select(tabs, self.marker if planted else None, url, title)
+
+    def _binding_lost(self, url, tabs):
+        """生成包含候选页摘要的绑定错误，明确拒绝猜测目标。"""
+        seen = ", ".join(
+            f"{t.get('tabId')}={str(t.get('url'))[:60]}" for t in tabs
+        ) or "none"
+        return BindingLost(
+            f"could not uniquely identify target {self.target_id} "
+            f"(url={url or '?'!r}) among {len(tabs)} tabs: {seen}. "
+            "Refusing to guess — picking the wrong tab would drive another session's page."
+        )
+
+    def _activate_tab(self, tab_id: str) -> None:
+        """通知 agent-browser 后台使用已确认的目标标签页。"""
+        ok, stdout, stderr = self._cli(["tab", tab_id], timeout=15.0)
+        if not ok:
+            raise BindingLost(
+                f"`agent-browser tab {tab_id}` failed: {self._failure_text(stdout, stderr)[:300]}"
+            )
 
     def _read_pid(self) -> str:
         """读取守护进程 PID，文件缺失或不可读时返回空值。"""
@@ -333,6 +341,11 @@ class BrowserSession:
             raise ValueError("agent-browser requires a subcommand")
         self.ensure_bound()
         started = time.monotonic()
+        result = self._run_command(args, timeout, started)
+        return self._retry_after_daemon_change(result, args, timeout)
+
+    def _run_command(self, args, timeout, started) -> BrowserResult:
+        """执行一次 CLI 调用并统一封装超时与进程结果。"""
         try:
             proc = subprocess.run(
                 [self.cli, *args],
@@ -346,9 +359,8 @@ class BrowserSession:
             return BrowserResult(
                 False, tuple(args), "", f"timed out after {timeout}s", 124, elapsed
             )
-
         elapsed = (time.monotonic() - started) * 1000
-        result = BrowserResult(
+        return BrowserResult(
             ok=proc.returncode == 0,
             args=tuple(args),
             stdout=proc.stdout or "",
@@ -356,20 +368,20 @@ class BrowserSession:
             exit_code=proc.returncode,
             ms=elapsed,
         )
-        if not result.ok:
-            detail = self._failure_text(result.stdout, result.stderr)
-            if "lost its browser binding" in detail:
-                raise BindingLost(detail)
-            # A command can also fail because the daemon died underneath it; give
-            # one rebind-and-retry before reporting, then surface honestly.
-            if self._read_pid() != self._daemon_pid:
-                logger.debug(
-                    "daemon changed under a failed command; rebinding and retrying once"
-                )
-                self._daemon_pid = None
-                self._bound_tab = None
-                self.ensure_bound()
-                return self.run(args, timeout=timeout)
+
+    def _retry_after_daemon_change(self, result, args, timeout):
+        """守护进程在命令中途重启时重新绑定并只重试一次。"""
+        if result.ok:
+            return result
+        detail = self._failure_text(result.stdout, result.stderr)
+        if "lost its browser binding" in detail:
+            raise BindingLost(detail)
+        if self._read_pid() != self._daemon_pid:
+            logger.debug("daemon changed under a failed command; rebinding and retrying once")
+            self._daemon_pid = None
+            self._bound_tab = None
+            self.ensure_bound()
+            return self.run(args, timeout=timeout)
         return result
 
     def open_url(self, url: str, timeout: float = DEFAULT_TIMEOUT) -> BrowserResult:

@@ -27,14 +27,35 @@ class Executor:
 
     @logger.traced("executor.execute")
     def execute(self, action: Action):
-        """统一校验动作和确认标记，记录事件后执行对应浏览器命令。"""
+        """校验动作、执行命令并返回统一浏览器结果。"""
+        self._validate(action)
+        commands = self._commands(action)
+        name = f"browser.{action.kind}"
+        self._announce(name, action)
+        started = time.monotonic()
+        try:
+            prepared = self._prepare(action)
+            if prepared is not None:
+                return self._report(name, prepared, started, action)
+            logger.trace("executor.command", command=commands[action.kind])
+            result = self.session.run(commands[action.kind])
+        except Exception as exc:
+            self._report_exception(name, action, started, exc)
+            raise
+        return self._report(name, result, started, action)
+
+    def _validate(self, action):
+        """检查动作类型和用户确认标记。"""
         if action.kind not in self.ALLOWED:
             raise ValueError(f"unsupported action: {action.kind}")
         if action.sensitive:
             protocol.notify("此操作需要用户确认后继续", "blocking")
             raise PermissionError("user confirmation required")
 
-        commands = {
+    @staticmethod
+    def _commands(action):
+        """把封闭动作映射为 agent-browser 命令参数。"""
+        return {
             "open": ["open", action.value],
             "click": ["click", action.ref],
             "fill": ["fill", action.ref, action.value],
@@ -43,50 +64,32 @@ class Executor:
             "wait": ["wait", action.value or "500"],
             "scroll": ["scroll", action.value or "down"],
         }
+
+    def _announce(self, name, action):
+        """记录动作调用事件，并对敏感参数做脱敏。"""
         logger.debug(f"flow=execute action={action.kind} ref={action.ref or '-'}")
-        name = f"browser.{action.kind}"
         action_data = asdict(action)
         if action.sensitive:
             action_data["value"] = "<redacted>"
         protocol.tool_call(name, action_data, logger.current_iteration())
-        started = time.monotonic()
-        try:
-            if action.kind == "type":
-                logger.trace("executor.command", command=["fill", action.ref, ""])
-                cleared = self.session.run(["fill", action.ref, ""])
-                if not cleared.ok:
-                    protocol.tool_result(
-                        name,
-                        False,
-                        cleared.preview,
-                        (time.monotonic() - started) * 1000,
-                    )
-                    return cleared
-            if action.kind == "press" and action.ref:
-                # press 操作当前焦点；指定 ref 时先聚焦对应控件。
-                logger.trace("executor.command", command=["focus", action.ref])
-                focused = self.session.run(["focus", action.ref])
-                if not focused.ok:
-                    protocol.tool_result(
-                        name,
-                        False,
-                        focused.preview,
-                        (time.monotonic() - started) * 1000,
-                    )
-                    return focused
-            logger.trace("executor.command", command=commands[action.kind])
-            result = self.session.run(commands[action.kind])
-        except Exception as exc:
-            logger.timing(
-                "browser.action.command",
-                started,
-                action=action.kind,
-                target=action.ref or (action.value if action.kind == "open" else ""),
-            )
-            protocol.tool_result(
-                name, False, str(exc), (time.monotonic() - started) * 1000
-            )
-            raise
+
+    def _prepare(self, action):
+        """执行 type 的清空和 press 的聚焦前置动作。"""
+        if action.kind == "type":
+            logger.trace("executor.command", command=["fill", action.ref, ""])
+            cleared = self.session.run(["fill", action.ref, ""])
+            if not cleared.ok:
+                return cleared
+        if action.kind == "press" and action.ref:
+            # press 操作当前焦点；指定 ref 时先聚焦对应控件。
+            logger.trace("executor.command", command=["focus", action.ref])
+            focused = self.session.run(["focus", action.ref])
+            if not focused.ok:
+                return focused
+        return None
+
+    def _report(self, name, result, started, action):
+        """记录命令耗时和协议结果。"""
         logger.timing(
             "browser.action.command",
             started,
@@ -94,7 +97,15 @@ class Executor:
             target=action.ref or (action.value if action.kind == "open" else ""),
         )
         preview = "<redacted>" if action.sensitive else result.preview
-        protocol.tool_result(
-            name, result.ok, preview, (time.monotonic() - started) * 1000
-        )
+        protocol.tool_result(name, result.ok, preview, (time.monotonic() - started) * 1000)
         return result
+
+    def _report_exception(self, name, action, started, exc):
+        """记录命令异常，并保留原异常供上层恢复策略处理。"""
+        logger.timing(
+            "browser.action.command",
+            started,
+            action=action.kind,
+            target=action.ref or (action.value if action.kind == "open" else ""),
+        )
+        protocol.tool_result(name, False, str(exc), (time.monotonic() - started) * 1000)

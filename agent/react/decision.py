@@ -72,8 +72,27 @@ class Decision:
         force_reasoning=False,
         action_history=(),
     ) -> DecisionResult:
-        """先确定入口，再选择技能外的快/慢模型路径；慢路径必须跳过 JEV。"""
-        # start_url 只是网站入口；已经到达同站点的详情或结果页时，不强制返回入口。
+        """按规则、JEV、慢模型的顺序选择一个动作。"""
+        rule = self._entry_action(observation, start_url, force_entry)
+        if rule is not None:
+            return rule
+        if self.jev and not (slow or force_reasoning):
+            result = self._jev_decision(
+                goal, observation, success_criteria, recent_action, action_history, advice
+            )
+            if result is not None:
+                return result
+        if self.ai:
+            result = self._slow_decision(
+                goal, observation, success_criteria, recent_action, action_history, advice, slow
+            )
+            if result is not None:
+                return result
+        return DecisionResult((), 0.0, "none", "no safe action available")
+
+    @staticmethod
+    def _entry_action(observation, start_url, force_entry):
+        """当前页面不在规划入口时，优先生成导航动作。"""
         current_host = urlsplit(observation.url).hostname
         entry_host = urlsplit(start_url).hostname if start_url else None
         if start_url and (
@@ -87,99 +106,105 @@ class Decision:
                 "rule",
                 "open start URL",
             )
+        return None
 
-        if self.jev and not (slow or force_reasoning):
-            try:
-                with model_scope("jev"):
-                    value = self.jev.choose(
-                        goal,
-                        observation,
-                        success_criteria=success_criteria,
-                        recent_action=recent_action,
-                        action_history=action_history,
-                        advice=advice,
-                    )
-                if not 0.65 <= float(value.get("confidence", 0)) <= 1:
-                    raise ValueError("JEV 置信度不足，升级慢模型")
-                if value["operation"] in {"DONE", "BLOCKED"}:
-                    return DecisionResult(
-                        (),
-                        float(value.get("confidence", 0)),
-                        "jev",
-                        value["operation"].lower(),
-                        value["operation"],
-                    )
-                return DecisionResult(
-                    (self._input_action(self._jev_action(value), observation),),
-                    float(value.get("confidence", 0.8)),
-                    "jev",
-                    "typed choice",
+    def _jev_decision(self, goal, observation, criteria, recent_action, action_history, advice):
+        """调用 JEV 快路径；失败时返回空值让调用方升级慢模型。"""
+        try:
+            with model_scope("jev"):
+                value = self.jev.choose(
+                    goal,
+                    observation,
+                    success_criteria=criteria,
+                    recent_action=recent_action,
+                    action_history=action_history,
+                    advice=advice,
                 )
-            except BudgetExceeded:
-                raise
-            except Exception as exc:
-                logger.trace_exception("decision.jev.fallback", exc)
-                logger.debug(f"flow=decision jev_error={exc}")
+            confidence = float(value.get("confidence", 0))
+            if not 0.65 <= confidence <= 1:
+                raise ValueError("JEV 置信度不足，升级慢模型")
+            operation = value["operation"]
+            if operation in {"DONE", "BLOCKED"}:
+                return DecisionResult((), confidence, "jev", operation.lower(), operation)
+            return DecisionResult(
+                (self._input_action(self._jev_action(value), observation),),
+                float(value.get("confidence", 0.8)),
+                "jev",
+                "typed choice",
+            )
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            logger.trace_exception("decision.jev.fallback", exc)
+            logger.debug(f"flow=decision jev_error={exc}")
+            return None
 
-        if self.ai:
-            try:
-                payload = json.dumps(
-                    {
-                        "goal": goal,
-                        "acceptance_criteria": list(success_criteria),
-                        "url": observation.url,
-                        "diff": observation.diff,
-                        "elements": observation.elements,
-                        "snapshot": observation.snapshot[:12000],
-                        "advice": advice,
-                        "slow": slow,
-                        "recent_actions": list(action_history),
-                        "recent_action": asdict(recent_action)
-                        if recent_action is not None
-                        else None,
-                    },
-                    ensure_ascii=False,
-                )
-                with model_scope("slow"):
-                    raw = self.ai.chat(DECISION_SYSTEM_PROMPT, payload)
-                logger.trace("decision.model.raw", data=raw)
-                data = json.loads(raw)
-                confidence = float(data.get("confidence", 0.5))
-                if not 0 <= confidence <= 1:
-                    raise ValueError("模型置信度必须是 0 到 1 的有限数值")
-                logger.trace("decision.model.parsed", data=data)
-                # 每次只保留一个动作；点击或输入后页面可能变化，后续动作必须重新决策。
-                actions = tuple(
-                    Action(
-                        str(item["kind"]),
-                        str(item.get("value", "")),
-                        str(item.get("ref", "")),
-                        str(item.get("expected", "")),
-                        bool(item.get("sensitive")),
-                    )
-                    for item in data.get("actions", [])
-                    if item.get("kind")
-                    in {"open", "click", "fill", "type", "press", "wait", "scroll"}
-                )[:1]
-                actions = tuple(
-                    self._input_action(action, observation) for action in actions
-                )
-                return DecisionResult(
-                    actions,
-                    confidence,
-                    "slow",
-                    str(data.get("rationale", "")),
-                    str(data.get("terminal", ""))
-                    if data.get("terminal") in {"DONE", "BLOCKED"}
-                    else "",
-                )
-            except BudgetExceeded:
-                raise
-            except Exception as exc:
-                logger.trace_exception("decision.model.fallback", exc)
-                logger.debug(f"flow=decision model_error={exc}")
+    def _slow_decision(
+        self, goal, observation, criteria, recent_action, action_history, advice, slow
+    ):
+        """调用慢模型并把返回内容限制为一个可执行动作。"""
+        try:
+            payload = self._slow_payload(
+                goal, observation, criteria, recent_action, action_history, advice, slow
+            )
+            with model_scope("slow"):
+                raw = self.ai.chat(DECISION_SYSTEM_PROMPT, payload)
+            logger.trace("decision.model.raw", data=raw)
+            data = json.loads(raw)
+            confidence = float(data.get("confidence", 0.5))
+            if not 0 <= confidence <= 1:
+                raise ValueError("模型置信度必须是 0 到 1 的有限数值")
+            logger.trace("decision.model.parsed", data=data)
+            return self._slow_result(data, confidence, observation)
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            logger.trace_exception("decision.model.fallback", exc)
+            logger.debug(f"flow=decision model_error={exc}")
+            return None
 
-        return DecisionResult((), 0.0, "none", "no safe action available")
+    @staticmethod
+    def _slow_payload(goal, observation, criteria, recent_action, action_history, advice, slow):
+        """构建慢模型所需的当前页面和历史动作输入。"""
+        return json.dumps(
+            {
+                "goal": goal,
+                "acceptance_criteria": list(criteria),
+                "url": observation.url,
+                "diff": observation.diff,
+                "elements": observation.elements,
+                "snapshot": observation.snapshot[:12000],
+                "advice": advice,
+                "slow": slow,
+                "recent_actions": list(action_history),
+                "recent_action": asdict(recent_action) if recent_action is not None else None,
+            },
+            ensure_ascii=False,
+        )
+
+    def _slow_result(self, data, confidence, observation):
+        """解析慢模型 JSON，只保留首个支持的动作。"""
+        actions = tuple(
+            Action(
+                str(item["kind"]),
+                str(item.get("value", "")),
+                str(item.get("ref", "")),
+                str(item.get("expected", "")),
+                bool(item.get("sensitive")),
+            )
+            for item in data.get("actions", [])
+            if item.get("kind")
+            in {"open", "click", "fill", "type", "press", "wait", "scroll"}
+        )[:1]
+        actions = tuple(self._input_action(action, observation) for action in actions)
+        terminal = data.get("terminal", "")
+        return DecisionResult(
+            actions,
+            confidence,
+            "slow",
+            str(data.get("rationale", "")),
+            str(terminal) if terminal in {"DONE", "BLOCKED"} else "",
+        )
 
     @staticmethod
     def _jev_action(value: dict) -> Action:
