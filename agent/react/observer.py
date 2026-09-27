@@ -52,14 +52,18 @@ class Observer:
     @logger.traced("observer.capture")
     def capture(self) -> Observation:
         """先按需捕获正文，再生成最终交互引用，避免完整快照使 ref 失效。"""
+        # 先读 URL，后续用它判断捕获期间是否发生了跨页导航。
         url = self.session.current_url()
+        # 正文快照可选；交互快照始终最后读取，保证 ref 与动作匹配。
         page_text, full_ok = self._capture_full_text()
         result, snapshot = self._capture_interactive()
         current_url = self.session.current_url()
+        # 双快照 URL 不一致时，丢弃旧正文，避免把两页内容拼成一条证据。
         url, page_text, stable = self._capture_stability(
             url, current_url, page_text, result.ok and full_ok
         )
         diff, page_changed = self._record_change(snapshot, page_text)
+        # elements 是决策器使用的紧凑控件表，snapshot 保留给需要完整语义的模型。
         elements = tuple(self._elements(snapshot))
         logger.debug(
             f"flow=observe url={url or '<unknown>'} "
@@ -76,6 +80,7 @@ class Observer:
             page_changed=page_changed,
         )
         self._version += 1
+        # loading 只表示页面仍在忙；stable 由 URL 和快照捕获过程共同决定。
         loading = bool(re.search(r'\[busy(?:=true)?\]|aria-busy="true"', snapshot))
         return self._build_observation(
             url,
@@ -91,12 +96,14 @@ class Observer:
     def _capture_full_text(self) -> tuple[str, bool]:
         """按配置捕获正文快照，返回正文和捕获是否成功。"""
         if not self.include_full:
+            # 低风险结构化步骤不需要把大段正文送入日志或模型。
             return "", True
         full = self.session.run(["snapshot"], timeout=30)
         return (full.stdout if full.ok else ""), full.ok
 
     def _capture_interactive(self):
         """最后捕获交互快照，确保动作引用对应最新编号。"""
+        # -i 快照提供可操作元素和 ref，是下一次动作的唯一来源。
         result = self.session.run(["snapshot", "-i"], timeout=30)
         return result, result.stdout if result.ok else result.preview
 
@@ -114,6 +121,7 @@ class Observer:
 
     def _record_change(self, snapshot, page_text):
         """计算有限差异并更新下次观察使用的基线。"""
+        # 只保存摘要基线，下一轮通过 diff 判断是否产生真实页面变化。
         diff = self.diff(self._last_snapshot, snapshot)
         page_changed = page_text != self._last_page_text
         self._last_snapshot = snapshot

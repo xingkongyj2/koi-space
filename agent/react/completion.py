@@ -25,9 +25,12 @@ class CompletionVerifier:
     def verify(self, step, before, after, action=None) -> bool | None:
         """根据当前可见证据返回完成结论；无模型或无有效结果时不背书。"""
         if self.ai is None or not after.url:
+            # 没有模型或页面没有 URL 时，不能用语义模型替任务背书。
             return None
         try:
+            # 请求只携带与当前步骤相关的前后页面证据和实际操作对象。
             raw = self._request(step, before, after, action)
+            # 模型完成标记还要经过置信度门槛，低置信度视为未完成。
             return self._parse_verdict(raw)
         except BudgetExceeded:
             raise
@@ -41,6 +44,7 @@ class CompletionVerifier:
         """从操作前快照提取实际被操作元素，供验收模型对照。"""
         if before is None or action is None or not action.ref:
             return ""
+        # 只从操作前快照取控件文本，避免用操作后的页面反推点击对象。
         return next(
             (element.get("text", "") for element in before.elements if element.get("ref") == action.ref),
             "",
@@ -48,6 +52,7 @@ class CompletionVerifier:
 
     def _request(self, step, before, after, action) -> str:
         """构造精简页面证据并请求步骤验收模型。"""
+        # before 用于判断动作是否产生目标变化，current 用于判断最终可见状态。
         payload = {
             "goal": step.goal,
             "entry_url": step.start_url,
@@ -72,6 +77,7 @@ class CompletionVerifier:
 
     def _parse_verdict(self, raw: str) -> bool:
         """校验模型验收契约，并应用置信度门槛。"""
+        # 严格校验字段，防止模型返回解释文本或缺少证据的半结构化结果。
         value = json.loads(raw)
         if not isinstance(value, dict) or set(value) != {"complete", "confidence", "evidence"}:
             raise ValueError("completion response must have complete, confidence and evidence")
@@ -129,6 +135,7 @@ class CompletionGate:
         self._cache = {}
 
     def check(self, step, page, before=None, action=None, *, initial=False):
+        # 先跑确定性条件，再决定是否需要语义模型介入。
         check = self.validator.step(page, step.success_criteria, step.start_url)
         semantic = needs_semantics(step.success_criteria) or step.risk in {
             "medium",
@@ -136,10 +143,13 @@ class CompletionGate:
         }
 
         if page.loading or not page.stable:
+            # 页面不稳定时任何完成结论都暂缓，避免把加载中当成成功。
             return CompletionResult(False, "criteria", ("页面尚未稳定",))
         if not semantic:
+            # 纯 URL/数量等结构化条件可以直接由 Validator 判定。
             return CompletionResult(bool(check), "criteria", check.evidence)
         if initial:
+            # 语义步骤初始页面只作为上下文，不能因为列表里出现对象名就完成。
             return CompletionResult(False, "criteria", check.evidence)
         verdict, evidence = self._semantic_verdict(step, page, before, action)
         if verdict is True:
@@ -152,6 +162,7 @@ class CompletionGate:
         """缓存同一页面证据的语义验收结果，避免重复调用模型。"""
         key = (step.id, step.goal, repr(step.success_criteria), step.risk, page.fingerprint)
         if key not in self._cache:
+            # 相同步骤和页面指纹只调用一次模型，避免重复验收消耗预算。
             with model_scope("completion"):
                 verdict = self.verifier.verify(step, before, page, action)
                 self._cache[key] = (verdict, getattr(self.verifier, "last_evidence", ""))
@@ -160,6 +171,7 @@ class CompletionGate:
     def _accept_semantic(self, step, page, evidence):
         """把模型判断与结构化条件合并成最终步骤结论。"""
         if any(isinstance(item, dict) for item in step.success_criteria):
+            # 语义模型只能补充 goal_state，结构化条件仍然是硬门槛。
             confirmed = self.validator.step(page, step.success_criteria, semantic_verified=True)
             if not confirmed:
                 return CompletionResult(False, "criteria", confirmed.evidence)
@@ -182,9 +194,11 @@ class TaskValidator:
     ) -> CompletionResult:
         """只在所有步骤结束后调用一次；无模型时仅证明纯导航任务。"""
         if not self._all_steps_completed(plan, outcomes):
+            # 还有未完成步骤时不提前调用任务级模型。
             return CompletionResult(False, "task", ("计划尚有未完成步骤",))
 
         if self.ai is None:
+            # 无模型模式只允许完全确定的纯导航任务通过。
             return self._verify_without_model(plan, page)
         payload = self._task_payload(goal, plan, outcomes, page, original_plan)
         try:
@@ -192,6 +206,7 @@ class TaskValidator:
         except BudgetExceeded:
             raise
         except Exception as exc:
+            # 任务级模型失败不能把步骤成功升级成任务成功。
             logger.trace_exception("task_verification.unavailable", exc)
             return CompletionResult(
                 False, "task_model", ("任务级验收未能取得有效证据",)
@@ -200,12 +215,14 @@ class TaskValidator:
     @staticmethod
     def _all_steps_completed(plan, outcomes) -> bool:
         """确认计划中的每个步骤都有完成结果。"""
+        # 按计划 ID 检查，而不是只看 outcomes 数量，防止漏步或重复步混淆。
         successful = {item.step_id for item in outcomes if item.status == "completed"}
         return bool(plan.steps) and all(step.id in successful for step in plan.steps)
 
     @staticmethod
     def _verify_without_model(plan, page) -> CompletionResult:
         """无模型时只允许可确定验证的纯导航任务通过。"""
+        # 只有单步骤 url_prefix 条件具备无模型可证明性。
         navigation = len(plan.steps) == 1 and all(
             (isinstance(item, str) and item.startswith("url_prefix:"))
             or (isinstance(item, dict) and item.get("type") == "url_prefix")
@@ -220,6 +237,7 @@ class TaskValidator:
     @staticmethod
     def _task_payload(goal, plan, outcomes, page, original_plan):
         """构造最终任务验收请求，保留原计划和执行证据。"""
+        # 同时传入当前计划和原计划，便于模型识别重规划是否遗漏原始目标。
         return {
             "original_goal": goal,
             "plan": plan.to_dict(),
@@ -230,6 +248,7 @@ class TaskValidator:
 
     def _request_task_verdict(self, payload) -> CompletionResult:
         """请求并校验任务级验收模型结果。"""
+        # 任务级模型只负责最终判断，不能发起新动作或修改计划。
         with model_scope("task_validator"):
             raw = self.ai.chat(TASK_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False))
         data = json.loads(raw)
@@ -242,6 +261,7 @@ class TaskValidator:
             and bool(data["evidence"].strip())
         )
         if not valid:
+            # 缺字段、类型错误或空证据都视为无效验收。
             raise ValueError("任务验收返回值不符合契约")
         return CompletionResult(
             data["complete"] and data["confidence"] >= 0.8,

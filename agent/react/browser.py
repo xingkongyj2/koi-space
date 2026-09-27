@@ -254,14 +254,17 @@ class BrowserSession:
     @logger.traced("browser.bind")
     def bind(self) -> str:
         """将 agent-browser 会话绑定到宿主指定的视图，返回唯一匹配的 tabId。"""
+        # 先读取宿主 target 的 URL/标题，再给页面植入唯一标记。
         self.dir.mkdir(parents=True, exist_ok=True)
         url, title = self._target_fingerprint()
         planted = self._plant_marker()
         tabs = self._list_tabs()
+        # 优先用唯一标记匹配；标记失败时才使用 URL/标题的严格匹配。
         tab_id = self._find_tab(tabs, planted, url, title)
         if tab_id is None:
             raise self._binding_lost(url, tabs)
         self._activate_tab(tab_id)
+        # 记录绑定的 tab 和 daemon PID，后续每次命令前都会检查它们是否仍有效。
         self._bound_tab = tab_id
         self._daemon_pid = self._read_pid()
         try:
@@ -322,10 +325,12 @@ class BrowserSession:
         同时验证 PID 文件和进程存活状态。僵尸进程短暂存活期间仍存在
         极小的竞态窗口；不为此在每条命令前启动昂贵的 ps 查询。"""
         if self._bound_tab is None:
+            # 首次调用还没有 tab，必须完成一次精确绑定。
             self.bind()
             return
         current = self._read_pid()
         if current == self._daemon_pid and self._pid_alive(current):
+            # daemon 和 tab 仍属于同一会话，可以复用现有绑定。
             return
         logger.debug(
             f"daemon pid changed ({self._daemon_pid!r} -> {current!r}); rebinding"
@@ -339,6 +344,7 @@ class BrowserSession:
         """校验绑定后执行一个命令，返回统一的成功、错误与耗时信息。"""
         if not args:
             raise ValueError("agent-browser requires a subcommand")
+        # 绑定检查必须在每个命令前执行，防止 daemon 重启后落到错误标签页。
         self.ensure_bound()
         started = time.monotonic()
         result = self._run_command(args, timeout, started)
@@ -346,6 +352,7 @@ class BrowserSession:
 
     def _run_command(self, args, timeout, started) -> BrowserResult:
         """执行一次 CLI 调用并统一封装超时与进程结果。"""
+        # 这里仅负责一次 subprocess 调用，不处理绑定恢复和业务重试。
         try:
             proc = subprocess.run(
                 [self.cli, *args],
@@ -375,8 +382,10 @@ class BrowserSession:
             return result
         detail = self._failure_text(result.stdout, result.stderr)
         if "lost its browser binding" in detail:
+            # 明确绑定丢失时拒绝重试，避免驱动另一页。
             raise BindingLost(detail)
         if self._read_pid() != self._daemon_pid:
+            # 只有确认 daemon PID 变化才允许重新绑定并重试一次。
             logger.debug("daemon changed under a failed command; rebinding and retrying once")
             self._daemon_pid = None
             self._bound_tab = None

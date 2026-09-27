@@ -44,6 +44,7 @@ class Validator:
         """执行前必须检查版本及 ref；未知引用不能交给浏览器猜测。"""
         from react.executor import Executor
 
+        # 先确认观察仍稳定，再确认动作属于封闭集合。
         if not observation.stable:
             return ValidationResult(
                 "unexpected_change", ("页面观察不稳定，需要刷新引用",)
@@ -51,6 +52,7 @@ class Validator:
         if action.kind not in Executor.ALLOWED:
             return ValidationResult("unexpected_change", ("动作不在封闭动作集中",))
         if action.observation_version != observation.version:
+            # ref 与 observation.version 绑定，旧页面上的引用不能复用。
             return ValidationResult("unexpected_change", ("动作来自过期观察",))
         if (action.kind in {"click", "fill", "type"} and not action.ref) or (
             action.ref
@@ -58,6 +60,7 @@ class Validator:
         ):
             return ValidationResult("unexpected_change", ("元素引用不属于当前观察",))
         if action.kind == "open":
+            # open 的 URL 也走 Planner 的安全 URL 校验，禁止凭据和占位符。
             from planner.planner import PlanError, _url
 
             try:
@@ -72,12 +75,14 @@ class Validator:
         if after.loading or not after.stable:
             return ValidationResult("loading", ("页面仍在加载或捕获期间发生导航",))
 
+        # 先比较语义指纹；ref 重编号不会被误判为页面变化。
         changed = before.fingerprint != after.fingerprint
         if not changed:
             return ValidationResult("unchanged", ("页面语义指纹没有变化",))
 
         # expected 使用与规划器相同的条件协议；普通描述不能冒充机器证据。
         if action.expected and ":" in action.expected:
+            # expected 只支持已有条件协议，普通自然语言不能伪造机器证据。
             kind = action.expected.split(":", 1)[0]
             if kind in {"url_prefix", "url_contains", "text_contains", "element_text"}:
                 check = self.step(after, (action.expected,))
@@ -95,6 +100,7 @@ class Validator:
         self, observation, criteria, start_url="", *, semantic_verified=False
     ) -> ValidationResult:
         """顶层条件为 AND；空条件、未知条件及不稳定页面一律不通过。"""
+        # 每个条件都单独生成证据，最后统一按 AND 汇总。
         if not criteria or observation.loading or not observation.stable:
             return ValidationResult("unproven", ("条件为空或页面尚未稳定",))
 
@@ -106,6 +112,7 @@ class Validator:
 
     def _criterion(self, page, criterion, semantic_verified=False) -> ValidationResult:
         """解析并验证一个条件，组合条件与原子条件分别处理。"""
+        # 先兼容旧字符串，再进入结构化组合或原子条件分支。
         parsed = self._parse_criterion(criterion)
         if parsed is None:
             return ValidationResult("unproven", ("条件格式无效",))
@@ -130,6 +137,7 @@ class Validator:
 
     def _composite_criterion(self, page, kind, value, semantic_verified):
         """递归检查 all/any 条件，并汇总每个子条件的证据。"""
+        # 组合条件递归复用同一套原子判断，避免 all/any 分支重复实现。
         if not isinstance(value, (list, tuple)) or not value:
             return ValidationResult("unproven", ("组合条件为空",))
         checks = [self._criterion(page, item, semantic_verified) for item in value]
@@ -142,6 +150,7 @@ class Validator:
     @staticmethod
     def _atomic_criterion(page, kind, value, semantic_verified):
         """根据当前页面证据检查单个原子条件。"""
+        # 所有原子判断只读取当前 Observation，不访问隐藏 DOM 或额外页面状态。
         text = (page.snapshot + "\n" + page.page_text).casefold()
         wanted = str(value).strip().casefold() if value is not None else ""
         passed = False

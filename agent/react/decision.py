@@ -73,26 +73,31 @@ class Decision:
         action_history=(),
     ) -> DecisionResult:
         """按规则、JEV、慢模型的顺序选择一个动作。"""
+        # 入口规则优先于模型，确保页面偏离计划入口时先回到正确站点。
         rule = self._entry_action(observation, start_url, force_entry)
         if rule is not None:
             return rule
         if self.jev and not (slow or force_reasoning):
+            # 默认走 JEV 快路径，减少普通页面决策延迟和模型消耗。
             result = self._jev_decision(
                 goal, observation, success_criteria, recent_action, action_history, advice
             )
             if result is not None:
                 return result
         if self.ai:
+            # JEV 不可用、需要慢思考或强制推理时，降级到文本模型。
             result = self._slow_decision(
                 goal, observation, success_criteria, recent_action, action_history, advice, slow
             )
             if result is not None:
                 return result
+        # 两个模型都没有给出安全动作时，由 Orchestrator 进入恢复流程。
         return DecisionResult((), 0.0, "none", "no safe action available")
 
     @staticmethod
     def _entry_action(observation, start_url, force_entry):
         """当前页面不在规划入口时，优先生成导航动作。"""
+        # 只比较 host 和路径边界，不用字符串前缀避免相似域名误匹配。
         current_host = urlsplit(observation.url).hostname
         entry_host = urlsplit(start_url).hostname if start_url else None
         if start_url and (
@@ -111,6 +116,7 @@ class Decision:
     def _jev_decision(self, goal, observation, criteria, recent_action, action_history, advice):
         """调用 JEV 快路径；失败时返回空值让调用方升级慢模型。"""
         try:
+            # JEV 只接收当前可见控件和有限动作集合。
             with model_scope("jev"):
                 value = self.jev.choose(
                     goal,
@@ -125,7 +131,9 @@ class Decision:
                 raise ValueError("JEV 置信度不足，升级慢模型")
             operation = value["operation"]
             if operation in {"DONE", "BLOCKED"}:
+                # 终态也要交回 Orchestrator 的完成门或恢复逻辑再次确认。
                 return DecisionResult((), confidence, "jev", operation.lower(), operation)
+            # 将 JEV 的选择题答案映射成当前 observation 的真实 ref。
             return DecisionResult(
                 (self._input_action(self._jev_action(value), observation),),
                 float(value.get("confidence", 0.8)),
@@ -135,6 +143,7 @@ class Decision:
         except BudgetExceeded:
             raise
         except Exception as exc:
+            # JEV 格式错误或网络失败不直接结束任务，允许慢模型接管。
             logger.trace_exception("decision.jev.fallback", exc)
             logger.debug(f"flow=decision jev_error={exc}")
             return None
@@ -144,6 +153,7 @@ class Decision:
     ):
         """调用慢模型并把返回内容限制为一个可执行动作。"""
         try:
+            # 慢模型输入包含页面差异、动作历史和恢复建议，用于处理复杂页面状态。
             payload = self._slow_payload(
                 goal, observation, criteria, recent_action, action_history, advice, slow
             )
@@ -155,10 +165,12 @@ class Decision:
             if not 0 <= confidence <= 1:
                 raise ValueError("模型置信度必须是 0 到 1 的有限数值")
             logger.trace("decision.model.parsed", data=data)
+            # _slow_result 会继续校验动作种类、ref 和参数，禁止模型直接越过动作契约。
             return self._slow_result(data, confidence, observation)
         except BudgetExceeded:
             raise
         except Exception as exc:
+            # 慢模型失败后返回 None，由上层统一生成 blocked/retry 结果。
             logger.trace_exception("decision.model.fallback", exc)
             logger.debug(f"flow=decision model_error={exc}")
             return None
